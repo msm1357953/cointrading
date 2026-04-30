@@ -107,7 +107,7 @@ class TradingConfig:
     strategy_min_samples: int = 30
     strategy_early_block_samples: int = 8
     strategy_min_expectancy_bps: float = 0.0
-    strategy_min_win_rate: float = 0.50
+    strategy_min_win_rate: float = 0.40
     strategy_max_loss_win_ratio: float = 2.5
     strategy_execution_mode: str = "maker_post_only"
     strategy_taker_slippage_bps: float = 1.0

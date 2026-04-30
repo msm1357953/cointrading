@@ -64,13 +64,16 @@ def start_cycle_from_signal(
         )
 
     assert intent.price is not None
-    target_price = _take_profit_price(signal.side, intent.price, config.scalp_take_profit_bps)
-    stop_price = _stop_price(signal.side, intent.price, config.scalp_stop_loss_bps)
+    take_profit_bps = gate.take_profit_bps or config.scalp_take_profit_bps
+    stop_loss_bps = gate.stop_loss_bps or config.scalp_stop_loss_bps
+    max_hold_seconds = gate.max_hold_seconds or int(config.scalp_max_hold_seconds)
+    target_price = _take_profit_price(signal.side, intent.price, take_profit_bps)
+    stop_price = _stop_price(signal.side, intent.price, stop_loss_bps)
     cycle_id = store.insert_scalp_cycle(
         symbol=signal.symbol,
         side=signal.side,
         status="ENTRY_SUBMITTED",
-        reason="entry submitted",
+        reason=f"entry submitted; {gate.reason}",
         entry_signal_id=signal_id,
         entry_order_id=result.order_id,
         quantity=abs(intent.quantity),
@@ -80,6 +83,10 @@ def start_cycle_from_signal(
         maker_one_way_bps=signal.maker_roundtrip_bps / 2.0,
         taker_one_way_bps=signal.taker_roundtrip_bps / 2.0,
         entry_deadline_ms=ts + _seconds_ms(config.scalp_entry_timeout_seconds),
+        strategy_evaluation_id=gate.evaluation_id,
+        strategy_take_profit_bps=take_profit_bps,
+        strategy_stop_loss_bps=stop_loss_bps,
+        strategy_max_hold_seconds=max_hold_seconds,
         timestamp_ms=ts,
     )
     return ScalpLifecycleResult(
@@ -170,7 +177,7 @@ def _manage_entry_submitted(
             exit_order_id=exit_order_id,
             opened_ms=timestamp_ms,
             exit_deadline_ms=timestamp_ms + _seconds_ms(config.scalp_exit_reprice_seconds),
-            max_hold_deadline_ms=timestamp_ms + _seconds_ms(config.scalp_max_hold_seconds),
+            max_hold_deadline_ms=timestamp_ms + _seconds_ms(_cycle_max_hold_seconds(cycle, config)),
             last_mid_price=mid,
             timestamp_ms=timestamp_ms,
         )
@@ -461,6 +468,13 @@ def _repriced_exit_price(
     if side == "long":
         return max(ask, entry_price * (1.0 + min_profit))
     return min(bid, entry_price / (1.0 + min_profit))
+
+
+def _cycle_max_hold_seconds(cycle: sqlite3.Row, config: TradingConfig) -> int:
+    value = cycle["strategy_max_hold_seconds"]
+    if value is None:
+        return int(config.scalp_max_hold_seconds)
+    return int(value)
 
 
 def _pnl(side: str, entry_price: float, exit_price: float, quantity: float) -> float:

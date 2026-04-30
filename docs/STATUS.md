@@ -50,6 +50,7 @@
 - 2026-04-30: Dashboard signal/lifecycle/order tables now show 200 rows by default and support a bounded `limit` query parameter for longer inspection.
 - 2026-04-30: Strategy evaluation/gating was added. SQLite now stores cycle and signal-grid evaluations, the dashboard has a strategy-candidate tab, and new lifecycle entries are blocked unless the matching symbol/regime/side/current TP/SL/max-hold evaluation is approved.
 - 2026-04-30: Strategy evaluation now compares maker-post-only, taker-momentum, and hybrid taker-entry/maker-exit candidates with taker slippage assumptions. Telegram strategy reports are sent when candidate decisions change or on a periodic interval.
+- 2026-04-30: Strategy gating now uses net expectancy plus observed win/loss payoff balance instead of a hard 50% win-rate cutoff. Approved signal-grid candidates can pass their own TP/SL/max-hold values into the dry-run/paper lifecycle.
 
 ## Next Work Packets
 
@@ -58,5 +59,5 @@
 3. Add exact exchange info parsing for tick size and quantity step size before allowing live orders.
 4. Add live exchange fill ingestion and open-order reconciliation.
 5. Let USDC dry-run scalping collection continue, then inspect Telegram `전략` and the dashboard strategy tab.
-6. Review maker/taker/hybrid candidates and only consider paper/live escalation for `APPROVED` rows with stable sample sizes.
+6. Review maker/taker/hybrid candidates and only consider live escalation after `APPROVED` rows stay stable across larger sample sizes and their paper lifecycle outcomes are positive.
 7. Add exact exchange info parsing for tick size and quantity step size before allowing live orders.

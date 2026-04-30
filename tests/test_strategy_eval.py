@@ -112,6 +112,49 @@ class StrategyEvaluationTests(unittest.TestCase):
             allowed = strategy_gate_decision(store, signal, config)
             self.assertTrue(allowed.allowed)
 
+    def test_strategy_gate_can_select_approved_candidate_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            config = TradingConfig(
+                strategy_gate_enabled=True,
+                scalp_take_profit_bps=3,
+                scalp_stop_loss_bps=6,
+                scalp_max_hold_seconds=180,
+            )
+            signal = _signal(symbol="DOGEUSDC", side="short", regime="aligned_short")
+            store.insert_strategy_evaluations(
+                [
+                    {
+                        "source": "signal_grid",
+                        "execution_mode": MAKER_POST_ONLY,
+                        "symbol": "DOGEUSDC",
+                        "regime": "aligned_short",
+                        "side": "short",
+                        "take_profit_bps": 20.0,
+                        "stop_loss_bps": 4.0,
+                        "max_hold_seconds": 300,
+                        "sample_count": 50,
+                        "win_count": 23,
+                        "loss_count": 27,
+                        "win_rate": 23 / 50,
+                        "avg_pnl_bps": 2.5,
+                        "sum_pnl_bps": 125.0,
+                        "avg_win_bps": 20.0,
+                        "avg_loss_bps": -6.0,
+                        "decision": "APPROVED",
+                        "reason": "test candidate",
+                    }
+                ],
+                timestamp_ms=10_000,
+            )
+
+            allowed = strategy_gate_decision(store, signal, config)
+
+            self.assertTrue(allowed.allowed)
+            self.assertEqual(allowed.take_profit_bps, 20.0)
+            self.assertEqual(allowed.stop_loss_bps, 4.0)
+            self.assertEqual(allowed.max_hold_seconds, 300)
+
     def test_signal_grid_can_approve_positive_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")
@@ -139,6 +182,37 @@ class StrategyEvaluationTests(unittest.TestCase):
             ]
 
             self.assertEqual(approved[0]["decision"], "APPROVED")
+
+    def test_signal_grid_can_approve_asymmetric_payoff_below_half_win_rate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            config = TradingConfig(strategy_min_samples=7, strategy_min_win_rate=0.40)
+            horizons = [20.0, 20.0, 20.0, -4.0, -4.0, -4.0, -4.0]
+            for index, horizon in enumerate(horizons):
+                signal_id = store.insert_signal(_signal(horizon=horizon), timestamp_ms=1_000 + index)
+                store.update_signal_scores(
+                    signal_id,
+                    {
+                        "horizon_1m_bps": horizon,
+                        "horizon_3m_bps": horizon,
+                        "horizon_5m_bps": horizon,
+                    },
+                )
+
+            rows = evaluate_and_store_strategy(store, config)
+            approved = [
+                row
+                for row in rows
+                if row["source"] == "signal_grid"
+                and row["execution_mode"] == MAKER_POST_ONLY
+                and row["take_profit_bps"] == 20.0
+                and row["stop_loss_bps"] == 4.0
+                and row["max_hold_seconds"] == 60
+            ]
+
+            self.assertEqual(approved[0]["decision"], "APPROVED")
+            self.assertLess(approved[0]["win_rate"], 0.50)
+            self.assertGreater(approved[0]["avg_pnl_bps"], 0.0)
 
     def test_signal_grid_evaluates_taker_modes_with_extra_cost(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

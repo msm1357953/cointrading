@@ -15,12 +15,18 @@ class FakeOrderClient:
         return {"dryRun": True, "params": {"symbol": intent.symbol, "side": intent.side}}
 
 
-def _signal(side="long", trade_allowed=True, maker_cost=0.0):
+def _signal(
+    side="long",
+    trade_allowed=True,
+    maker_cost=0.0,
+    symbol="BTCUSDC",
+    regime="aligned_long",
+):
     return ScalpSignal(
-        symbol="BTCUSDC",
+        symbol=symbol,
         side=side,
         reason="bid imbalance with positive momentum",
-        regime="aligned_long",
+        regime=regime,
         trade_allowed=trade_allowed,
         mid_price=100.0,
         spread_bps=1.0,
@@ -148,6 +154,75 @@ class StorageExecutionTests(unittest.TestCase):
             counts = store.summary_counts()
             self.assertEqual(counts["scalp_cycles"], 1)
             self.assertEqual(counts["fills"], 2)
+
+    def test_lifecycle_uses_approved_strategy_candidate_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            client = FakeOrderClient()
+            config = TradingConfig(
+                scalp_take_profit_bps=3,
+                scalp_stop_loss_bps=6,
+                scalp_max_hold_seconds=180,
+                strategy_gate_enabled=True,
+            )
+            store.insert_strategy_evaluations(
+                [
+                    {
+                        "source": "signal_grid",
+                        "execution_mode": "maker_post_only",
+                        "symbol": "DOGEUSDC",
+                        "regime": "aligned_short",
+                        "side": "short",
+                        "take_profit_bps": 20.0,
+                        "stop_loss_bps": 4.0,
+                        "max_hold_seconds": 300,
+                        "sample_count": 50,
+                        "win_count": 23,
+                        "loss_count": 27,
+                        "win_rate": 23 / 50,
+                        "avg_pnl_bps": 2.5,
+                        "sum_pnl_bps": 125.0,
+                        "avg_win_bps": 20.0,
+                        "avg_loss_bps": -6.0,
+                        "decision": "APPROVED",
+                        "reason": "test candidate",
+                    }
+                ],
+                timestamp_ms=10_000,
+            )
+            signal = _signal(side="short", symbol="DOGEUSDC", regime="aligned_short")
+            signal_id = store.insert_signal(signal, timestamp_ms=11_000)
+
+            start = start_cycle_from_signal(
+                client,
+                store,
+                signal,
+                config,
+                signal_id=signal_id,
+                timestamp_ms=12_000,
+            )
+
+            self.assertEqual(start.action, "entry_submitted")
+            cycle = store.active_scalp_cycle("DOGEUSDC")
+            assert cycle is not None
+            self.assertEqual(float(cycle["strategy_take_profit_bps"]), 20.0)
+            self.assertEqual(float(cycle["strategy_stop_loss_bps"]), 4.0)
+            self.assertEqual(int(cycle["strategy_max_hold_seconds"]), 300)
+
+            filled = manage_cycle(
+                client,
+                store,
+                cycle,
+                config,
+                bid=float(cycle["entry_price"]) + 0.01,
+                ask=float(cycle["entry_price"]) + 0.02,
+                timestamp_ms=13_000,
+            )
+
+            self.assertEqual(filled.action, "entry_filled")
+            cycle = store.active_scalp_cycle("DOGEUSDC")
+            assert cycle is not None
+            self.assertEqual(int(cycle["max_hold_deadline_ms"]), 313_000)
 
 
 if __name__ == "__main__":

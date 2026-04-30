@@ -28,6 +28,9 @@ class StrategyGateDecision:
     allowed: bool
     reason: str
     evaluation_id: int | None = None
+    take_profit_bps: float | None = None
+    stop_loss_bps: float | None = None
+    max_hold_seconds: int | None = None
 
 
 def evaluate_and_store_strategy(
@@ -170,12 +173,18 @@ def strategy_gate_decision(
     config: TradingConfig,
 ) -> StrategyGateDecision:
     if not config.strategy_gate_enabled:
-        return StrategyGateDecision(True, "strategy gate disabled")
+        return StrategyGateDecision(
+            True,
+            "strategy gate disabled",
+            take_profit_bps=config.scalp_take_profit_bps,
+            stop_loss_bps=config.scalp_stop_loss_bps,
+            max_hold_seconds=int(config.scalp_max_hold_seconds),
+        )
     if signal.side not in {"long", "short"}:
         return StrategyGateDecision(False, "strategy gate: flat signal")
 
     sources = ("cycles", "signal_grid")
-    sample_low: StrategyGateDecision | None = None
+    fallback: StrategyGateDecision | None = None
     for source in sources:
         row = store.latest_strategy_evaluation(
             symbol=signal.symbol,
@@ -190,25 +199,45 @@ def strategy_gate_decision(
         if row is None:
             continue
         if row["decision"] == "APPROVED":
-            return StrategyGateDecision(
-                True,
-                f"strategy gate approved by {source}",
-                int(row["id"]),
-            )
-        if row["decision"] == "SAMPLE_LOW":
-            sample_low = StrategyGateDecision(
+            return _gate_decision_from_row(row, f"strategy gate approved by {source}")
+        if fallback is None or row["decision"] == "SAMPLE_LOW":
+            fallback = StrategyGateDecision(
                 False,
                 f"strategy gate {row['decision']}: {row['reason']}",
                 int(row["id"]),
             )
             continue
+
+    candidate = store.latest_strategy_candidate(
+        symbol=signal.symbol,
+        regime=signal.regime,
+        side=signal.side,
+        execution_mode=config.strategy_execution_mode,
+        decision="APPROVED",
+        source="signal_grid",
+    )
+    if candidate is not None:
+        return _gate_decision_from_row(candidate, "strategy gate approved candidate")
+
+    best = store.latest_strategy_candidate(
+        symbol=signal.symbol,
+        regime=signal.regime,
+        side=signal.side,
+        execution_mode=config.strategy_execution_mode,
+        source="signal_grid",
+    )
+    if best is not None:
         return StrategyGateDecision(
             False,
-            f"strategy gate {row['decision']}: {row['reason']}",
-            int(row["id"]),
+            "strategy gate no approved candidate; best "
+            f"{best['decision']} TP={float(best['take_profit_bps']):.1f} "
+            f"SL={float(best['stop_loss_bps']):.1f} "
+            f"H={int(best['max_hold_seconds'])}s "
+            f"avg={float(best['avg_pnl_bps']):.3f}bps: {best['reason']}",
+            int(best["id"]),
         )
-    if sample_low is not None:
-        return sample_low
+    if fallback is not None:
+        return fallback
     return StrategyGateDecision(
         False,
         "strategy gate: no evaluation for "
@@ -241,6 +270,17 @@ def strategy_evaluation_text(rows: Iterable[dict[str, Any]], *, limit: int = 20)
             )
         )
     return "\n".join(lines)
+
+
+def _gate_decision_from_row(row: sqlite3.Row, reason: str) -> StrategyGateDecision:
+    return StrategyGateDecision(
+        True,
+        reason,
+        int(row["id"]),
+        take_profit_bps=float(row["take_profit_bps"]),
+        stop_loss_bps=float(row["stop_loss_bps"]),
+        max_hold_seconds=int(row["max_hold_seconds"]),
+    )
 
 
 def _grid_signal_rows(
@@ -409,13 +449,19 @@ def _classify(
         return "SAMPLE_LOW", f"표본 {sample_count} < {config.strategy_min_samples}"
     if avg_pnl_bps <= config.strategy_min_expectancy_bps:
         return "BLOCKED", f"기대값 {avg_pnl_bps:.3f}bps <= {config.strategy_min_expectancy_bps:.3f}bps"
-    if win_rate < config.strategy_min_win_rate:
-        return "BLOCKED", f"승률 {win_rate:.1%} < {config.strategy_min_win_rate:.1%}"
     if avg_win_bps and avg_loss_bps and avg_loss_bps < 0:
+        required_win_rate = max(
+            config.strategy_min_win_rate,
+            abs(avg_loss_bps) / (avg_win_bps + abs(avg_loss_bps)),
+        )
+        if win_rate < required_win_rate:
+            return "BLOCKED", f"승률 {win_rate:.1%} < 손익비 필요승률 {required_win_rate:.1%}"
         loss_win_ratio = abs(avg_loss_bps) / avg_win_bps
         if loss_win_ratio > config.strategy_max_loss_win_ratio:
             return "BLOCKED", f"손실/이익폭 {loss_win_ratio:.2f} > {config.strategy_max_loss_win_ratio:.2f}"
-    return "APPROVED", "평가 기준 통과"
+    elif win_rate < config.strategy_min_win_rate:
+        return "BLOCKED", f"승률 {win_rate:.1%} < 하한 {config.strategy_min_win_rate:.1%}"
+    return "APPROVED", "기대값/손익비 기준 통과"
 
 
 def _optional_float(value: Any) -> float | None:

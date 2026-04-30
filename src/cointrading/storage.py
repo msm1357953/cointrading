@@ -199,9 +199,14 @@ class TradingStore:
                     last_mid_price REAL,
                     realized_pnl REAL,
                     reprice_count INTEGER NOT NULL DEFAULT 0,
+                    strategy_evaluation_id INTEGER,
+                    strategy_take_profit_bps REAL,
+                    strategy_stop_loss_bps REAL,
+                    strategy_max_hold_seconds INTEGER,
                     FOREIGN KEY(entry_signal_id) REFERENCES signals(id),
                     FOREIGN KEY(entry_order_id) REFERENCES orders(id),
-                    FOREIGN KEY(exit_order_id) REFERENCES orders(id)
+                    FOREIGN KEY(exit_order_id) REFERENCES orders(id),
+                    FOREIGN KEY(strategy_evaluation_id) REFERENCES strategy_evaluations(id)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_scalp_cycles_symbol_status
@@ -244,6 +249,10 @@ class TradingStore:
                 "execution_mode",
                 "TEXT NOT NULL DEFAULT 'maker_post_only'",
             )
+            _ensure_column(connection, "scalp_cycles", "strategy_evaluation_id", "INTEGER")
+            _ensure_column(connection, "scalp_cycles", "strategy_take_profit_bps", "REAL")
+            _ensure_column(connection, "scalp_cycles", "strategy_stop_loss_bps", "REAL")
+            _ensure_column(connection, "scalp_cycles", "strategy_max_hold_seconds", "INTEGER")
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_strategy_evaluations_latest_mode
@@ -509,6 +518,10 @@ class TradingStore:
         max_hold_deadline_ms: int | None = None,
         opened_ms: int | None = None,
         last_mid_price: float | None = None,
+        strategy_evaluation_id: int | None = None,
+        strategy_take_profit_bps: float | None = None,
+        strategy_stop_loss_bps: float | None = None,
+        strategy_max_hold_seconds: int | None = None,
         timestamp_ms: int | None = None,
     ) -> int:
         ts = timestamp_ms or now_ms()
@@ -520,9 +533,11 @@ class TradingStore:
                     status, reason, entry_signal_id, entry_order_id, exit_order_id,
                     quantity, entry_price, target_price, stop_price,
                     maker_one_way_bps, taker_one_way_bps, entry_deadline_ms,
-                    exit_deadline_ms, max_hold_deadline_ms, opened_ms, last_mid_price
+                    exit_deadline_ms, max_hold_deadline_ms, opened_ms, last_mid_price,
+                    strategy_evaluation_id, strategy_take_profit_bps,
+                    strategy_stop_loss_bps, strategy_max_hold_seconds
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ts,
@@ -547,6 +562,10 @@ class TradingStore:
                     max_hold_deadline_ms,
                     opened_ms,
                     last_mid_price,
+                    strategy_evaluation_id,
+                    strategy_take_profit_bps,
+                    strategy_stop_loss_bps,
+                    strategy_max_hold_seconds,
                 ),
             )
             return int(cursor.lastrowid)
@@ -779,6 +798,49 @@ class TradingStore:
                   AND max_hold_seconds=?
                   {source_sql}
                 ORDER BY evaluated_ms DESC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+
+    def latest_strategy_candidate(
+        self,
+        *,
+        symbol: str,
+        regime: str,
+        side: str,
+        execution_mode: str = "maker_post_only",
+        decision: str | None = None,
+        source: str | None = None,
+    ) -> sqlite3.Row | None:
+        params: list[Any] = [execution_mode, symbol.upper(), regime, side]
+        decision_sql = ""
+        if decision:
+            decision_sql = "AND decision=?"
+            params.append(decision)
+        source_sql = ""
+        if source:
+            source_sql = "AND source=?"
+            params.append(source)
+        with self.connect() as connection:
+            latest = connection.execute(
+                "SELECT MAX(evaluated_ms) FROM strategy_evaluations"
+            ).fetchone()[0]
+            if latest is None:
+                return None
+            params.append(latest)
+            return connection.execute(
+                f"""
+                SELECT *
+                FROM strategy_evaluations
+                WHERE execution_mode=?
+                  AND symbol=?
+                  AND regime=?
+                  AND side=?
+                  {decision_sql}
+                  {source_sql}
+                  AND evaluated_ms=?
+                ORDER BY avg_pnl_bps DESC, sample_count DESC
                 LIMIT 1
                 """,
                 params,
