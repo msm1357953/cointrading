@@ -54,7 +54,7 @@ class GeminiReportClient:
             "generationConfig": {
                 "temperature": 0.2,
                 "topP": 0.8,
-                "maxOutputTokens": 900,
+                "maxOutputTokens": 4096,
             },
         }
         request = Request(
