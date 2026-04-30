@@ -45,6 +45,7 @@
 - 2026-04-30: SOLUSDC, XRPUSDC, and DOGEUSDC were added to VM dry-run collection for altcoin comparison. First checks showed enough top-book liquidity, but immediate signals were all `quiet_chop`.
 - 2026-04-30: Post-only scalp lifecycle state machine was added in dry-run/paper mode. It tracks entry wait, paper fill, immediate take-profit, timeout/reprice, stop-loss, max-hold exit, fills, and paper PnL.
 - 2026-04-30: Dashboard and Telegram human-facing order/cycle times now display in Korea time (KST); DB timestamps remain UTC.
+- 2026-04-30: Dashboard full-page refresh was replaced with a server-sent events stream so visible data updates in place.
 
 ## Next Work Packets
 
