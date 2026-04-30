@@ -202,7 +202,13 @@ class TelegramCommandTests(unittest.TestCase):
             TelegramBotState(),
             exchange_client=FakeExchangeClient(),
         )
-        with patch("cointrading.telegram_bot.scalp_report_rows_text", return_value="report ok"):
+        with (
+            patch("cointrading.telegram_bot.scalp_report_rows_text", return_value="report ok"),
+            patch(
+                "cointrading.telegram_bot._with_recent_order_summary",
+                side_effect=lambda text, store: text,
+            ),
+        ):
             reply = processor.handle_text("123", "/scalp_report BTCUSDC")
         self.assertEqual(reply, "report ok")
 
@@ -219,7 +225,13 @@ class TelegramCommandTests(unittest.TestCase):
         self.assertIn("현재 상태", processor.handle_text("123", "상태"))
         self.assertIn("스캘핑 신호", processor.handle_text("123", "스캘핑 BTCUSDC"))
         self.assertIn("선물 수수료 상태", processor.handle_text("123", "수수료"))
-        with patch("cointrading.telegram_bot.scalp_report_rows_text", return_value="report ok"):
+        with (
+            patch("cointrading.telegram_bot.scalp_report_rows_text", return_value="report ok"),
+            patch(
+                "cointrading.telegram_bot._with_recent_order_summary",
+                side_effect=lambda text, store: text,
+            ),
+        ):
             self.assertEqual(processor.handle_text("123", "보고 BTCUSDC"), "report ok")
 
 
