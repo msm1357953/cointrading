@@ -47,6 +47,7 @@
 - 2026-04-30: Dashboard and Telegram human-facing order/cycle times now display in Korea time (KST); DB timestamps remain UTC.
 - 2026-04-30: Dashboard full-page refresh was replaced with a server-sent events stream so visible data updates in place.
 - 2026-04-30: Dashboard was split into summary, performance, lifecycle, signal, and order tabs.
+- 2026-04-30: Dashboard signal/lifecycle/order tables now show 200 rows by default and support a bounded `limit` query parameter for longer inspection.
 
 ## Next Work Packets
 

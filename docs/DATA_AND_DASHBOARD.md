@@ -39,6 +39,7 @@ The VM runs this as `cointrading-scalp-engine.timer` every 15 seconds. Live orde
 ## Dashboard
 
 The dashboard is a small HTTP server with tabs for summary, performance, lifecycle state, signals, and orders. It uses a server-sent events stream to update the data in place without reloading the whole page.
+Signal, lifecycle, and order tables show the latest 200 rows by default. Add `&limit=500` to the dashboard URL to inspect a longer window; the dashboard caps this at 1000 rows to keep mobile loading reasonable.
 
 Set `COINTRADING_DASHBOARD_AUTH_TOKEN` before exposing it outside the VM.
 When the token is set, requests must include either `?token=...` or an `Authorization: Bearer ...` header.

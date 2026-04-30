@@ -13,6 +13,10 @@ from cointrading.scalping import scalp_report_rows_text
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms, now_ms
 
 
+DEFAULT_DASHBOARD_ROW_LIMIT = 200
+MAX_DASHBOARD_ROW_LIMIT = 1000
+
+
 def run_dashboard(host: str = "127.0.0.1", port: int = 8080, db_path: Path | None = None) -> None:
     store_path = db_path or default_db_path()
     config = TradingConfig.from_env()
@@ -31,11 +35,12 @@ def run_dashboard(host: str = "127.0.0.1", port: int = 8080, db_path: Path | Non
                 self._send_text(401, "Unauthorized\n")
                 return
             symbol = query.get("symbol", [None])[0]
+            limit = _dashboard_limit(query)
             if parsed.path == "/events":
-                self._send_events(store_path, config, symbol)
+                self._send_events(store_path, config, symbol, limit)
                 return
             store = TradingStore(store_path)
-            body = _page(_snapshot(store, config, symbol), config)
+            body = _page(_snapshot(store, config, symbol, limit), config)
             payload = body.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -49,6 +54,7 @@ def run_dashboard(host: str = "127.0.0.1", port: int = 8080, db_path: Path | Non
             store_path: Path,
             config: TradingConfig,
             symbol: str | None,
+            limit: int,
         ) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -58,7 +64,7 @@ def run_dashboard(host: str = "127.0.0.1", port: int = 8080, db_path: Path | Non
             while True:
                 try:
                     payload = json.dumps(
-                        _snapshot(TradingStore(store_path), config, symbol),
+                        _snapshot(TradingStore(store_path), config, symbol, limit),
                         ensure_ascii=False,
                     )
                     self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
@@ -97,10 +103,22 @@ def _is_authorized(
     return authorization_header.strip() == f"Bearer {auth_token}"
 
 
+def _dashboard_limit(query: dict[str, list[str]]) -> int:
+    raw_limit = query.get("limit", [""])[0]
+    if not raw_limit:
+        return DEFAULT_DASHBOARD_ROW_LIMIT
+    try:
+        limit = int(raw_limit)
+    except ValueError:
+        return DEFAULT_DASHBOARD_ROW_LIMIT
+    return max(1, min(limit, MAX_DASHBOARD_ROW_LIMIT))
+
+
 def _snapshot(
     store: TradingStore,
     config: TradingConfig,
     symbol: str | None,
+    limit: int = DEFAULT_DASHBOARD_ROW_LIMIT,
 ) -> dict[str, str]:
     rows = store.list_signals(symbol=symbol, symbols=config.scalp_symbols if not symbol else None)
     report = scalp_report_rows_text(
@@ -110,10 +128,11 @@ def _snapshot(
     )
     return {
         "generated_at": kst_from_ms(now_ms()),
+        "row_limit": str(limit),
         "report": report,
-        "signal_rows": _signal_rows_html(rows[-25:]),
-        "order_rows": _order_rows_html(store.recent_orders(limit=10)),
-        "cycle_rows": _cycle_rows_html(store.recent_scalp_cycles(limit=10)),
+        "signal_rows": _signal_rows_html(rows[-limit:]),
+        "order_rows": _order_rows_html(store.recent_orders(limit=limit)),
+        "cycle_rows": _cycle_rows_html(store.recent_scalp_cycles(limit=limit)),
         "performance_rows": _performance_rows_html(store.scalp_cycle_performance()),
         "exit_reason_rows": _exit_reason_rows_html(store.scalp_cycle_exit_reasons()),
     }
@@ -189,6 +208,7 @@ def _exit_reason_rows_html(rows) -> str:
 
 
 def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
+    row_limit = escape(snapshot.get("row_limit", str(DEFAULT_DASHBOARD_ROW_LIMIT)))
     signal_rows = snapshot["signal_rows"]
     order_rows = snapshot["order_rows"]
     cycle_rows = snapshot["cycle_rows"]
@@ -219,7 +239,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
 <body>
   <header>
     <h1>Cointrading</h1>
-    <p class="muted"><span id="stream-status" class="status"></span>대상: {escape(", ".join(config.scalp_symbols))} · <span id="generated-at">{escape(snapshot["generated_at"])}</span></p>
+    <p class="muted"><span id="stream-status" class="status"></span>대상: {escape(", ".join(config.scalp_symbols))} · 최근 <span id="row-limit">{row_limit}</span>개 표시 · <span id="generated-at">{escape(snapshot["generated_at"])}</span></p>
   </header>
   <nav>
     <button class="active" data-tab="summary">요약</button>
@@ -279,6 +299,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     events.onmessage = (event) => {{
       const data = JSON.parse(event.data);
       document.getElementById("generated-at").textContent = data.generated_at;
+      document.getElementById("row-limit").textContent = data.row_limit;
       document.getElementById("report").textContent = data.report;
       document.getElementById("signal-rows").innerHTML = data.signal_rows;
       document.getElementById("order-rows").innerHTML = data.order_rows;
