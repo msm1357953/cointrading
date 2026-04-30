@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 from cointrading.config import TradingConfig
 from cointrading.market_regime import macro_regime_ko, trade_bias_ko
+from cointrading.risk_state import evaluate_runtime_risk
 from cointrading.scalping import scalp_report_rows_text
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms, now_ms
 
@@ -130,6 +131,7 @@ def _snapshot(
     return {
         "generated_at": kst_from_ms(now_ms()),
         "row_limit": str(limit),
+        "risk_state": evaluate_runtime_risk(store, config).to_text(),
         "report": report,
         "signal_rows": _signal_rows_html(rows[-limit:]),
         "order_rows": _order_rows_html(store.recent_orders(limit=limit)),
@@ -255,6 +257,7 @@ def _exit_reason_rows_html(rows) -> str:
 
 def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     row_limit = escape(snapshot.get("row_limit", str(DEFAULT_DASHBOARD_ROW_LIMIT)))
+    risk_state = snapshot.get("risk_state", "런타임 위험모드\n아직 산출된 내용이 없습니다.")
     signal_rows = snapshot["signal_rows"]
     order_rows = snapshot["order_rows"]
     cycle_rows = snapshot["cycle_rows"]
@@ -291,6 +294,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
   </header>
   <nav>
     <button class="active" data-tab="summary">요약</button>
+    <button data-tab="risk">위험모드</button>
     <button data-tab="performance">성과</button>
     <button data-tab="market">장세라우터</button>
     <button data-tab="strategies">전략후보</button>
@@ -301,6 +305,10 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
   <section id="tab-summary" class="tab-panel active">
     <h2>요약</h2>
     <pre id="report">{escape(snapshot["report"])}</pre>
+  </section>
+  <section id="tab-risk" class="tab-panel">
+    <h2>위험모드</h2>
+    <pre id="risk-state">{escape(risk_state)}</pre>
   </section>
   <section id="tab-performance" class="tab-panel">
     <h2>방향별 성과</h2>
@@ -364,6 +372,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       const data = JSON.parse(event.data);
       document.getElementById("generated-at").textContent = data.generated_at;
       document.getElementById("row-limit").textContent = data.row_limit;
+      document.getElementById("risk-state").textContent = data.risk_state;
       document.getElementById("report").textContent = data.report;
       document.getElementById("signal-rows").innerHTML = data.signal_rows;
       document.getElementById("order-rows").innerHTML = data.order_rows;

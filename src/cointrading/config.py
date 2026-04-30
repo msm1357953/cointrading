@@ -114,6 +114,19 @@ class TradingConfig:
     strategy_notify_interval_minutes: int = 360
     macro_regime_gate_enabled: bool = True
     macro_regime_max_age_minutes: int = 30
+    runtime_risk_enabled: bool = True
+    runtime_risk_lookback_minutes: int = 30
+    runtime_risk_min_events: int = 8
+    runtime_risk_stop_loss_ratio_caution: float = 0.40
+    runtime_risk_stop_loss_ratio_defensive: float = 0.55
+    runtime_risk_stop_loss_ratio_halt: float = 0.75
+    runtime_risk_requote_ratio_caution: float = 0.30
+    runtime_risk_requote_ratio_defensive: float = 0.45
+    runtime_risk_requote_ratio_halt: float = 0.65
+    runtime_risk_daily_loss_pct: float = 0.01
+    runtime_risk_btc_vol_defensive_bps: float = 120.0
+    runtime_risk_btc_atr_defensive_bps: float = 180.0
+    live_scalp_lifecycle_enabled: bool = False
     llm_enabled: bool = True
     llm_provider: str = "gemini"
     llm_model: str = "gemini-3.1-pro-preview"
@@ -228,6 +241,58 @@ class TradingConfig:
             macro_regime_max_age_minutes=_get_int(
                 "COINTRADING_MACRO_REGIME_MAX_AGE_MINUTES",
                 cls.macro_regime_max_age_minutes,
+            ),
+            runtime_risk_enabled=_get_bool(
+                "COINTRADING_RUNTIME_RISK_ENABLED",
+                cls.runtime_risk_enabled,
+            ),
+            runtime_risk_lookback_minutes=_get_int(
+                "COINTRADING_RUNTIME_RISK_LOOKBACK_MINUTES",
+                cls.runtime_risk_lookback_minutes,
+            ),
+            runtime_risk_min_events=_get_int(
+                "COINTRADING_RUNTIME_RISK_MIN_EVENTS",
+                cls.runtime_risk_min_events,
+            ),
+            runtime_risk_stop_loss_ratio_caution=_get_float(
+                "COINTRADING_RUNTIME_RISK_STOP_LOSS_RATIO_CAUTION",
+                cls.runtime_risk_stop_loss_ratio_caution,
+            ),
+            runtime_risk_stop_loss_ratio_defensive=_get_float(
+                "COINTRADING_RUNTIME_RISK_STOP_LOSS_RATIO_DEFENSIVE",
+                cls.runtime_risk_stop_loss_ratio_defensive,
+            ),
+            runtime_risk_stop_loss_ratio_halt=_get_float(
+                "COINTRADING_RUNTIME_RISK_STOP_LOSS_RATIO_HALT",
+                cls.runtime_risk_stop_loss_ratio_halt,
+            ),
+            runtime_risk_requote_ratio_caution=_get_float(
+                "COINTRADING_RUNTIME_RISK_REQUOTE_RATIO_CAUTION",
+                cls.runtime_risk_requote_ratio_caution,
+            ),
+            runtime_risk_requote_ratio_defensive=_get_float(
+                "COINTRADING_RUNTIME_RISK_REQUOTE_RATIO_DEFENSIVE",
+                cls.runtime_risk_requote_ratio_defensive,
+            ),
+            runtime_risk_requote_ratio_halt=_get_float(
+                "COINTRADING_RUNTIME_RISK_REQUOTE_RATIO_HALT",
+                cls.runtime_risk_requote_ratio_halt,
+            ),
+            runtime_risk_daily_loss_pct=_get_float(
+                "COINTRADING_RUNTIME_RISK_DAILY_LOSS_PCT",
+                cls.runtime_risk_daily_loss_pct,
+            ),
+            runtime_risk_btc_vol_defensive_bps=_get_float(
+                "COINTRADING_RUNTIME_RISK_BTC_VOL_DEFENSIVE_BPS",
+                cls.runtime_risk_btc_vol_defensive_bps,
+            ),
+            runtime_risk_btc_atr_defensive_bps=_get_float(
+                "COINTRADING_RUNTIME_RISK_BTC_ATR_DEFENSIVE_BPS",
+                cls.runtime_risk_btc_atr_defensive_bps,
+            ),
+            live_scalp_lifecycle_enabled=_get_bool(
+                "COINTRADING_LIVE_SCALP_LIFECYCLE_ENABLED",
+                cls.live_scalp_lifecycle_enabled,
             ),
             llm_enabled=_get_bool("COINTRADING_LLM_ENABLED", cls.llm_enabled),
             llm_provider=_get_str("COINTRADING_LLM_PROVIDER", cls.llm_provider),

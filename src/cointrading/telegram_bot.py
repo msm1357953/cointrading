@@ -14,6 +14,7 @@ from cointrading.account import account_summary_text
 from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.market_regime import market_regime_rows_text
+from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
 from cointrading.scalping import (
     ScalpSignalEngine,
     default_scalp_log_path,
@@ -143,7 +144,9 @@ class TelegramCommandProcessor:
         "계좌": "account",
         "account": "account",
         "위험": "risk",
+        "위험모드": "risk",
         "리스크": "risk",
+        "리스크모드": "risk",
         "risk": "risk",
         "수수료": "fees",
         "fee": "fees",
@@ -278,12 +281,18 @@ class TelegramCommandProcessor:
         mode = "testnet" if self.trading_config.testnet else "mainnet"
         dry_run = "on" if self.trading_config.dry_run else "off"
         paused = "yes" if self.state.paused else "no"
+        risk_state = evaluate_runtime_risk(
+            TradingStore(default_db_path()),
+            self.trading_config,
+        )
         return "\n".join(
             [
                 "현재 상태",
                 f"모드: {mode}",
                 f"dry-run: {dry_run}",
                 f"정지 상태: {paused}",
+                f"위험모드: {risk_mode_ko(risk_state.mode)}",
+                f"신규 진입: {'허용' if risk_state.allows_new_entries else '차단'}",
                 "초기 기준 자산: "
                 f"{self.trading_config.initial_equity:.2f} {self.trading_config.equity_asset}",
                 f"스캘핑 대상: {', '.join(self.trading_config.scalp_symbols)}",
@@ -291,14 +300,21 @@ class TelegramCommandProcessor:
         )
 
     def risk_text(self) -> str:
+        risk_state = evaluate_runtime_risk(
+            TradingStore(default_db_path()),
+            self.trading_config,
+        )
         return "\n".join(
             [
                 "리스크 한도",
                 f"최대 낙폭 정지: {self.trading_config.max_drawdown_pct:.2%}",
                 f"일손실 정지: {self.trading_config.daily_loss_pct:.2%}",
+                f"런타임 일손실 정지: {self.trading_config.runtime_risk_daily_loss_pct:.2%}",
                 f"거래당 리스크: {self.trading_config.risk_per_trade_pct:.2%}",
                 f"최대 노출: 자산의 {self.trading_config.max_notional_multiplier:.2f}배",
                 f"최대 레버리지: {self.trading_config.max_leverage:.2f}배",
+                "",
+                risk_state.to_text(),
             ]
         )
 

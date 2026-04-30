@@ -16,6 +16,11 @@ class FakeOrderClient:
         return {"dryRun": True, "params": {"symbol": intent.symbol, "side": intent.side}}
 
 
+class FailingOrderClient:
+    def new_order(self, intent):
+        raise AssertionError("live order should not be submitted")
+
+
 def _signal(
     side="long",
     trade_allowed=True,
@@ -258,6 +263,31 @@ class StorageExecutionTests(unittest.TestCase):
 
             self.assertEqual(result.action, "blocked")
             self.assertIn("bear regime blocks long", result.detail)
+
+    def test_lifecycle_blocks_live_without_reconciliation_switch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            config = TradingConfig(
+                dry_run=False,
+                live_trading_enabled=True,
+                live_scalp_lifecycle_enabled=False,
+                runtime_risk_enabled=False,
+                strategy_gate_enabled=False,
+            )
+            signal = _signal()
+            signal_id = store.insert_signal(signal, timestamp_ms=2_000)
+
+            result = start_cycle_from_signal(
+                FailingOrderClient(),
+                store,
+                signal,
+                config,
+                signal_id=signal_id,
+                timestamp_ms=3_000,
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertIn("live scalp lifecycle is disabled", result.detail)
 
 
 if __name__ == "__main__":

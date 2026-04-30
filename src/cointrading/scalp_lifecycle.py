@@ -9,6 +9,7 @@ from cointrading.execution import place_post_only_maker
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.market_regime import scalp_allowed_by_macro
 from cointrading.models import OrderIntent
+from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
 from cointrading.scalping import ScalpSignal
 from cointrading.storage import TradingStore, now_ms
 from cointrading.strategy_eval import strategy_gate_decision
@@ -35,41 +36,52 @@ def start_cycle_from_signal(
         return ScalpLifecycleResult(signal.symbol, "skip", "active cycle already exists")
 
     ts = timestamp_ms or now_ms()
+    if not config.dry_run and not config.live_scalp_lifecycle_enabled:
+        reason = "live scalp lifecycle is disabled; entry blocked until reconciliation is ready"
+        order_id = _insert_blocked_attempt(
+            store,
+            signal,
+            signal_id,
+            ts,
+            reason,
+            dry_run=config.dry_run,
+        )
+        return ScalpLifecycleResult(signal.symbol, "blocked", reason, order_id)
+
+    runtime_risk = evaluate_runtime_risk(store, config, symbol=signal.symbol, current_ms=ts)
+    if not runtime_risk.allows_new_entries:
+        reason = f"runtime risk: {risk_mode_ko(runtime_risk.mode)} - {runtime_risk.reasons[0]}"
+        order_id = _insert_blocked_attempt(
+            store,
+            signal,
+            signal_id,
+            ts,
+            reason,
+            dry_run=config.dry_run,
+        )
+        return ScalpLifecycleResult(signal.symbol, "blocked", reason, order_id)
+
     macro_allowed, macro_reason = _macro_gate_decision(store, signal, config, ts)
     if not macro_allowed:
-        order_id = store.insert_order_attempt(
-            OrderIntent(
-                symbol=signal.symbol,
-                side="BUY" if signal.side != "short" else "SELL",
-                quantity=0.0,
-                order_type="LIMIT",
-                price=signal.mid_price,
-                time_in_force="GTX",
-            ),
-            status="BLOCKED",
-            dry_run=True,
-            reason=macro_reason,
-            signal_id=signal_id,
-            timestamp_ms=ts,
+        order_id = _insert_blocked_attempt(
+            store,
+            signal,
+            signal_id,
+            ts,
+            macro_reason,
+            dry_run=config.dry_run,
         )
         return ScalpLifecycleResult(signal.symbol, "blocked", macro_reason, order_id)
 
     gate = strategy_gate_decision(store, signal, config)
     if not gate.allowed:
-        order_id = store.insert_order_attempt(
-            OrderIntent(
-                symbol=signal.symbol,
-                side="BUY" if signal.side != "short" else "SELL",
-                quantity=0.0,
-                order_type="LIMIT",
-                price=signal.mid_price,
-                time_in_force="GTX",
-            ),
-            status="BLOCKED",
-            dry_run=True,
-            reason=gate.reason,
-            signal_id=signal_id,
-            timestamp_ms=ts,
+        order_id = _insert_blocked_attempt(
+            store,
+            signal,
+            signal_id,
+            ts,
+            gate.reason,
+            dry_run=config.dry_run,
         )
         return ScalpLifecycleResult(signal.symbol, "blocked", gate.reason, order_id)
 
@@ -511,6 +523,32 @@ def _macro_gate_decision(
         signal.side,
         max_age_ms=int(config.macro_regime_max_age_minutes) * 60_000,
         current_ms=timestamp_ms,
+    )
+
+
+def _insert_blocked_attempt(
+    store: TradingStore,
+    signal: ScalpSignal,
+    signal_id: int,
+    timestamp_ms: int,
+    reason: str,
+    *,
+    dry_run: bool,
+) -> int:
+    return store.insert_order_attempt(
+        OrderIntent(
+            symbol=signal.symbol,
+            side="BUY" if signal.side != "short" else "SELL",
+            quantity=0.0,
+            order_type="LIMIT",
+            price=signal.mid_price,
+            time_in_force="GTX",
+        ),
+        status="BLOCKED",
+        dry_run=dry_run,
+        reason=reason,
+        signal_id=signal_id,
+        timestamp_ms=timestamp_ms,
     )
 
 

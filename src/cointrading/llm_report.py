@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 
 from cointrading.config import TradingConfig
 from cointrading.market_regime import macro_regime_ko, trade_bias_ko
+from cointrading.risk_state import evaluate_runtime_risk
 from cointrading.storage import TradingStore, kst_from_ms, now_ms
 
 
@@ -101,12 +102,20 @@ def build_report_context(store: TradingStore, config: TradingConfig) -> str:
     exit_rows = store.scalp_cycle_exit_reasons()[:10]
     recent_cycles = store.recent_scalp_cycles(limit=8)
     recent_orders = store.recent_orders(limit=8)
+    risk_state = evaluate_runtime_risk(store, config)
 
     lines = [
         f"generated_at: {kst_from_ms(now_ms())}",
         f"dry_run: {config.dry_run}",
         f"live_trading_enabled: {config.live_trading_enabled}",
         f"symbols: {', '.join(config.scalp_symbols)}",
+        "",
+        "runtime_risk:",
+        f"- mode={risk_state.mode} allows_new_entries={risk_state.allows_new_entries}",
+        f"- stop_loss_ratio={risk_state.recent_stop_loss_ratio:.1%} "
+        f"requote_ratio={risk_state.recent_requote_ratio:.1%} "
+        f"day_pnl={risk_state.kst_day_pnl:.6f}",
+        "- reasons=" + " | ".join(risk_state.reasons),
         "",
         "market_regimes:",
     ]

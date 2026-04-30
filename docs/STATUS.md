@@ -54,6 +54,7 @@
 - 2026-04-30: Macro regime routing was added. The VM classifies active symbols into bull/bear/range/breakout/panic regimes every 5 minutes, records the allowed strategy set, shows it in Telegram/dashboard, and blocks new scalping cycles when the macro router rejects that direction.
 - 2026-04-30: Gemini LLM reporting was added for Telegram risk summaries only. It runs about three times per day, uses SQLite context, and is explicitly excluded from order execution or live-entry decisions.
 - 2026-04-30: Gemini reporting was verified on the VM with `gemini-3.1-pro-preview`; the local/VM env key may be named `GEMINI_API_KEY`, `GEMINI_KEY`, or `gemini_key`. A forced Telegram risk summary was sent successfully after increasing the Gemini output budget.
+- 2026-04-30: Runtime risk mode was added. It converts recent stop-loss clusters, requote clusters, KST-day realized loss, and BTC stress into NORMAL/CAUTION/DEFENSIVE/HALT; DEFENSIVE/HALT blocks new entries, CAUTION blocks live entries, and the dashboard/Telegram/LLM context now expose this mode. Live scalp entry is also blocked unless `COINTRADING_LIVE_SCALP_LIFECYCLE_ENABLED=true`.
 
 ## Next Work Packets
 
@@ -65,3 +66,4 @@
 6. Review maker/taker/hybrid candidates and only consider live escalation after `APPROVED` rows stay stable across larger sample sizes and their paper lifecycle outcomes are positive.
 7. Add a local ML feature dataset from signals, macro regimes, orders, fills, and strategy outcomes; keep Gemini as reporting/monitoring only.
 8. Add exact exchange info parsing for tick size and quantity step size before allowing live orders.
+9. Before any real-money test, add live fill/order reconciliation and exact TP/SL exit handling, then run a Telegram/manual preflight check with live order notional capped to a tiny amount.

@@ -24,6 +24,7 @@ from cointrading.llm_report import (
 )
 from cointrading.market_regime import evaluate_market_regime
 from cointrading.models import Kline
+from cointrading.risk_state import evaluate_runtime_risk
 from cointrading.scalp_lifecycle import manage_cycle, start_cycle_from_signal
 from cointrading.scalping import (
     ScalpSignalEngine,
@@ -103,6 +104,9 @@ def main(argv: list[str] | None = None) -> None:
 
     db_summary_parser = subparsers.add_parser("db-summary")
     db_summary_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
+    risk_mode_parser = subparsers.add_parser("risk-mode")
+    risk_mode_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
     maker_once_parser = subparsers.add_parser("maker-once")
     maker_once_parser.add_argument("--symbol", default="BTCUSDC")
@@ -197,6 +201,8 @@ def main(argv: list[str] | None = None) -> None:
         migrate_csv_to_db(args.log_path, args.db_path)
     elif args.command == "db-summary":
         db_summary(args.db_path)
+    elif args.command == "risk-mode":
+        risk_mode(args.db_path)
     elif args.command == "maker-once":
         maker_once(args.symbol, args.db_path)
     elif args.command == "scalp-engine-step":
@@ -384,6 +390,10 @@ def db_summary(db_path: Path) -> None:
     print("SQLite summary")
     for key, value in counts.items():
         print(f"{key}: {value}")
+
+
+def risk_mode(db_path: Path) -> None:
+    print(evaluate_runtime_risk(TradingStore(db_path), TradingConfig.from_env()).to_text())
 
 
 def maker_once(symbol: str, db_path: Path) -> None:
