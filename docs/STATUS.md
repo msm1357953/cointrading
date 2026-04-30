@@ -6,7 +6,7 @@
 - Starting capital assumption: 1000 USDC.
 - Default mode: mainnet credentials can exist, but dry-run first. No live trading by default.
 - Initial symbols: BTCUSDC and ETHUSDC.
-- Dry-run scalping symbols: BTCUSDC and ETHUSDC.
+- Dry-run scalping symbols: BTCUSDC, ETHUSDC, SOLUSDC, XRPUSDC, and DOGEUSDC.
 
 ## Risk Defaults
 
@@ -40,8 +40,9 @@
 - 2026-04-30: `cointrading-telegram.service`, `cointrading-scalp-collect.timer`, and `cointrading-scalp-score.timer` are active on the VM.
 - 2026-04-30: API fee check shows BTCUSDC/ETHUSDC at maker 0 bps and taker 4 bps before BNB discount for this account.
 - 2026-04-30: BNB and USDC are funded in the futures wallet, so USDC symbols are the active dry-run universe.
-- Telegram and CLI fee/status defaults now focus on BTCUSDC/ETHUSDC; `보고 전체` is only for legacy USDT logs.
+- Telegram and CLI fee/status defaults focus on USDC symbols; `보고 전체` is only for legacy USDT logs.
 - 2026-04-30: SQLite store, order/fee tables, Telegram DB-backed reports, a token-protected cloud dashboard service, and a dry-run post-only maker command were added.
+- 2026-04-30: SOLUSDC, XRPUSDC, and DOGEUSDC were added to VM dry-run collection for altcoin comparison. First checks showed enough top-book liquidity, but immediate signals were all `quiet_chop`.
 
 ## Next Work Packets
 
