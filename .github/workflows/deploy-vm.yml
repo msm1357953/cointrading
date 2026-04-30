@@ -1,0 +1,73 @@
+name: Deploy to VM
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cointrading-vm-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_SSH_PRIVATE_KEY: ${{ secrets.VM_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_PRIVATE_KEY" > ~/.ssh/cointrading_deploy
+          chmod 600 ~/.ssh/cointrading_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy on VM
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_PROJECT_DIR: ${{ secrets.VM_PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/cointrading_deploy "$VM_USER@$VM_HOST" \
+            "VM_PROJECT_DIR='$VM_PROJECT_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$VM_PROJECT_DIR"
+
+          if [ ! -d .git ]; then
+            git init -b main
+            git remote add origin https://github.com/msm1357953/cointrading.git
+          fi
+          git remote set-url origin https://github.com/msm1357953/cointrading.git
+          git fetch --prune origin main
+          git checkout -B main origin/main
+
+          test -f .env
+          chmod 600 .env
+
+          if [ ! -d .venv ]; then
+            python3 -m venv .venv
+          fi
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m unittest discover -s tests -v
+
+          sudo cp deploy/cointrading-*.service deploy/cointrading-*.timer /etc/systemd/system/
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now cointrading-telegram.service
+          sudo systemctl enable --now cointrading-scalp-collect.timer
+          sudo systemctl enable --now cointrading-scalp-score.timer
+          sudo systemctl restart cointrading-telegram.service
+
+          systemctl is-active cointrading-telegram.service
+          systemctl is-active cointrading-scalp-collect.timer
+          systemctl is-active cointrading-scalp-score.timer
+          REMOTE
