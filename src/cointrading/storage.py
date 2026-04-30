@@ -441,6 +441,37 @@ class TradingStore:
             )
             return int(cursor.lastrowid)
 
+    def order_by_id(self, order_id: int) -> sqlite3.Row | None:
+        with self.connect() as connection:
+            return connection.execute(
+                "SELECT * FROM orders WHERE id=?",
+                (order_id,),
+            ).fetchone()
+
+    def update_order_attempt(
+        self,
+        order_id: int,
+        *,
+        status: str | None = None,
+        reason: str | None = None,
+        response: dict[str, Any] | None = None,
+    ) -> None:
+        updates: dict[str, Any] = {}
+        if status is not None:
+            updates["status"] = status
+        if reason is not None:
+            updates["reason"] = reason
+        if response is not None:
+            updates["response_json"] = json.dumps(response, sort_keys=True)
+        if not updates:
+            return
+        assignment = ", ".join(f"{field}=?" for field in updates)
+        with self.connect() as connection:
+            connection.execute(
+                f"UPDATE orders SET {assignment} WHERE id=?",
+                [*updates.values(), order_id],
+            )
+
     def record_fee_snapshot(
         self,
         symbol: str,
@@ -718,6 +749,8 @@ class TradingStore:
             "status",
             "reason",
             "exit_order_id",
+            "quantity",
+            "entry_price",
             "target_price",
             "stop_price",
             "entry_deadline_ms",

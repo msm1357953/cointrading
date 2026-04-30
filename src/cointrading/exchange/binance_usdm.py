@@ -95,6 +95,50 @@ class BinanceUSDMClient:
             }
         return self._signed_request("POST", "/fapi/v1/order", params=params)
 
+    def order_status(
+        self,
+        *,
+        symbol: str,
+        order_id: int | None = None,
+        orig_client_order_id: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"symbol": symbol}
+        if order_id is not None:
+            params["orderId"] = order_id
+        elif orig_client_order_id:
+            params["origClientOrderId"] = orig_client_order_id
+        else:
+            raise BinanceAPIError("order_id or orig_client_order_id is required")
+        return self._signed_request("GET", "/fapi/v1/order", params=params)
+
+    def cancel_order(
+        self,
+        *,
+        symbol: str,
+        order_id: int | None = None,
+        orig_client_order_id: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"symbol": symbol}
+        if order_id is not None:
+            params["orderId"] = order_id
+        elif orig_client_order_id:
+            params["origClientOrderId"] = orig_client_order_id
+        else:
+            raise BinanceAPIError("order_id or orig_client_order_id is required")
+        return self._signed_request("DELETE", "/fapi/v1/order", params=params)
+
+    def account_trades(
+        self,
+        *,
+        symbol: str,
+        order_id: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"symbol": symbol, "limit": limit}
+        if order_id is not None:
+            params["orderId"] = order_id
+        return self._signed_request("GET", "/fapi/v1/userTrades", params=params)
+
     def _signed_request(
         self,
         method: str,

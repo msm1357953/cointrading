@@ -21,6 +21,87 @@ class FailingOrderClient:
         raise AssertionError("live order should not be submitted")
 
 
+class FakeLiveOrderClient:
+    def __init__(self) -> None:
+        self.next_order_id = 1
+        self.orders = {}
+        self.new_order_intents = []
+        self.cancelled_order_ids = []
+
+    def new_order(self, intent):
+        self.new_order_intents.append(intent)
+        order_id = self.next_order_id
+        self.next_order_id += 1
+        status = "FILLED" if intent.order_type == "MARKET" else "NEW"
+        avg_price = intent.price if intent.price is not None else 99.0
+        response = {
+            "orderId": order_id,
+            "clientOrderId": intent.client_order_id,
+            "symbol": intent.symbol,
+            "side": intent.side,
+            "status": status,
+            "executedQty": f"{intent.quantity:.8f}" if status == "FILLED" else "0",
+            "avgPrice": f"{avg_price:.8f}" if status == "FILLED" else "0",
+        }
+        self.orders[order_id] = response
+        return response
+
+    def order_status(self, *, symbol, order_id=None, orig_client_order_id=None):
+        assert order_id is not None
+        row = dict(self.orders[int(order_id)])
+        if int(order_id) == 1:
+            row["status"] = "FILLED"
+            row["executedQty"] = "0.25000000"
+            row["avgPrice"] = "100.00000000"
+            self.orders[int(order_id)] = row
+        return row
+
+    def account_trades(self, *, symbol, order_id=None, limit=50):
+        if int(order_id) == 1:
+            return [
+                {
+                    "id": 101,
+                    "orderId": 1,
+                    "price": "100.00000000",
+                    "qty": "0.25000000",
+                    "commission": "0.00000000",
+                    "commissionAsset": "USDC",
+                    "realizedPnl": "0",
+                }
+            ]
+        if int(order_id) == 3:
+            return [
+                {
+                    "id": 103,
+                    "orderId": 3,
+                    "price": "99.00000000",
+                    "qty": "0.25000000",
+                    "commission": "0.01000000",
+                    "commissionAsset": "USDC",
+                    "realizedPnl": "-0.25000000",
+                }
+            ]
+        if int(order_id) == 2 and self.orders[int(order_id)]["status"] == "FILLED":
+            return [
+                {
+                    "id": 102,
+                    "orderId": 2,
+                    "price": "100.10000000",
+                    "qty": "0.25000000",
+                    "commission": "0.00000000",
+                    "commissionAsset": "USDC",
+                    "realizedPnl": "0.02500000",
+                }
+            ]
+        return []
+
+    def cancel_order(self, *, symbol, order_id=None, orig_client_order_id=None):
+        assert order_id is not None
+        self.cancelled_order_ids.append(int(order_id))
+        self.orders[int(order_id)] = {**self.orders[int(order_id)], "status": "CANCELED"}
+        return self.orders[int(order_id)]
+
+
 def _signal(
     side="long",
     trade_allowed=True,
@@ -288,6 +369,180 @@ class StorageExecutionTests(unittest.TestCase):
 
             self.assertEqual(result.action, "blocked")
             self.assertIn("live scalp lifecycle is disabled", result.detail)
+
+    def test_live_entry_fill_reconciles_and_submits_reduce_only_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            client = FakeLiveOrderClient()
+            config = TradingConfig(
+                dry_run=False,
+                live_trading_enabled=True,
+                live_scalp_lifecycle_enabled=True,
+                runtime_risk_enabled=False,
+                strategy_gate_enabled=False,
+                scalp_take_profit_bps=10,
+                scalp_stop_loss_bps=5,
+            )
+            signal = _signal()
+            signal_id = store.insert_signal(signal, timestamp_ms=2_000)
+
+            start = start_cycle_from_signal(
+                client,
+                store,
+                signal,
+                config,
+                signal_id=signal_id,
+                timestamp_ms=3_000,
+            )
+            self.assertEqual(start.action, "entry_submitted")
+
+            cycle = store.active_scalp_cycle("BTCUSDC")
+            assert cycle is not None
+            filled = manage_cycle(
+                client,
+                store,
+                cycle,
+                config,
+                bid=99.9,
+                ask=100.1,
+                timestamp_ms=4_000,
+            )
+
+            self.assertEqual(filled.action, "entry_filled")
+            cycle = store.active_scalp_cycle("BTCUSDC")
+            assert cycle is not None
+            self.assertEqual(cycle["status"], "EXIT_SUBMITTED")
+            self.assertAlmostEqual(float(cycle["entry_price"]), 100.0)
+            self.assertAlmostEqual(float(cycle["target_price"]), 100.1)
+            self.assertAlmostEqual(float(cycle["stop_price"]), 99.9500249875)
+            target_intent = client.new_order_intents[-1]
+            self.assertTrue(target_intent.reduce_only)
+            self.assertEqual(target_intent.order_type, "LIMIT")
+            self.assertEqual(target_intent.time_in_force, "GTX")
+            self.assertEqual(store.summary_counts()["fills"], 1)
+
+    def test_live_stop_loss_cancels_target_and_records_market_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            client = FakeLiveOrderClient()
+            config = TradingConfig(
+                dry_run=False,
+                live_trading_enabled=True,
+                live_scalp_lifecycle_enabled=True,
+                runtime_risk_enabled=False,
+                strategy_gate_enabled=False,
+                scalp_take_profit_bps=10,
+                scalp_stop_loss_bps=5,
+            )
+            signal = _signal()
+            signal_id = store.insert_signal(signal, timestamp_ms=2_000)
+            start_cycle_from_signal(
+                client,
+                store,
+                signal,
+                config,
+                signal_id=signal_id,
+                timestamp_ms=3_000,
+            )
+            cycle = store.active_scalp_cycle("BTCUSDC")
+            assert cycle is not None
+            manage_cycle(
+                client,
+                store,
+                cycle,
+                config,
+                bid=99.9,
+                ask=100.1,
+                timestamp_ms=4_000,
+            )
+            cycle = store.active_scalp_cycle("BTCUSDC")
+            assert cycle is not None
+            exit_order_id = int(cycle["exit_order_id"])
+
+            stopped = manage_cycle(
+                client,
+                store,
+                cycle,
+                config,
+                bid=99.8,
+                ask=99.9,
+                timestamp_ms=5_000,
+            )
+
+            self.assertEqual(stopped.action, "stop_loss")
+            self.assertIn(exit_order_id, client.cancelled_order_ids)
+            stop_intent = client.new_order_intents[-1]
+            self.assertTrue(stop_intent.reduce_only)
+            self.assertEqual(stop_intent.order_type, "MARKET")
+            self.assertIsNone(store.active_scalp_cycle("BTCUSDC"))
+            recent = store.recent_scalp_cycles(limit=1)[0]
+            self.assertEqual(recent["status"], "STOPPED")
+            self.assertEqual(recent["reason"], "stop_loss")
+            self.assertLess(float(recent["realized_pnl"]), 0)
+            self.assertEqual(store.summary_counts()["fills"], 2)
+
+    def test_live_take_profit_fill_closes_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            client = FakeLiveOrderClient()
+            config = TradingConfig(
+                dry_run=False,
+                live_trading_enabled=True,
+                live_scalp_lifecycle_enabled=True,
+                runtime_risk_enabled=False,
+                strategy_gate_enabled=False,
+                scalp_take_profit_bps=10,
+                scalp_stop_loss_bps=5,
+            )
+            signal = _signal()
+            signal_id = store.insert_signal(signal, timestamp_ms=2_000)
+            start_cycle_from_signal(
+                client,
+                store,
+                signal,
+                config,
+                signal_id=signal_id,
+                timestamp_ms=3_000,
+            )
+            cycle = store.active_scalp_cycle("BTCUSDC")
+            assert cycle is not None
+            manage_cycle(
+                client,
+                store,
+                cycle,
+                config,
+                bid=99.9,
+                ask=100.1,
+                timestamp_ms=4_000,
+            )
+            cycle = store.active_scalp_cycle("BTCUSDC")
+            assert cycle is not None
+            exit_order_id = int(cycle["exit_order_id"])
+            client.orders[2] = {
+                **client.orders[2],
+                "status": "FILLED",
+                "executedQty": "0.25000000",
+                "avgPrice": "100.10000000",
+            }
+
+            closed = manage_cycle(
+                client,
+                store,
+                cycle,
+                config,
+                bid=100.1,
+                ask=100.2,
+                timestamp_ms=5_000,
+            )
+
+            self.assertEqual(closed.action, "take_profit")
+            self.assertIsNone(store.active_scalp_cycle("BTCUSDC"))
+            recent = store.recent_scalp_cycles(limit=1)[0]
+            self.assertEqual(recent["status"], "CLOSED")
+            self.assertEqual(recent["reason"], "take_profit")
+            self.assertEqual(int(recent["exit_order_id"]), exit_order_id)
+            self.assertGreater(float(recent["realized_pnl"]), 0)
+            self.assertEqual(store.summary_counts()["fills"], 2)
 
 
 if __name__ == "__main__":

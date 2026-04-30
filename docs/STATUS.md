@@ -55,6 +55,7 @@
 - 2026-04-30: Gemini LLM reporting was added for Telegram risk summaries only. It runs about three times per day, uses SQLite context, and is explicitly excluded from order execution or live-entry decisions.
 - 2026-04-30: Gemini reporting was verified on the VM with `gemini-3.1-pro-preview`; the local/VM env key may be named `GEMINI_API_KEY`, `GEMINI_KEY`, or `gemini_key`. A forced Telegram risk summary was sent successfully after increasing the Gemini output budget.
 - 2026-04-30: Runtime risk mode was added. It converts recent stop-loss clusters, requote clusters, KST-day realized loss, and BTC stress into NORMAL/CAUTION/DEFENSIVE/HALT; DEFENSIVE/HALT blocks new entries, CAUTION blocks live entries, and the dashboard/Telegram/LLM context now expose this mode. Live scalp entry is also blocked unless `COINTRADING_LIVE_SCALP_LIFECYCLE_ENABLED=true`.
+- 2026-04-30: Live lifecycle tests and a minimal live reconciliation path were added. The covered path checks live entry order status, ingests user trades, submits reduce-only take-profit, closes on live take-profit fill, and cancels/replaces the target with reduce-only market exit for stop-loss. Live remains disabled by default.
 
 ## Next Work Packets
 

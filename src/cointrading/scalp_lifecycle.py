@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import sqlite3
 import time
 
@@ -21,6 +22,16 @@ class ScalpLifecycleResult:
     action: str
     detail: str
     cycle_id: int | None = None
+
+
+@dataclass(frozen=True)
+class LiveFillSummary:
+    quantity: float
+    avg_price: float
+    commission: float
+    commission_asset: str
+    realized_pnl: float | None
+    trades: tuple[dict, ...]
 
 
 def start_cycle_from_signal(
@@ -146,16 +157,27 @@ def manage_cycle(
     side = str(cycle["side"])
 
     if not config.dry_run:
-        store.update_scalp_cycle(
-            cycle_id,
-            reason="live exchange reconciliation is required before lifecycle automation",
-            last_mid_price=mid,
-            timestamp_ms=ts,
-        )
+        if not config.live_scalp_lifecycle_enabled:
+            store.update_scalp_cycle(
+                cycle_id,
+                reason="live lifecycle reconciliation is not enabled",
+                last_mid_price=mid,
+                timestamp_ms=ts,
+            )
+            return ScalpLifecycleResult(
+                str(cycle["symbol"]),
+                "blocked",
+                "live lifecycle reconciliation is not enabled",
+                cycle_id,
+            )
+        if status == "ENTRY_SUBMITTED":
+            return _manage_live_entry_submitted(client, store, cycle, config, mid, ts)
+        if status in {"OPEN", "EXIT_SUBMITTED"}:
+            return _manage_live_open_cycle(client, store, cycle, config, bid, ask, mid, ts)
         return ScalpLifecycleResult(
             str(cycle["symbol"]),
-            "blocked",
-            "live lifecycle reconciliation is not enabled",
+            "skip",
+            f"inactive status {status}",
             cycle_id,
         )
 
@@ -164,6 +186,235 @@ def manage_cycle(
     if status in {"OPEN", "EXIT_SUBMITTED"}:
         return _manage_open_cycle(client, store, cycle, config, bid, ask, mid, ts)
     return ScalpLifecycleResult(str(cycle["symbol"]), "skip", f"inactive status {status}", cycle_id)
+
+
+def _manage_live_entry_submitted(
+    client: BinanceUSDMClient,
+    store: TradingStore,
+    cycle: sqlite3.Row,
+    config: TradingConfig,
+    mid: float,
+    timestamp_ms: int,
+) -> ScalpLifecycleResult:
+    cycle_id = int(cycle["id"])
+    symbol = str(cycle["symbol"])
+    side = str(cycle["side"])
+    local_order = store.order_by_id(int(cycle["entry_order_id"]))
+    if local_order is None:
+        store.update_scalp_cycle(
+            cycle_id,
+            reason="entry order row missing",
+            last_mid_price=mid,
+            timestamp_ms=timestamp_ms,
+        )
+        return ScalpLifecycleResult(symbol, "blocked", "entry order row missing", cycle_id)
+
+    try:
+        status_payload = _live_order_status(client, local_order)
+    except BinanceAPIError as exc:
+        store.update_scalp_cycle(
+            cycle_id,
+            reason=f"entry status error: {exc}",
+            last_mid_price=mid,
+            timestamp_ms=timestamp_ms,
+        )
+        return ScalpLifecycleResult(symbol, "entry_status_error", str(exc), cycle_id)
+
+    exchange_status = _order_status_value(status_payload)
+    store.update_order_attempt(
+        int(local_order["id"]),
+        status=exchange_status or str(local_order["status"]),
+        response=status_payload,
+    )
+
+    if exchange_status == "FILLED":
+        summary = _live_fill_summary(client, local_order, status_payload, config)
+        if summary.quantity <= 0 or summary.avg_price <= 0:
+            store.update_scalp_cycle(
+                cycle_id,
+                reason="entry filled but fill quantity/price is missing",
+                last_mid_price=mid,
+                timestamp_ms=timestamp_ms,
+            )
+            return ScalpLifecycleResult(symbol, "entry_status_error", "missing fill", cycle_id)
+        _record_live_fills(
+            store,
+            local_order_id=int(local_order["id"]),
+            symbol=symbol,
+            side="BUY" if side == "long" else "SELL",
+            summary=summary,
+            role="entry",
+            timestamp_ms=timestamp_ms,
+        )
+        take_profit_bps = _cycle_take_profit_bps(cycle, config)
+        stop_loss_bps = _cycle_stop_loss_bps(cycle, config)
+        target_price = _take_profit_price(side, summary.avg_price, take_profit_bps)
+        stop_price = _stop_price(side, summary.avg_price, stop_loss_bps)
+        exit_order_id = _submit_take_profit(
+            client,
+            store,
+            cycle,
+            config,
+            price=target_price,
+            quantity=summary.quantity,
+            timestamp_ms=timestamp_ms,
+        )
+        store.update_scalp_cycle(
+            cycle_id,
+            status="EXIT_SUBMITTED",
+            reason="entry filled; live take-profit submitted",
+            exit_order_id=exit_order_id,
+            quantity=summary.quantity,
+            entry_price=summary.avg_price,
+            target_price=target_price,
+            stop_price=stop_price,
+            opened_ms=timestamp_ms,
+            exit_deadline_ms=timestamp_ms + _seconds_ms(config.scalp_exit_reprice_seconds),
+            max_hold_deadline_ms=timestamp_ms + _seconds_ms(_cycle_max_hold_seconds(cycle, config)),
+            last_mid_price=mid,
+            timestamp_ms=timestamp_ms,
+        )
+        return ScalpLifecycleResult(symbol, "entry_filled", "live take-profit submitted", cycle_id)
+
+    if exchange_status in {"CANCELED", "EXPIRED", "REJECTED"}:
+        reason = f"entry order {exchange_status.lower()}"
+        store.update_scalp_cycle(
+            cycle_id,
+            status="CANCELLED",
+            reason=reason,
+            last_mid_price=mid,
+            timestamp_ms=timestamp_ms,
+        )
+        return ScalpLifecycleResult(symbol, "entry_cancelled", reason, cycle_id)
+
+    if timestamp_ms >= int(cycle["entry_deadline_ms"]):
+        cancel_payload = _cancel_live_order(client, store, local_order)
+        reason = "entry timeout; live order cancelled"
+        if cancel_payload:
+            reason = f"{reason} ({_order_status_value(cancel_payload).lower()})"
+        store.update_scalp_cycle(
+            cycle_id,
+            status="CANCELLED",
+            reason=reason,
+            last_mid_price=mid,
+            timestamp_ms=timestamp_ms,
+        )
+        return ScalpLifecycleResult(symbol, "entry_cancelled", reason, cycle_id)
+
+    store.update_scalp_cycle(
+        cycle_id,
+        reason=f"entry live waiting ({exchange_status or 'UNKNOWN'})",
+        last_mid_price=mid,
+        timestamp_ms=timestamp_ms,
+    )
+    return ScalpLifecycleResult(symbol, "entry_waiting", "live order not filled yet", cycle_id)
+
+
+def _manage_live_open_cycle(
+    client: BinanceUSDMClient,
+    store: TradingStore,
+    cycle: sqlite3.Row,
+    config: TradingConfig,
+    bid: float,
+    ask: float,
+    mid: float,
+    timestamp_ms: int,
+) -> ScalpLifecycleResult:
+    cycle_id = int(cycle["id"])
+    symbol = str(cycle["symbol"])
+    side = str(cycle["side"])
+    target_price = float(cycle["target_price"])
+    stop_price = float(cycle["stop_price"])
+
+    exit_order_id = cycle["exit_order_id"]
+    if exit_order_id is not None:
+        local_exit_order = store.order_by_id(int(exit_order_id))
+        if local_exit_order is not None:
+            try:
+                status_payload = _live_order_status(client, local_exit_order)
+            except BinanceAPIError as exc:
+                store.update_scalp_cycle(
+                    cycle_id,
+                    reason=f"exit status error: {exc}",
+                    last_mid_price=mid,
+                    timestamp_ms=timestamp_ms,
+                )
+                return ScalpLifecycleResult(symbol, "exit_status_error", str(exc), cycle_id)
+            exchange_status = _order_status_value(status_payload)
+            store.update_order_attempt(
+                int(local_exit_order["id"]),
+                status=exchange_status or str(local_exit_order["status"]),
+                response=status_payload,
+            )
+            if exchange_status == "FILLED":
+                close_reason = _live_exit_reason(local_exit_order)
+                return _close_live_cycle(
+                    client,
+                    store,
+                    cycle,
+                    config,
+                    local_order=local_exit_order,
+                    status_payload=status_payload,
+                    reason=close_reason,
+                    timestamp_ms=timestamp_ms,
+                )
+
+    if _stop_triggered(side, mid, stop_price):
+        return _submit_live_market_exit(
+            client,
+            store,
+            cycle,
+            config,
+            reason="stop_loss",
+            timestamp_ms=timestamp_ms,
+        )
+
+    max_hold_deadline = cycle["max_hold_deadline_ms"]
+    if max_hold_deadline is not None and timestamp_ms >= int(max_hold_deadline):
+        return _submit_live_market_exit(
+            client,
+            store,
+            cycle,
+            config,
+            reason="max_hold_exit",
+            timestamp_ms=timestamp_ms,
+        )
+
+    exit_deadline = cycle["exit_deadline_ms"]
+    if exit_deadline is not None and timestamp_ms >= int(exit_deadline):
+        if exit_order_id is not None:
+            local_exit_order = store.order_by_id(int(exit_order_id))
+            if local_exit_order is not None:
+                _cancel_live_order(client, store, local_exit_order)
+        new_target = _repriced_exit_price(side, bid, ask, float(cycle["entry_price"]), config)
+        order_id = _submit_take_profit(
+            client,
+            store,
+            cycle,
+            config,
+            price=new_target,
+            timestamp_ms=timestamp_ms,
+        )
+        store.update_scalp_cycle(
+            cycle_id,
+            status="EXIT_SUBMITTED",
+            reason="live take-profit repriced",
+            exit_order_id=order_id,
+            target_price=new_target,
+            exit_deadline_ms=timestamp_ms + _seconds_ms(config.scalp_exit_reprice_seconds),
+            last_mid_price=mid,
+            reprice_count=int(cycle["reprice_count"]) + 1,
+            timestamp_ms=timestamp_ms,
+        )
+        return ScalpLifecycleResult(symbol, "exit_repriced", f"target={new_target:.8f}", cycle_id)
+
+    store.update_scalp_cycle(
+        cycle_id,
+        reason="live exit waiting",
+        last_mid_price=mid,
+        timestamp_ms=timestamp_ms,
+    )
+    return ScalpLifecycleResult(symbol, "exit_waiting", "live target not filled", cycle_id)
 
 
 def _manage_entry_submitted(
@@ -340,13 +591,14 @@ def _submit_take_profit(
     config: TradingConfig,
     *,
     price: float | None = None,
+    quantity: float | None = None,
     timestamp_ms: int | None = None,
 ) -> int:
     target = price if price is not None else float(cycle["target_price"])
     intent = OrderIntent(
         symbol=str(cycle["symbol"]),
         side="SELL" if str(cycle["side"]) == "long" else "BUY",
-        quantity=float(cycle["quantity"]),
+        quantity=quantity if quantity is not None else float(cycle["quantity"]),
         order_type="LIMIT",
         price=target,
         time_in_force="GTX",
@@ -447,6 +699,346 @@ def _close_cycle(
     return ScalpLifecycleResult(symbol, reason, f"pnl={realized_pnl:.6f}", int(cycle["id"]))
 
 
+def _submit_live_market_exit(
+    client: BinanceUSDMClient,
+    store: TradingStore,
+    cycle: sqlite3.Row,
+    config: TradingConfig,
+    *,
+    reason: str,
+    timestamp_ms: int,
+) -> ScalpLifecycleResult:
+    symbol = str(cycle["symbol"])
+    side = str(cycle["side"])
+    cycle_id = int(cycle["id"])
+    if cycle["exit_order_id"] is not None:
+        local_exit_order = store.order_by_id(int(cycle["exit_order_id"]))
+        if local_exit_order is not None:
+            _cancel_live_order(client, store, local_exit_order)
+
+    intent = OrderIntent(
+        symbol=symbol,
+        side="SELL" if side == "long" else "BUY",
+        quantity=float(cycle["quantity"]),
+        order_type="MARKET",
+        reduce_only=True,
+        client_order_id=_client_order_id(reason, symbol),
+    )
+    try:
+        response = client.new_order(intent)
+    except BinanceAPIError as exc:
+        store.update_scalp_cycle(
+            cycle_id,
+            status="EXIT_SUBMITTED",
+            reason=f"{reason} submit error: {exc}",
+            timestamp_ms=timestamp_ms,
+        )
+        return ScalpLifecycleResult(symbol, "exit_error", str(exc), cycle_id)
+
+    local_order_id = store.insert_order_attempt(
+        intent,
+        status=str(response.get("status", "SUBMITTED")),
+        dry_run=False,
+        reason=reason,
+        response=response,
+        signal_id=cycle["entry_signal_id"],
+        timestamp_ms=timestamp_ms,
+    )
+    local_order = store.order_by_id(local_order_id)
+    assert local_order is not None
+    if _order_status_value(response) == "FILLED":
+        return _close_live_cycle(
+            client,
+            store,
+            cycle,
+            config,
+            local_order=local_order,
+            status_payload=response,
+            reason=reason,
+            timestamp_ms=timestamp_ms,
+        )
+    store.update_scalp_cycle(
+        cycle_id,
+        status="EXIT_SUBMITTED",
+        reason=f"{reason} live market exit submitted",
+        exit_order_id=local_order_id,
+        timestamp_ms=timestamp_ms,
+    )
+    return ScalpLifecycleResult(symbol, "exit_submitted", reason, cycle_id)
+
+
+def _close_live_cycle(
+    client: BinanceUSDMClient,
+    store: TradingStore,
+    cycle: sqlite3.Row,
+    config: TradingConfig,
+    *,
+    local_order: sqlite3.Row,
+    status_payload: dict,
+    reason: str,
+    timestamp_ms: int,
+) -> ScalpLifecycleResult:
+    symbol = str(cycle["symbol"])
+    side = str(cycle["side"])
+    summary = _live_fill_summary(client, local_order, status_payload, config)
+    if summary.quantity <= 0 or summary.avg_price <= 0:
+        store.update_scalp_cycle(
+            int(cycle["id"]),
+            reason=f"{reason} filled but fill quantity/price is missing",
+            timestamp_ms=timestamp_ms,
+        )
+        return ScalpLifecycleResult(symbol, "exit_status_error", "missing fill", int(cycle["id"]))
+
+    _record_live_fills(
+        store,
+        local_order_id=int(local_order["id"]),
+        symbol=symbol,
+        side="SELL" if side == "long" else "BUY",
+        summary=summary,
+        role="exit",
+        timestamp_ms=timestamp_ms,
+    )
+    realized_pnl = _live_realized_pnl(store, cycle, summary, config)
+    status = "CLOSED" if reason == "take_profit" else "STOPPED"
+    store.update_scalp_cycle(
+        int(cycle["id"]),
+        status=status,
+        reason=reason,
+        exit_order_id=int(local_order["id"]),
+        closed_ms=timestamp_ms,
+        last_mid_price=summary.avg_price,
+        realized_pnl=realized_pnl,
+        timestamp_ms=timestamp_ms,
+    )
+    store.update_order_attempt(
+        int(local_order["id"]),
+        status=_order_status_value(status_payload) or "FILLED",
+        reason=reason,
+        response=status_payload,
+    )
+    return ScalpLifecycleResult(symbol, reason, f"pnl={realized_pnl:.6f}", int(cycle["id"]))
+
+
+def _live_realized_pnl(
+    store: TradingStore,
+    cycle: sqlite3.Row,
+    exit_summary: LiveFillSummary,
+    config: TradingConfig,
+) -> float:
+    exit_commission = (
+        exit_summary.commission if exit_summary.commission_asset == config.equity_asset else 0.0
+    )
+    if exit_summary.realized_pnl is not None:
+        return exit_summary.realized_pnl - exit_commission
+
+    entry_commission = _local_order_commission(
+        store,
+        int(cycle["entry_order_id"]),
+        config.equity_asset,
+    )
+    gross = _pnl(
+        str(cycle["side"]),
+        float(cycle["entry_price"]),
+        exit_summary.avg_price,
+        exit_summary.quantity,
+    )
+    return gross - entry_commission - exit_commission
+
+
+def _live_exit_reason(local_order: sqlite3.Row) -> str:
+    reason = str(local_order["reason"] or "")
+    if reason in {"stop_loss", "max_hold_exit"}:
+        return reason
+    return "take_profit"
+
+
+def _live_order_status(client: BinanceUSDMClient, local_order: sqlite3.Row) -> dict:
+    order_id, client_order_id = _exchange_order_refs(local_order)
+    return client.order_status(
+        symbol=str(local_order["symbol"]),
+        order_id=order_id,
+        orig_client_order_id=client_order_id,
+    )
+
+
+def _cancel_live_order(
+    client: BinanceUSDMClient,
+    store: TradingStore,
+    local_order: sqlite3.Row,
+) -> dict | None:
+    try:
+        order_id, client_order_id = _exchange_order_refs(local_order)
+        response = client.cancel_order(
+            symbol=str(local_order["symbol"]),
+            order_id=order_id,
+            orig_client_order_id=client_order_id,
+        )
+    except BinanceAPIError:
+        return None
+    store.update_order_attempt(
+        int(local_order["id"]),
+        status=_order_status_value(response) or "CANCELED",
+        response=response,
+    )
+    return response
+
+
+def _exchange_order_refs(local_order: sqlite3.Row) -> tuple[int | None, str | None]:
+    payload = _order_response(local_order)
+    order_id = _int_or_none(payload.get("orderId"))
+    client_order_id = str(payload.get("clientOrderId") or local_order["client_order_id"] or "")
+    return order_id, client_order_id or None
+
+
+def _order_response(local_order: sqlite3.Row) -> dict:
+    raw = local_order["response_json"]
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _live_fill_summary(
+    client: BinanceUSDMClient,
+    local_order: sqlite3.Row,
+    status_payload: dict,
+    config: TradingConfig,
+) -> LiveFillSummary:
+    order_id, _ = _exchange_order_refs(local_order)
+    trades: list[dict] = []
+    if order_id is not None:
+        try:
+            trades = list(
+                client.account_trades(
+                    symbol=str(local_order["symbol"]),
+                    order_id=order_id,
+                    limit=50,
+                )
+            )
+        except BinanceAPIError:
+            trades = []
+    if trades:
+        return _summary_from_trades(trades, config)
+    return _summary_from_order_status(status_payload, config)
+
+
+def _summary_from_trades(trades: list[dict], config: TradingConfig) -> LiveFillSummary:
+    quantity = 0.0
+    quote = 0.0
+    commission = 0.0
+    commission_assets: set[str] = set()
+    realized_values: list[float] = []
+    for trade in trades:
+        price = _float_or_zero(trade.get("price"))
+        qty = _float_or_zero(trade.get("qty"))
+        quantity += qty
+        quote += price * qty
+        commission += _float_or_zero(trade.get("commission"))
+        asset = str(trade.get("commissionAsset") or config.equity_asset)
+        commission_assets.add(asset)
+        if "realizedPnl" in trade and trade.get("realizedPnl") not in {None, ""}:
+            realized_values.append(float(trade["realizedPnl"]))
+    avg_price = quote / quantity if quantity > 0 else 0.0
+    commission_asset = next(iter(commission_assets)) if len(commission_assets) == 1 else "MIXED"
+    realized_pnl = sum(realized_values) if realized_values else None
+    return LiveFillSummary(
+        quantity=quantity,
+        avg_price=avg_price,
+        commission=commission,
+        commission_asset=commission_asset,
+        realized_pnl=realized_pnl,
+        trades=tuple(trades),
+    )
+
+
+def _summary_from_order_status(status_payload: dict, config: TradingConfig) -> LiveFillSummary:
+    quantity = _float_or_zero(
+        status_payload.get("executedQty")
+        or status_payload.get("cumQty")
+        or status_payload.get("origQty")
+    )
+    avg_price = _float_or_zero(status_payload.get("avgPrice"))
+    if avg_price <= 0 and quantity > 0:
+        quote = _float_or_zero(status_payload.get("cumQuote"))
+        avg_price = quote / quantity if quote > 0 else 0.0
+    realized_pnl = None
+    if status_payload.get("realizedPnl") not in {None, ""}:
+        realized_pnl = float(status_payload["realizedPnl"])
+    return LiveFillSummary(
+        quantity=quantity,
+        avg_price=avg_price,
+        commission=0.0,
+        commission_asset=config.equity_asset,
+        realized_pnl=realized_pnl,
+        trades=(),
+    )
+
+
+def _record_live_fills(
+    store: TradingStore,
+    *,
+    local_order_id: int,
+    symbol: str,
+    side: str,
+    summary: LiveFillSummary,
+    role: str,
+    timestamp_ms: int,
+) -> None:
+    if summary.trades:
+        for trade in summary.trades:
+            price = _float_or_zero(trade.get("price"))
+            quantity = _float_or_zero(trade.get("qty"))
+            realized = None
+            if trade.get("realizedPnl") not in {None, ""}:
+                realized = float(trade["realizedPnl"])
+            store.record_fill(
+                order_id=local_order_id,
+                exchange_trade_id=str(trade.get("id") or ""),
+                symbol=symbol,
+                side=side,
+                price=price,
+                quantity=quantity,
+                commission=_float_or_zero(trade.get("commission")),
+                commission_asset=str(trade.get("commissionAsset") or summary.commission_asset),
+                realized_pnl=realized,
+                raw={"live": True, "role": role, "trade": trade},
+                timestamp_ms=timestamp_ms,
+            )
+        return
+    store.record_fill(
+        order_id=local_order_id,
+        symbol=symbol,
+        side=side,
+        price=summary.avg_price,
+        quantity=summary.quantity,
+        commission=summary.commission,
+        commission_asset=summary.commission_asset,
+        realized_pnl=summary.realized_pnl,
+        raw={"live": True, "role": role, "source": "order_status"},
+        timestamp_ms=timestamp_ms,
+    )
+
+
+def _local_order_commission(store: TradingStore, order_id: int, asset: str) -> float:
+    with store.connect() as connection:
+        row = connection.execute(
+            """
+            SELECT SUM(commission) AS commission
+            FROM fills
+            WHERE order_id=? AND commission_asset=?
+            """,
+            (order_id, asset),
+        ).fetchone()
+    return float(row["commission"] or 0.0)
+
+
+def _order_status_value(payload: dict) -> str:
+    return str(payload.get("status") or "").upper()
+
+
 def _entry_filled(side: str, bid: float, ask: float, entry_price: float) -> bool:
     if side == "long":
         return ask <= entry_price
@@ -509,6 +1101,20 @@ def _cycle_max_hold_seconds(cycle: sqlite3.Row, config: TradingConfig) -> int:
     return int(value)
 
 
+def _cycle_take_profit_bps(cycle: sqlite3.Row, config: TradingConfig) -> float:
+    value = cycle["strategy_take_profit_bps"]
+    if value is None:
+        return float(config.scalp_take_profit_bps)
+    return float(value)
+
+
+def _cycle_stop_loss_bps(cycle: sqlite3.Row, config: TradingConfig) -> float:
+    value = cycle["strategy_stop_loss_bps"]
+    if value is None:
+        return float(config.scalp_stop_loss_bps)
+    return float(value)
+
+
 def _macro_gate_decision(
     store: TradingStore,
     signal: ScalpSignal,
@@ -560,6 +1166,18 @@ def _pnl(side: str, entry_price: float, exit_price: float, quantity: float) -> f
 
 def _commission(price: float, quantity: float, fee_bps: float) -> float:
     return price * quantity * (fee_bps / 10_000.0)
+
+
+def _float_or_zero(value) -> float:
+    if value is None or str(value).strip() == "":
+        return 0.0
+    return float(value)
+
+
+def _int_or_none(value) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return int(value)
 
 
 def _seconds_ms(seconds: float) -> int:
