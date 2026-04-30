@@ -1090,9 +1090,9 @@ def _csv_signal_payload(row: dict[str, str]) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "timestamp_ms": timestamp_ms,
         "iso_time": row.get("iso_time") or iso_from_ms(timestamp_ms),
-        "symbol": row.get("symbol", ""),
-        "side": row.get("side", "flat"),
-        "reason": row.get("reason", ""),
+        "symbol": row.get("symbol") or "",
+        "side": row.get("side") or "flat",
+        "reason": row.get("reason") or "",
         "regime": row.get("regime") or "legacy",
         "trade_allowed": _bool_int(row.get("trade_allowed")),
         "mid_price": _float_or_zero(row.get("mid_price")),
