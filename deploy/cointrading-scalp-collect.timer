@@ -1,0 +1,11 @@
+[Unit]
+Description=Run dry-run scalp signal collection every minute
+
+[Timer]
+OnBootSec=30
+OnUnitInactiveSec=60
+AccuracySec=5
+Unit=cointrading-scalp-collect.service
+
+[Install]
+WantedBy=timers.target

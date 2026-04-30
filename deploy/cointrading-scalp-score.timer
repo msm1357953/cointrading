@@ -1,0 +1,11 @@
+[Unit]
+Description=Score dry-run scalp signals every minute
+
+[Timer]
+OnBootSec=90
+OnUnitInactiveSec=60
+AccuracySec=5
+Unit=cointrading-scalp-score.service
+
+[Install]
+WantedBy=timers.target

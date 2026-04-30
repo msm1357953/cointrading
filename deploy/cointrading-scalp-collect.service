@@ -1,0 +1,9 @@
+[Unit]
+Description=Collect dry-run scalp signals
+
+[Service]
+Type=oneshot
+User=msm1357953_gmail_com
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli scalp-collect --symbols BTCUSDT ETHUSDT

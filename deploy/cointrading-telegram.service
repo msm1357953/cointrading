@@ -1,0 +1,16 @@
+[Unit]
+Description=Cointrading Telegram command poller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=msm1357953_gmail_com
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli telegram-poll --timeout 20 --interval 1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

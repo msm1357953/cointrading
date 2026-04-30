@@ -1,0 +1,432 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import math
+from pathlib import Path
+from typing import Iterable
+
+from cointrading.account import account_summary_text
+from cointrading.backtest import Backtester
+from cointrading.config import TelegramConfig, TradingConfig
+from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
+from cointrading.models import Kline
+from cointrading.scalping import (
+    ScalpSignalEngine,
+    append_scalp_signal,
+    default_scalp_log_path,
+    scalp_report_text,
+    score_scalp_log,
+)
+from cointrading.strategies import MovingAverageCrossStrategy
+from cointrading.telegram_bot import (
+    TelegramBotState,
+    TelegramClient,
+    TelegramCommandProcessor,
+    default_state_path,
+    poll_forever,
+    poll_once,
+)
+
+
+DEFAULT_SCALP_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BTCUSDC", "ETHUSDC"]
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="cointrading")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("explain-mdd")
+    subparsers.add_parser("demo-backtest")
+
+    fetch = subparsers.add_parser("fetch-klines")
+    fetch.add_argument("--symbol", default="BTCUSDT")
+    fetch.add_argument("--interval", default="1h")
+    fetch.add_argument("--limit", type=int, default=200)
+    fetch.add_argument("--output", type=Path)
+
+    backtest_csv = subparsers.add_parser("backtest-csv")
+    backtest_csv.add_argument("path", type=Path)
+    backtest_csv.add_argument("--symbol", default="BTCUSDT")
+
+    subparsers.add_parser("binance-account")
+
+    scalp_check_parser = subparsers.add_parser("scalp-check")
+    scalp_check_parser.add_argument("--symbol", default="BTCUSDT")
+    scalp_check_parser.add_argument("--depth-limit", type=int, default=20)
+    scalp_check_parser.add_argument("--kline-limit", type=int, default=30)
+
+    scalp_collect_parser = subparsers.add_parser("scalp-collect")
+    scalp_collect_parser.add_argument("--symbols", nargs="+", default=DEFAULT_SCALP_SYMBOLS)
+    scalp_collect_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
+
+    scalp_score_parser = subparsers.add_parser("scalp-score")
+    scalp_score_parser.add_argument("--symbols", nargs="+", default=DEFAULT_SCALP_SYMBOLS)
+    scalp_score_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
+
+    scalp_report_parser = subparsers.add_parser("scalp-report")
+    scalp_report_parser.add_argument("--symbol")
+    scalp_report_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
+
+    fee_status_parser = subparsers.add_parser("fee-status")
+    fee_status_parser.add_argument("--symbols", nargs="+", default=DEFAULT_SCALP_SYMBOLS)
+
+    subparsers.add_parser("telegram-me")
+
+    telegram_send_parser = subparsers.add_parser("telegram-send")
+    telegram_send_parser.add_argument("text", nargs="+")
+    telegram_send_parser.add_argument("--chat-id")
+
+    telegram_updates_parser = subparsers.add_parser("telegram-updates")
+    telegram_updates_parser.add_argument("--limit", type=int, default=10)
+    telegram_updates_parser.add_argument("--timeout", type=int, default=0)
+
+    telegram_poll_parser = subparsers.add_parser("telegram-poll")
+    telegram_poll_parser.add_argument("--once", action="store_true")
+    telegram_poll_parser.add_argument("--timeout", type=int, default=20)
+    telegram_poll_parser.add_argument("--interval", type=float, default=1.0)
+
+    args = parser.parse_args(argv)
+
+    if args.command == "explain-mdd":
+        explain_mdd()
+    elif args.command == "demo-backtest":
+        run_demo_backtest()
+    elif args.command == "fetch-klines":
+        fetch_klines(args.symbol, args.interval, args.limit, args.output)
+    elif args.command == "backtest-csv":
+        run_backtest_csv(args.path, args.symbol)
+    elif args.command == "binance-account":
+        binance_account()
+    elif args.command == "scalp-check":
+        scalp_check(args.symbol, args.depth_limit, args.kline_limit)
+    elif args.command == "scalp-collect":
+        scalp_collect(args.symbols, args.log_path)
+    elif args.command == "scalp-score":
+        scalp_score(args.symbols, args.log_path)
+    elif args.command == "scalp-report":
+        print(scalp_report_text(args.log_path, args.symbol))
+    elif args.command == "fee-status":
+        fee_status(args.symbols)
+    elif args.command == "telegram-me":
+        telegram_me()
+    elif args.command == "telegram-send":
+        telegram_send(" ".join(args.text), args.chat_id)
+    elif args.command == "telegram-updates":
+        telegram_updates(args.limit, args.timeout)
+    elif args.command == "telegram-poll":
+        telegram_poll(args.once, args.timeout, args.interval)
+    else:
+        parser.error(f"unknown command: {args.command}")
+
+
+def explain_mdd() -> None:
+    start = 1000
+    high = 1100
+    low = 880
+    dd = (high - low) / high
+    print(f"Start equity: {start} USDT")
+    print(f"Peak equity: {high} USDT")
+    print(f"Later low: {low} USDT")
+    print(f"Max drawdown from peak: {dd:.2%}")
+
+
+def run_demo_backtest() -> None:
+    klines = list(_demo_klines())
+    result = _run_backtest(klines, "BTCUSDT")
+    _print_metrics(result.metrics)
+
+
+def fetch_klines(
+    symbol: str,
+    interval: str,
+    limit: int,
+    output: Path | None,
+) -> None:
+    client = BinanceUSDMClient()
+    klines = client.klines(symbol=symbol, interval=interval, limit=limit)
+    if output is None:
+        for item in klines[-5:]:
+            print(
+                item.open_time,
+                item.open,
+                item.high,
+                item.low,
+                item.close,
+                item.volume,
+            )
+        print(f"Fetched {len(klines)} klines for {symbol}.")
+        return
+
+    with output.open("w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["open_time", "open", "high", "low", "close", "volume", "close_time"])
+        for item in klines:
+            writer.writerow(
+                [
+                    item.open_time,
+                    item.open,
+                    item.high,
+                    item.low,
+                    item.close,
+                    item.volume,
+                    item.close_time,
+                ]
+            )
+    print(f"Wrote {len(klines)} rows to {output}")
+
+
+def run_backtest_csv(path: Path, symbol: str) -> None:
+    klines = _read_klines_csv(path)
+    result = _run_backtest(klines, symbol)
+    _print_metrics(result.metrics)
+
+
+def binance_account() -> None:
+    client = BinanceUSDMClient()
+    print(account_summary_text(client.account_info()))
+
+
+def scalp_check(symbol: str, depth_limit: int, kline_limit: int) -> None:
+    symbol = symbol.upper()
+    trading_config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=trading_config)
+    commission = None
+    try:
+        commission = client.commission_rate(symbol)
+    except BinanceAPIError:
+        commission = None
+    funding_rows = client.funding_rate(symbol, limit=1)
+    latest_funding = None
+    if funding_rows:
+        latest_funding = float(funding_rows[-1]["fundingRate"])
+    bnb_fee_enabled, bnb_balance = _fee_context(client)
+    signal = ScalpSignalEngine().evaluate(
+        symbol=symbol,
+        book_ticker=client.book_ticker(symbol),
+        order_book=client.order_book(symbol, limit=depth_limit),
+        klines=client.klines(symbol, interval="1m", limit=kline_limit),
+        trading_config=trading_config,
+        commission_rate=commission,
+        latest_funding_rate=latest_funding,
+        bnb_fee_discount_enabled=bnb_fee_enabled,
+        bnb_balance=bnb_balance,
+    )
+    print(signal.to_text())
+
+
+def scalp_collect(symbols: list[str], log_path: Path) -> None:
+    count = 0
+    for symbol in symbols:
+        signal = _scalp_signal(symbol.upper())
+        append_scalp_signal(log_path, signal)
+        count += 1
+    print(f"Collected {count} scalp signal(s) into {log_path}")
+
+
+def scalp_score(symbols: list[str], log_path: Path) -> None:
+    client = BinanceUSDMClient(config=TradingConfig.from_env())
+    mids: dict[str, float] = {}
+    for symbol in symbols:
+        ticker = client.book_ticker(symbol.upper())
+        bid = float(ticker["bidPrice"])
+        ask = float(ticker["askPrice"])
+        mids[symbol.upper()] = (bid + ask) / 2.0
+    updated = score_scalp_log(log_path, mids)
+    print(f"Updated {updated} scalp score field(s).")
+
+
+def _scalp_signal(symbol: str):
+    trading_config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=trading_config)
+    commission = None
+    try:
+        commission = client.commission_rate(symbol)
+    except BinanceAPIError:
+        commission = None
+    funding_rows = client.funding_rate(symbol, limit=1)
+    latest_funding = None
+    if funding_rows:
+        latest_funding = float(funding_rows[-1]["fundingRate"])
+    bnb_fee_enabled, bnb_balance = _fee_context(client)
+    return ScalpSignalEngine().evaluate(
+        symbol=symbol,
+        book_ticker=client.book_ticker(symbol),
+        order_book=client.order_book(symbol, limit=20),
+        klines=client.klines(symbol, interval="1m", limit=30),
+        trading_config=trading_config,
+        commission_rate=commission,
+        latest_funding_rate=latest_funding,
+        bnb_fee_discount_enabled=bnb_fee_enabled,
+        bnb_balance=bnb_balance,
+    )
+
+
+def fee_status(symbols: list[str]) -> None:
+    client = BinanceUSDMClient(config=TradingConfig.from_env())
+    bnb_fee_enabled, bnb_balance = _fee_context(client)
+    usdc_balance = _asset_balance(client, "USDC")
+    try:
+        multi_assets = bool(client.multi_assets_margin().get("multiAssetsMargin"))
+    except BinanceAPIError:
+        multi_assets = False
+    print("선물 수수료 상태")
+    print(f"BNB 수수료 할인 설정: {'켜짐' if bnb_fee_enabled else '꺼짐'}")
+    print(f"선물 지갑 BNB 잔고: {bnb_balance:.8f} BNB")
+    print(
+        "실제 할인 적용: "
+        f"{'가능' if bnb_fee_enabled and bnb_balance > 0 else '불가'}"
+    )
+    print(f"Multi-Assets Mode: {'켜짐' if multi_assets else '꺼짐'}")
+    print(f"선물 지갑 USDC 잔고: {usdc_balance:.8f} USDC")
+    print(
+        "USDC 심볼 live 준비: "
+        f"{'가능' if multi_assets or usdc_balance > 0 else '불가'}"
+    )
+    for symbol in symbols:
+        try:
+            commission = client.commission_rate(symbol.upper())
+        except BinanceAPIError as exc:
+            print(f"{symbol.upper()}: 수수료 조회 실패 ({exc})")
+            continue
+        maker = float(commission["makerCommissionRate"]) * 10_000.0
+        taker = float(commission["takerCommissionRate"]) * 10_000.0
+        if bnb_fee_enabled and bnb_balance > 0:
+            maker *= 0.90
+            taker *= 0.90
+        print(f"{symbol.upper()}: maker {maker:.2f}bps, taker {taker:.2f}bps")
+
+
+def _fee_context(client: BinanceUSDMClient) -> tuple[bool, float]:
+    try:
+        bnb_fee_enabled = bool(client.fee_burn_status().get("feeBurn"))
+    except BinanceAPIError:
+        bnb_fee_enabled = False
+    try:
+        balances = client.account_balance()
+    except BinanceAPIError:
+        return bnb_fee_enabled, 0.0
+    for row in balances:
+        if row.get("asset") == "BNB":
+            return bnb_fee_enabled, float(row.get("availableBalance") or row.get("balance") or 0)
+    return bnb_fee_enabled, 0.0
+
+
+def _asset_balance(client: BinanceUSDMClient, asset: str) -> float:
+    try:
+        balances = client.account_balance()
+    except BinanceAPIError:
+        return 0.0
+    for row in balances:
+        if row.get("asset") == asset:
+            return float(row.get("availableBalance") or row.get("balance") or 0)
+    return 0.0
+
+
+def telegram_me() -> None:
+    client = TelegramClient(TelegramConfig.from_env())
+    result = client.get_me()["result"]
+    username = result.get("username", "")
+    bot_id = result.get("id", "")
+    print(f"Telegram bot: @{username} ({bot_id})")
+
+
+def telegram_send(text: str, chat_id: str | None) -> None:
+    client = TelegramClient(TelegramConfig.from_env())
+    result = client.send_message(text, chat_id=chat_id)["result"]
+    print(f"Sent Telegram message_id={result.get('message_id')}")
+
+
+def telegram_updates(limit: int, timeout: int) -> None:
+    client = TelegramClient(TelegramConfig.from_env())
+    updates = client.get_updates(limit=limit, timeout=timeout)
+    if not updates:
+        print("No Telegram updates.")
+        return
+    for update in updates:
+        message = update.get("message") or update.get("edited_message") or {}
+        chat = message.get("chat") or {}
+        sender = message.get("from") or {}
+        text = (message.get("text") or "").replace("\n", " ")[:80]
+        print(
+            "update_id={update_id} chat_id={chat_id} from=@{username} text={text}".format(
+                update_id=update.get("update_id"),
+                chat_id=chat.get("id"),
+                username=sender.get("username", ""),
+                text=text,
+            )
+        )
+
+
+def telegram_poll(once: bool, timeout: int, interval: float) -> None:
+    telegram_config = TelegramConfig.from_env()
+    trading_config = TradingConfig.from_env()
+    client = TelegramClient(telegram_config)
+    state_path = default_state_path()
+    state = TelegramBotState.load(state_path)
+    processor = TelegramCommandProcessor(telegram_config, trading_config, state)
+    if once:
+        handled = poll_once(client, processor, state, state_path, timeout=timeout)
+        print(f"Handled {handled} Telegram command(s).")
+        return
+    print("Polling Telegram commands. Press Ctrl+C to stop.")
+    poll_forever(client, processor, state, state_path, interval_seconds=interval)
+
+
+def _run_backtest(klines: list[Kline], symbol: str):
+    config = TradingConfig.from_env()
+    strategy = MovingAverageCrossStrategy(symbol=symbol)
+    backtester = Backtester(config=config, strategy=strategy)
+    return backtester.run(klines)
+
+
+def _print_metrics(metrics) -> None:
+    print(f"Final equity: {metrics.final_equity:.2f} USDT")
+    print(f"Total return: {metrics.total_return_pct:.2%}")
+    print(f"Max drawdown: {metrics.max_drawdown_pct:.2%}")
+    print(f"Trades: {metrics.trade_count}")
+    print(f"Win rate: {metrics.win_rate_pct:.2%}")
+    print(f"Fees: {metrics.total_fees:.4f} USDT")
+
+
+def _demo_klines() -> Iterable[Kline]:
+    price = 50_000.0
+    for index in range(180):
+        drift = 80.0 if index < 90 else -90.0
+        wave = math.sin(index / 5.0) * 120.0
+        close = price + drift + wave
+        high = max(price, close) * 1.002
+        low = min(price, close) * 0.998
+        yield Kline(
+            open_time=index * 3_600_000,
+            open=price,
+            high=high,
+            low=low,
+            close=close,
+            volume=100.0 + index,
+            close_time=((index + 1) * 3_600_000) - 1,
+        )
+        price = close
+
+
+def _read_klines_csv(path: Path) -> list[Kline]:
+    rows: list[Kline] = []
+    with path.open() as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            rows.append(
+                Kline(
+                    open_time=int(row["open_time"]),
+                    open=float(row["open"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    close=float(row["close"]),
+                    volume=float(row["volume"]),
+                    close_time=int(row["close_time"]),
+                )
+            )
+    return rows
+
+
+if __name__ == "__main__":
+    main()
