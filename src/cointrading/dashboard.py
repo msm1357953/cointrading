@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from cointrading.config import TradingConfig
 from cointrading.scalping import scalp_report_rows_text
-from cointrading.storage import TradingStore, default_db_path
+from cointrading.storage import TradingStore, default_db_path, kst_from_ms
 
 
 def run_dashboard(host: str = "127.0.0.1", port: int = 8080, db_path: Path | None = None) -> None:
@@ -83,7 +83,7 @@ def _page(
 ) -> str:
     signal_rows = "\n".join(
         "<tr>"
-        f"<td>{escape(row.get('iso_time', ''))}</td>"
+        f"<td>{escape(_fmt_kst(row.get('timestamp_ms')))}</td>"
         f"<td>{escape(row.get('symbol', ''))}</td>"
         f"<td>{escape(row.get('side', ''))}</td>"
         f"<td>{escape(row.get('regime', ''))}</td>"
@@ -93,7 +93,7 @@ def _page(
     )
     order_rows = "\n".join(
         "<tr>"
-        f"<td>{escape(order['iso_time'])}</td>"
+        f"<td>{escape(kst_from_ms(int(order['timestamp_ms'])))}</td>"
         f"<td>{escape(order['symbol'])}</td>"
         f"<td>{escape(order['side'])}</td>"
         f"<td>{escape(order['status'])}</td>"
@@ -103,7 +103,7 @@ def _page(
     )
     cycle_rows = "\n".join(
         "<tr>"
-        f"<td>{escape(cycle['updated_iso'])}</td>"
+        f"<td>{escape(kst_from_ms(int(cycle['updated_ms'])))}</td>"
         f"<td>{escape(cycle['symbol'])}</td>"
         f"<td>{escape(cycle['side'])}</td>"
         f"<td>{escape(cycle['status'])}</td>"
@@ -131,7 +131,7 @@ def _page(
 <body>
   <header>
     <h1>Cointrading</h1>
-    <p class="muted">대상: {escape(", ".join(config.scalp_symbols))}</p>
+    <p class="muted">대상: {escape(", ".join(config.scalp_symbols))} · 시간: KST</p>
   </header>
   <h2>요약</h2>
   <pre>{escape(rows_text)}</pre>
@@ -158,3 +158,9 @@ def _fmt_pnl(value) -> str:
     if value is None:
         return ""
     return f"{float(value):.6f}"
+
+
+def _fmt_kst(value: str | int | None) -> str:
+    if value in {None, ""}:
+        return ""
+    return kst_from_ms(int(float(value)))

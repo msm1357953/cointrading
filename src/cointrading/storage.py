@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -43,6 +43,13 @@ def now_ms() -> int:
 
 def iso_from_ms(timestamp_ms: int) -> str:
     return datetime.fromtimestamp(timestamp_ms / 1000, timezone.utc).isoformat()
+
+
+KST = timezone(timedelta(hours=9), name="KST")
+
+
+def kst_from_ms(timestamp_ms: int) -> str:
+    return datetime.fromtimestamp(timestamp_ms / 1000, KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
 
 class TradingStore:

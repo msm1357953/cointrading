@@ -7,7 +7,7 @@ from cointrading.execution import build_post_only_intent
 from cointrading.models import OrderIntent
 from cointrading.scalp_lifecycle import manage_cycle, start_cycle_from_signal
 from cointrading.scalping import ScalpSignal
-from cointrading.storage import TradingStore
+from cointrading.storage import TradingStore, kst_from_ms
 
 
 class FakeOrderClient:
@@ -40,6 +40,9 @@ def _signal(side="long", trade_allowed=True, maker_cost=0.0):
 
 
 class StorageExecutionTests(unittest.TestCase):
+    def test_kst_display_time(self) -> None:
+        self.assertEqual(kst_from_ms(0), "1970-01-01 09:00:00 KST")
+
     def test_store_records_signals_orders_and_fees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")

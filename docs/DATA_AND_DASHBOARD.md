@@ -2,7 +2,7 @@
 
 ## SQLite Store
 
-Runtime records live in `data/cointrading.sqlite`.
+Runtime records live in `data/cointrading.sqlite`. Timestamps are stored in UTC for consistency, and dashboard/Telegram display times are rendered in Korea time (KST).
 
 Tables:
 

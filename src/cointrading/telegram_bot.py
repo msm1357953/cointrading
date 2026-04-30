@@ -18,7 +18,7 @@ from cointrading.scalping import (
     default_scalp_log_path,
     scalp_report_rows_text,
 )
-from cointrading.storage import TradingStore, default_db_path
+from cointrading.storage import TradingStore, default_db_path, kst_from_ms
 
 
 DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC"]
@@ -386,10 +386,11 @@ class TelegramCommandProcessor:
         orders = store.recent_orders(limit=5)
         if not orders:
             return "아직 주문 기록이 없습니다."
-        lines = ["최근 주문 기록"]
+        lines = ["최근 주문 기록 (KST)"]
         for order in orders:
             price = "n/a" if order["price"] is None else f"{float(order['price']):.4f}"
             lines.append(
+                f"{kst_from_ms(int(order['timestamp_ms']))} "
                 f"{order['symbol']} {order['side']} {order['status']} "
                 f"qty={float(order['quantity']):.6f} price={price}"
             )
@@ -400,12 +401,13 @@ class TelegramCommandProcessor:
         cycles = store.recent_scalp_cycles(limit=5)
         if not cycles:
             return "아직 스캘핑 상태머신 기록이 없습니다."
-        lines = ["최근 스캘핑 상태머신"]
+        lines = ["최근 스캘핑 상태머신 (KST)"]
         for cycle in cycles:
             pnl = ""
             if cycle["realized_pnl"] is not None:
                 pnl = f" pnl={float(cycle['realized_pnl']):.6f}"
             lines.append(
+                f"{kst_from_ms(int(cycle['updated_ms']))} "
                 f"{cycle['symbol']} {cycle['side']} {cycle['status']} "
                 f"{cycle['reason'] or ''}{pnl}"
             )
