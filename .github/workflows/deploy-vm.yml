@@ -42,12 +42,20 @@ jobs:
           cd "$VM_PROJECT_DIR"
 
           if [ ! -d .git ]; then
+            find . -mindepth 1 -maxdepth 1 \
+              ! -name .env \
+              ! -name .venv \
+              ! -name data \
+              ! -name logs \
+              -exec rm -rf {} +
+            rm -f data/.gitkeep
             git init -b main
             git remote add origin https://github.com/msm1357953/cointrading.git
           fi
           git remote set-url origin https://github.com/msm1357953/cointrading.git
           git fetch --prune origin main
           git checkout -B main origin/main
+          git reset --hard origin/main
 
           test -f .env
           chmod 600 .env
