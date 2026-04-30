@@ -9,7 +9,16 @@ from cointrading.scalping import ScalpSignal
 from cointrading.storage import TradingStore
 
 
-GRID_TAKE_PROFIT_BPS = (3.0, 5.0, 8.0)
+MAKER_POST_ONLY = "maker_post_only"
+TAKER_MOMENTUM = "taker_momentum"
+HYBRID_TAKER_ENTRY_MAKER_EXIT = "hybrid_taker_entry_maker_exit"
+EVALUATION_EXECUTION_MODES = (
+    MAKER_POST_ONLY,
+    TAKER_MOMENTUM,
+    HYBRID_TAKER_ENTRY_MAKER_EXIT,
+)
+
+GRID_TAKE_PROFIT_BPS = (3.0, 5.0, 8.0, 12.0, 16.0, 20.0)
 GRID_STOP_LOSS_BPS = (4.0, 6.0, 8.0, 10.0)
 GRID_MAX_HOLD_SECONDS = (60, 180, 300)
 
@@ -73,6 +82,7 @@ def evaluate_cycle_candidates(
             rows.append(
                 _evaluation_row(
                     source="cycles",
+                    execution_mode=MAKER_POST_ONLY,
                     symbol=row["symbol"],
                     regime=row["regime"],
                     side=row["side"],
@@ -97,34 +107,39 @@ def evaluate_signal_grid_candidates(
     config: TradingConfig,
 ) -> list[dict[str, Any]]:
     signals = _grid_signal_rows(store, config.scalp_symbols)
-    groups: dict[tuple[str, str, str, float, float, int], list[float]] = {}
+    groups: dict[tuple[str, str, str, str, float, float, int], list[float]] = {}
     for row in signals:
         for max_hold_seconds in GRID_MAX_HOLD_SECONDS:
             horizon_bps = _horizon_bps(row, max_hold_seconds)
             if horizon_bps is None:
                 continue
-            for take_profit_bps in GRID_TAKE_PROFIT_BPS:
-                for stop_loss_bps in GRID_STOP_LOSS_BPS:
-                    key = (
-                        row["symbol"],
-                        row["regime"],
-                        row["side"],
-                        take_profit_bps,
-                        stop_loss_bps,
-                        max_hold_seconds,
-                    )
-                    groups.setdefault(key, []).append(
-                        _coarse_grid_pnl_bps(
-                            horizon_bps=horizon_bps,
-                            take_profit_bps=take_profit_bps,
-                            stop_loss_bps=stop_loss_bps,
-                            maker_roundtrip_bps=float(row["maker_roundtrip_bps"]),
-                            taker_roundtrip_bps=float(row["taker_roundtrip_bps"]),
+            for execution_mode in EVALUATION_EXECUTION_MODES:
+                for take_profit_bps in GRID_TAKE_PROFIT_BPS:
+                    for stop_loss_bps in GRID_STOP_LOSS_BPS:
+                        key = (
+                            execution_mode,
+                            row["symbol"],
+                            row["regime"],
+                            row["side"],
+                            take_profit_bps,
+                            stop_loss_bps,
+                            max_hold_seconds,
                         )
-                    )
+                        groups.setdefault(key, []).append(
+                            _coarse_grid_pnl_bps(
+                                horizon_bps=horizon_bps,
+                                take_profit_bps=take_profit_bps,
+                                stop_loss_bps=stop_loss_bps,
+                                maker_roundtrip_bps=float(row["maker_roundtrip_bps"]),
+                                taker_roundtrip_bps=float(row["taker_roundtrip_bps"]),
+                                execution_mode=execution_mode,
+                                slippage_bps=config.strategy_taker_slippage_bps,
+                            )
+                        )
 
     rows: list[dict[str, Any]] = []
     for (
+        execution_mode,
         symbol,
         regime,
         side,
@@ -135,6 +150,7 @@ def evaluate_signal_grid_candidates(
         rows.append(
             _evaluation_from_values(
                 source="signal_grid",
+                execution_mode=execution_mode,
                 symbol=symbol,
                 regime=regime,
                 side=side,
@@ -168,6 +184,7 @@ def strategy_gate_decision(
             take_profit_bps=config.scalp_take_profit_bps,
             stop_loss_bps=config.scalp_stop_loss_bps,
             max_hold_seconds=int(config.scalp_max_hold_seconds),
+            execution_mode=config.strategy_execution_mode,
             source=source,
         )
         if row is None:
@@ -194,7 +211,8 @@ def strategy_gate_decision(
         return sample_low
     return StrategyGateDecision(
         False,
-        f"strategy gate: no evaluation for {signal.symbol} {signal.regime} {signal.side}",
+        "strategy gate: no evaluation for "
+        f"{config.strategy_execution_mode} {signal.symbol} {signal.regime} {signal.side}",
     )
 
 
@@ -209,6 +227,7 @@ def strategy_evaluation_text(rows: Iterable[dict[str, Any]], *, limit: int = 20)
                 [
                     f"{row['decision']}",
                     f"{row['source']}",
+                    f"{row['execution_mode']}",
                     f"{row['symbol']} {row['regime']} {row['side']}",
                     f"TP={row['take_profit_bps']:.1f}",
                     f"SL={row['stop_loss_bps']:.1f}",
@@ -269,18 +288,31 @@ def _coarse_grid_pnl_bps(
     stop_loss_bps: float,
     maker_roundtrip_bps: float,
     taker_roundtrip_bps: float,
+    execution_mode: str,
+    slippage_bps: float,
 ) -> float:
-    mixed_exit_cost_bps = (maker_roundtrip_bps / 2.0) + (taker_roundtrip_bps / 2.0)
+    maker_one_way_bps = maker_roundtrip_bps / 2.0
+    taker_one_way_bps = taker_roundtrip_bps / 2.0
+    if execution_mode == TAKER_MOMENTUM:
+        target_cost_bps = taker_roundtrip_bps + (slippage_bps * 2.0)
+        stop_cost_bps = target_cost_bps
+    elif execution_mode == HYBRID_TAKER_ENTRY_MAKER_EXIT:
+        target_cost_bps = taker_one_way_bps + maker_one_way_bps + slippage_bps
+        stop_cost_bps = taker_roundtrip_bps + (slippage_bps * 2.0)
+    else:
+        target_cost_bps = maker_roundtrip_bps
+        stop_cost_bps = maker_one_way_bps + taker_one_way_bps
     if horizon_bps >= take_profit_bps:
-        return take_profit_bps - maker_roundtrip_bps
+        return take_profit_bps - target_cost_bps
     if horizon_bps <= -stop_loss_bps:
-        return -stop_loss_bps - mixed_exit_cost_bps
-    return horizon_bps - mixed_exit_cost_bps
+        return -stop_loss_bps - stop_cost_bps
+    return horizon_bps - stop_cost_bps
 
 
 def _evaluation_from_values(
     *,
     source: str,
+    execution_mode: str,
     symbol: str,
     regime: str,
     side: str,
@@ -294,6 +326,7 @@ def _evaluation_from_values(
     losses = [value for value in values if value <= 0]
     return _evaluation_row(
         source=source,
+        execution_mode=execution_mode,
         symbol=symbol,
         regime=regime,
         side=side,
@@ -314,6 +347,7 @@ def _evaluation_from_values(
 def _evaluation_row(
     *,
     source: str,
+    execution_mode: str,
     symbol: str,
     regime: str,
     side: str,
@@ -340,6 +374,7 @@ def _evaluation_row(
     )
     return {
         "source": source,
+        "execution_mode": execution_mode,
         "symbol": symbol.upper(),
         "regime": regime,
         "side": side,

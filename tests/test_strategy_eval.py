@@ -6,7 +6,12 @@ from cointrading.config import TradingConfig
 from cointrading.scalp_lifecycle import start_cycle_from_signal
 from cointrading.scalping import ScalpSignal
 from cointrading.storage import TradingStore
-from cointrading.strategy_eval import evaluate_and_store_strategy, strategy_gate_decision
+from cointrading.strategy_eval import (
+    MAKER_POST_ONLY,
+    TAKER_MOMENTUM,
+    evaluate_and_store_strategy,
+    strategy_gate_decision,
+)
 
 
 class FakeOrderClient:
@@ -65,6 +70,7 @@ class StrategyEvaluationTests(unittest.TestCase):
             cycle_rows = [row for row in rows if row["source"] == "cycles"]
 
             self.assertEqual(cycle_rows[0]["decision"], "BLOCKED")
+            self.assertEqual(cycle_rows[0]["execution_mode"], MAKER_POST_ONLY)
             self.assertIn("평균손익", cycle_rows[0]["reason"])
             self.assertGreater(store.summary_counts()["strategy_evaluations"], 0)
 
@@ -82,6 +88,7 @@ class StrategyEvaluationTests(unittest.TestCase):
                 [
                     {
                         "source": "cycles",
+                        "execution_mode": MAKER_POST_ONLY,
                         "symbol": "BTCUSDC",
                         "regime": "aligned_long",
                         "side": "long",
@@ -125,12 +132,46 @@ class StrategyEvaluationTests(unittest.TestCase):
                 row
                 for row in rows
                 if row["source"] == "signal_grid"
+                and row["execution_mode"] == MAKER_POST_ONLY
                 and row["take_profit_bps"] == 3.0
                 and row["stop_loss_bps"] == 4.0
                 and row["max_hold_seconds"] == 60
             ]
 
             self.assertEqual(approved[0]["decision"], "APPROVED")
+
+    def test_signal_grid_evaluates_taker_modes_with_extra_cost(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            config = TradingConfig(
+                strategy_min_samples=2,
+                strategy_min_win_rate=0.50,
+                strategy_taker_slippage_bps=1.0,
+            )
+            for index in range(2):
+                signal_id = store.insert_signal(_signal(horizon=20.0), timestamp_ms=1_000 + index)
+                store.update_signal_scores(
+                    signal_id,
+                    {
+                        "horizon_1m_bps": 20.0,
+                        "horizon_3m_bps": 20.0,
+                        "horizon_5m_bps": 20.0,
+                    },
+                )
+
+            rows = evaluate_and_store_strategy(store, config)
+            taker_rows = [
+                row
+                for row in rows
+                if row["source"] == "signal_grid"
+                and row["execution_mode"] == TAKER_MOMENTUM
+                and row["take_profit_bps"] == 12.0
+                and row["stop_loss_bps"] == 4.0
+                and row["max_hold_seconds"] == 60
+            ]
+
+            self.assertEqual(taker_rows[0]["decision"], "APPROVED")
+            self.assertLess(taker_rows[0]["avg_pnl_bps"], 12.0)
 
     def test_start_cycle_records_strategy_gate_block(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

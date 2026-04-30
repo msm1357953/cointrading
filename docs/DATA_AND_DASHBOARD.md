@@ -11,7 +11,7 @@ Tables:
 - `fills`: execution fills and realized fee/PnL records. This table is ready for exchange fill ingestion.
 - `fee_snapshots`: maker/taker fee snapshots by symbol.
 - `scalp_cycles`: post-only scalp lifecycle state, including entry waiting, take-profit waiting, reprice, stop, timeout, and realized paper PnL.
-- `strategy_evaluations`: latest strategy candidate evaluations by source, symbol, regime, side, TP/SL, max hold, sample count, win rate, expectancy, and approval decision.
+- `strategy_evaluations`: latest strategy candidate evaluations by source, execution mode, symbol, regime, side, TP/SL, max hold, sample count, win rate, expectancy, and approval decision.
 
 CSV files remain gitignored and are now treated as compatibility logs. Use `migrate-csv-to-db` to import old rows.
 
@@ -24,6 +24,7 @@ python -m cointrading.cli scalp-report
 python -m cointrading.cli maker-once --symbol BTCUSDC
 python -m cointrading.cli scalp-engine-step
 python -m cointrading.cli strategy-evaluate
+python -m cointrading.cli strategy-notify
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 ```
 
@@ -45,7 +46,11 @@ The VM runs this as `cointrading-scalp-engine.timer` every 15 seconds. Live orde
 - `cycles`: actual post-only/paper lifecycle outcomes grouped by symbol, regime, and side.
 - `signal_grid`: a coarse TP/SL/max-hold grid using scored 1/3/5 minute signal returns.
 
-New lifecycle entries are blocked when `COINTRADING_STRATEGY_GATE_ENABLED=true` and the matching symbol/regime/side/current TP/SL/max-hold combination does not have an `APPROVED` evaluation. This keeps the bot collecting data while preventing weak combinations from continuing into new paper/live cycles.
+The signal grid compares `maker_post_only`, `taker_momentum`, and `hybrid_taker_entry_maker_exit`. Taker and hybrid rows subtract taker fees plus `COINTRADING_STRATEGY_TAKER_SLIPPAGE_BPS` so tiny targets do not look artificially profitable.
+
+New lifecycle entries are blocked when `COINTRADING_STRATEGY_GATE_ENABLED=true` and the matching execution mode/symbol/regime/side/current TP/SL/max-hold combination does not have an `APPROVED` evaluation. This keeps the bot collecting data while preventing weak combinations from continuing into new paper/live cycles.
+
+`strategy-notify` sends a Telegram report when strategy decisions change or when the periodic interval elapses. The VM checks every 15 minutes and defaults to a 6-hour periodic report via `COINTRADING_STRATEGY_NOTIFY_INTERVAL_MINUTES=360`.
 
 ## Dashboard
 

@@ -212,6 +212,7 @@ class TradingStore:
                     evaluated_ms INTEGER NOT NULL,
                     evaluated_iso TEXT NOT NULL,
                     source TEXT NOT NULL,
+                    execution_mode TEXT NOT NULL DEFAULT 'maker_post_only',
                     symbol TEXT NOT NULL,
                     regime TEXT NOT NULL,
                     side TEXT NOT NULL,
@@ -235,6 +236,21 @@ class TradingStore:
                         source, symbol, regime, side,
                         take_profit_bps, stop_loss_bps, max_hold_seconds, evaluated_ms
                     );
+                """
+            )
+            _ensure_column(
+                connection,
+                "strategy_evaluations",
+                "execution_mode",
+                "TEXT NOT NULL DEFAULT 'maker_post_only'",
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strategy_evaluations_latest_mode
+                    ON strategy_evaluations(
+                        source, execution_mode, symbol, regime, side,
+                        take_profit_bps, stop_loss_bps, max_hold_seconds, evaluated_ms
+                    )
                 """
             )
 
@@ -658,18 +674,20 @@ class TradingStore:
                 connection.execute(
                     """
                     INSERT INTO strategy_evaluations (
-                        evaluated_ms, evaluated_iso, source, symbol, regime, side,
+                        evaluated_ms, evaluated_iso, source, execution_mode,
+                        symbol, regime, side,
                         take_profit_bps, stop_loss_bps, max_hold_seconds,
                         sample_count, win_count, loss_count, win_rate,
                         avg_pnl_bps, sum_pnl_bps, avg_win_bps, avg_loss_bps,
                         decision, reason
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         ts,
                         iso_from_ms(ts),
                         row["source"],
+                        row.get("execution_mode", "maker_post_only"),
                         row["symbol"],
                         row["regime"],
                         row["side"],
@@ -695,13 +713,18 @@ class TradingStore:
         self,
         *,
         source: str | None = None,
+        execution_mode: str | None = None,
         limit: int = 100,
     ) -> list[sqlite3.Row]:
         params: list[Any] = []
-        where = ""
+        where_parts: list[str] = []
         if source:
-            where = "WHERE source=?"
+            where_parts.append("source=?")
             params.append(source)
+        if execution_mode:
+            where_parts.append("execution_mode=?")
+            params.append(execution_mode)
+        where = "WHERE " + " AND ".join(where_parts) if where_parts else ""
         params.append(limit)
         with self.connect() as connection:
             return list(
@@ -726,9 +749,11 @@ class TradingStore:
         take_profit_bps: float,
         stop_loss_bps: float,
         max_hold_seconds: int,
+        execution_mode: str = "maker_post_only",
         source: str | None = None,
     ) -> sqlite3.Row | None:
         params: list[Any] = [
+            execution_mode,
             symbol.upper(),
             regime,
             side,
@@ -745,7 +770,8 @@ class TradingStore:
                 f"""
                 SELECT *
                 FROM strategy_evaluations
-                WHERE symbol=?
+                WHERE execution_mode=?
+                  AND symbol=?
                   AND regime=?
                   AND side=?
                   AND ABS(take_profit_bps - ?) < 0.000001
@@ -757,6 +783,25 @@ class TradingStore:
                 """,
                 params,
             ).fetchone()
+
+    def latest_strategy_batch(self, *, limit: int | None = None) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            latest = connection.execute(
+                "SELECT MAX(evaluated_ms) FROM strategy_evaluations"
+            ).fetchone()[0]
+            if latest is None:
+                return []
+            sql = """
+                SELECT *
+                FROM strategy_evaluations
+                WHERE evaluated_ms=?
+                ORDER BY decision ASC, execution_mode ASC, avg_pnl_bps DESC
+            """
+            params: list[Any] = [latest]
+            if limit is not None:
+                sql += " LIMIT ?"
+                params.append(limit)
+            return list(connection.execute(sql, params))
 
     def summary_counts(self) -> dict[str, int]:
         with self.connect() as connection:
@@ -864,3 +909,14 @@ def _bool_int(value: str | None) -> int:
     if value is None:
         return 0
     return 1 if str(value).strip().lower() in {"1", "true", "yes", "y", "on"} else 0
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    ddl: str,
+) -> None:
+    columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})")}
+    if column_name not in columns:
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}")

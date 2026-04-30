@@ -109,6 +109,9 @@ class TradingConfig:
     strategy_min_expectancy_bps: float = 0.0
     strategy_min_win_rate: float = 0.50
     strategy_max_loss_win_ratio: float = 2.5
+    strategy_execution_mode: str = "maker_post_only"
+    strategy_taker_slippage_bps: float = 1.0
+    strategy_notify_interval_minutes: int = 360
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -198,6 +201,18 @@ class TradingConfig:
             strategy_max_loss_win_ratio=_get_float(
                 "COINTRADING_STRATEGY_MAX_LOSS_WIN_RATIO",
                 cls.strategy_max_loss_win_ratio,
+            ),
+            strategy_execution_mode=_get_str(
+                "COINTRADING_STRATEGY_EXECUTION_MODE",
+                cls.strategy_execution_mode,
+            ),
+            strategy_taker_slippage_bps=_get_float(
+                "COINTRADING_STRATEGY_TAKER_SLIPPAGE_BPS",
+                cls.strategy_taker_slippage_bps,
+            ),
+            strategy_notify_interval_minutes=_get_int(
+                "COINTRADING_STRATEGY_NOTIFY_INTERVAL_MINUTES",
+                cls.strategy_notify_interval_minutes,
             ),
         )
 

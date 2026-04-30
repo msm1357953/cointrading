@@ -19,6 +19,7 @@ from cointrading.scalping import (
     scalp_report_rows_text,
 )
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms
+from cointrading.strategy_notify import strategy_notification_text
 
 
 DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC"]
@@ -160,6 +161,9 @@ class TelegramCommandProcessor:
         "결과보고": "scalp_report",
         "스캘핑보고": "scalp_report",
         "스캘프보고": "scalp_report",
+        "전략": "strategy",
+        "전략후보": "strategy",
+        "strategy": "strategy",
         "주문": "orders",
         "주문기록": "orders",
         "orders": "orders",
@@ -221,6 +225,8 @@ class TelegramCommandProcessor:
             return self.scalp_text(args)
         if command == "scalp_report":
             return self.scalp_report_text(args)
+        if command == "strategy":
+            return self.strategy_text()
         if command == "orders":
             return self.orders_text()
         if command == "cycles":
@@ -249,6 +255,7 @@ class TelegramCommandProcessor:
                 "보고 - 스캘핑 dry-run 결과와 장 상태별 성과 요약",
                 "보고 BTCUSDC - BTCUSDC만 결과 요약",
                 "보고 전체 - 예전 USDT 로그까지 포함",
+                "전략 - maker/taker/hybrid 전략 후보 요약",
                 "주문 - 최근 dry-run 주문/차단 기록",
                 "포지션 - 스캘핑 상태머신 기록",
                 "정지 - 자동매매 신규 진입 정지",
@@ -395,6 +402,11 @@ class TelegramCommandProcessor:
                 f"qty={float(order['quantity']):.6f} price={price}"
             )
         return "\n".join(lines)
+
+    def strategy_text(self) -> str:
+        store = TradingStore(default_db_path())
+        rows = store.latest_strategy_batch(limit=200)
+        return strategy_notification_text(rows, reason="수동 조회", limit=8)
 
     def cycles_text(self) -> str:
         store = TradingStore(default_db_path())

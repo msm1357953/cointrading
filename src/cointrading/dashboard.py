@@ -185,6 +185,7 @@ def _strategy_rows_html(rows) -> str:
         f"<td>{escape(kst_from_ms(int(row['evaluated_ms'])))}</td>"
         f"<td>{escape(row['decision'])}</td>"
         f"<td>{escape(row['source'])}</td>"
+        f"<td>{escape(row['execution_mode'])}</td>"
         f"<td>{escape(row['symbol'])}</td>"
         f"<td>{escape(row['regime'])}</td>"
         f"<td>{escape(row['side'])}</td>"
@@ -292,7 +293,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
   <section id="tab-strategies" class="tab-panel">
     <h2>전략 후보</h2>
     <table>
-      <thead><tr><th>평가</th><th>판정</th><th>출처</th><th>심볼</th><th>장상태</th><th>방향</th><th>TP</th><th>SL</th><th>보유</th><th>표본</th><th>승률</th><th>평균bps</th><th>합계bps</th><th>이유</th></tr></thead>
+      <thead><tr><th>평가</th><th>판정</th><th>출처</th><th>실행</th><th>심볼</th><th>장상태</th><th>방향</th><th>TP</th><th>SL</th><th>보유</th><th>표본</th><th>승률</th><th>평균bps</th><th>합계bps</th><th>이유</th></tr></thead>
       <tbody id="strategy-rows">{strategy_rows}</tbody>
     </table>
   </section>

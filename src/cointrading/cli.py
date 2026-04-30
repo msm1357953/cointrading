@@ -25,6 +25,13 @@ from cointrading.scalping import (
 )
 from cointrading.storage import TradingStore, default_db_path
 from cointrading.strategy_eval import evaluate_and_store_strategy, strategy_evaluation_text
+from cointrading.strategy_notify import (
+    StrategyNotifyState,
+    apply_strategy_notification_state,
+    default_strategy_notify_state_path,
+    strategy_notification_decision,
+    strategy_notification_text,
+)
 from cointrading.strategies import MovingAverageCrossStrategy
 from cointrading.telegram_bot import (
     TelegramBotState,
@@ -100,6 +107,17 @@ def main(argv: list[str] | None = None) -> None:
     strategy_evaluate_parser.add_argument("--db-path", type=Path, default=default_db_path())
     strategy_evaluate_parser.add_argument("--limit", type=int, default=25)
 
+    strategy_notify_parser = subparsers.add_parser("strategy-notify")
+    strategy_notify_parser.add_argument("--db-path", type=Path, default=default_db_path())
+    strategy_notify_parser.add_argument(
+        "--state-path",
+        type=Path,
+        default=default_strategy_notify_state_path(),
+    )
+    strategy_notify_parser.add_argument("--periodic-minutes", type=int)
+    strategy_notify_parser.add_argument("--limit", type=int, default=8)
+    strategy_notify_parser.add_argument("--force", action="store_true")
+
     dashboard_parser = subparsers.add_parser("dashboard")
     dashboard_parser.add_argument("--host", default="127.0.0.1")
     dashboard_parser.add_argument("--port", type=int, default=8080)
@@ -158,6 +176,14 @@ def main(argv: list[str] | None = None) -> None:
         scalp_engine_step(_active_scalp_symbols(args.symbols), args.log_path, args.db_path)
     elif args.command == "strategy-evaluate":
         strategy_evaluate(args.db_path, args.limit)
+    elif args.command == "strategy-notify":
+        strategy_notify(
+            args.db_path,
+            args.state_path,
+            args.periodic_minutes,
+            args.limit,
+            args.force,
+        )
     elif args.command == "dashboard":
         run_dashboard(args.host, args.port, args.db_path)
     elif args.command == "fee-status":
@@ -379,6 +405,45 @@ def strategy_evaluate(db_path: Path, limit: int) -> None:
     rows = evaluate_and_store_strategy(store, TradingConfig.from_env())
     print(strategy_evaluation_text(rows, limit=limit))
     print(f"stored {len(rows)} strategy evaluation row(s) into {db_path}")
+
+
+def strategy_notify(
+    db_path: Path,
+    state_path: Path,
+    periodic_minutes: int | None,
+    limit: int,
+    force: bool,
+) -> None:
+    config = TradingConfig.from_env()
+    store = TradingStore(db_path)
+    rows = store.latest_strategy_batch()
+    if not rows:
+        evaluate_and_store_strategy(store, config)
+        rows = store.latest_strategy_batch()
+    state = StrategyNotifyState.load(state_path)
+    should_send, reason, signature = strategy_notification_decision(
+        rows,
+        state,
+        periodic_minutes=periodic_minutes
+        if periodic_minutes is not None
+        else config.strategy_notify_interval_minutes,
+        force=force,
+    )
+    text = strategy_notification_text(rows, reason=reason, limit=limit)
+    print(text)
+    if not should_send:
+        print("notification: skipped")
+        return
+
+    telegram_config = TelegramConfig.from_env()
+    try:
+        TelegramClient(telegram_config).send_message(text)
+    except Exception as exc:
+        print(f"notification: failed - {exc}")
+        return
+    state = apply_strategy_notification_state(state, signature=signature, reason=reason)
+    state.save(state_path)
+    print("notification: sent")
 
 
 def _score_scalp_store(store: TradingStore, current_mid_by_symbol: dict[str, float]) -> int:
