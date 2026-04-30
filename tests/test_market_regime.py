@@ -96,6 +96,24 @@ class MarketRegimeTests(unittest.TestCase):
             self.assertIn("ETHUSDC", text)
             self.assertIn("상승 추세", text)
 
+    def test_current_market_regimes_can_filter_symbols(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            for symbol in ("BTCUSDC", "ETHUSDC"):
+                store.insert_market_regime(
+                    evaluate_market_regime(
+                        symbol,
+                        _klines(80, 100.0, 0.05),
+                        _klines(80, 100.0, 0.25),
+                        timestamp_ms=1_000,
+                    )
+                )
+
+            rows = store.current_market_regimes(symbols=("BTCUSDC",))
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["symbol"], "BTCUSDC")
+
 
 if __name__ == "__main__":
     unittest.main()

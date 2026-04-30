@@ -611,7 +611,7 @@ class TradingStore:
             active = [symbol.upper() for symbol in symbols]
             if not active:
                 return []
-            symbol_filter = f"AND symbol IN ({', '.join('?' for _ in active)})"
+            symbol_filter = f"AND m.symbol IN ({', '.join('?' for _ in active)})"
             params.extend(active)
         with self.connect() as connection:
             return list(
