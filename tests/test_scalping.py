@@ -70,6 +70,22 @@ class ScalpingTests(unittest.TestCase):
         self.assertEqual(signal.regime, "panic_volatility")
         self.assertFalse(signal.trade_allowed)
 
+    def test_negative_spread_blocks_entry(self) -> None:
+        signal = ScalpSignalEngine().evaluate(
+            symbol="BTCUSDT",
+            book_ticker={"bidPrice": "100.02", "askPrice": "100.01"},
+            order_book=_book(),
+            klines=_klines([100.00, 100.02, 100.04, 100.06, 100.08, 100.10]),
+            trading_config=TradingConfig(),
+            commission_rate={
+                "makerCommissionRate": "0.000000",
+                "takerCommissionRate": "0.000400",
+            },
+        )
+        self.assertEqual(signal.side, "flat")
+        self.assertEqual(signal.regime, "invalid_spread")
+        self.assertFalse(signal.trade_allowed)
+
     def test_report_migrates_old_scalp_log_schema(self) -> None:
         old_fields = [field for field in SCALP_LOG_FIELDS if field not in {
             "regime",

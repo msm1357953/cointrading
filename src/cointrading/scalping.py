@@ -164,6 +164,8 @@ class ScalpSignalEngine:
         book_ask_notional: float,
         latest_funding_rate: float | None,
     ) -> tuple[SignalSide, str, str, bool]:
+        if spread_bps < 0:
+            return "flat", "negative spread snapshot", "invalid_spread", False
         if spread_bps > self.config.max_spread_bps:
             return "flat", "spread too wide", "wide_spread", False
         if min(book_bid_notional, book_ask_notional) < self.config.min_side_depth_notional:
@@ -540,6 +542,7 @@ def _side_group_ko(side: str) -> str:
 def _reason_ko(reason: str) -> str:
     return {
         "spread too wide": "스프레드가 너무 넓음",
+        "negative spread snapshot": "호가 스냅샷이 비정상임",
         "book depth too thin": "상위 호가 유동성이 얇음",
         "panic volatility": "급변동 구간",
         "volatility too high": "단기 변동성이 너무 큼",
@@ -558,6 +561,7 @@ def _regime_ko(regime: str) -> str:
         "aligned_long": "롱 스캘핑 가능",
         "aligned_short": "숏 스캘핑 가능",
         "wide_spread": "스프레드 위험",
+        "invalid_spread": "호가 데이터 이상",
         "thin_book": "유동성 부족",
         "panic_volatility": "급변동 금지",
         "high_volatility": "고변동 금지",
