@@ -13,6 +13,15 @@ from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.dashboard import run_dashboard
 from cointrading.execution import place_post_only_maker
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
+from cointrading.llm_report import (
+    GeminiReportClient,
+    LLMReportState,
+    build_report_context,
+    build_report_prompt,
+    default_llm_report_state_path,
+    fallback_report_text,
+    llm_report_due,
+)
 from cointrading.market_regime import evaluate_market_regime
 from cointrading.models import Kline
 from cointrading.scalp_lifecycle import manage_cycle, start_cycle_from_signal
@@ -128,6 +137,14 @@ def main(argv: list[str] | None = None) -> None:
     market_regime_collect_parser.add_argument("--symbols", nargs="+")
     market_regime_collect_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
+    llm_report_parser = subparsers.add_parser("llm-report")
+    llm_report_parser.add_argument("--db-path", type=Path, default=default_db_path())
+    llm_report_parser.add_argument("--state-path", type=Path, default=default_llm_report_state_path())
+    llm_report_parser.add_argument("--interval-hours", type=int, default=8)
+    llm_report_parser.add_argument("--force", action="store_true")
+    llm_report_parser.add_argument("--send-telegram", action="store_true")
+    llm_report_parser.add_argument("--fallback", action="store_true")
+
     dashboard_parser = subparsers.add_parser("dashboard")
     dashboard_parser.add_argument("--host", default="127.0.0.1")
     dashboard_parser.add_argument("--port", type=int, default=8080)
@@ -198,6 +215,15 @@ def main(argv: list[str] | None = None) -> None:
         market_regime(_active_scalp_symbols(args.symbols), args.db_path, args.store)
     elif args.command == "market-regime-collect":
         market_regime(_active_scalp_symbols(args.symbols), args.db_path, True)
+    elif args.command == "llm-report":
+        llm_report(
+            args.db_path,
+            args.state_path,
+            args.interval_hours,
+            args.force,
+            args.send_telegram,
+            args.fallback,
+        )
     elif args.command == "dashboard":
         run_dashboard(args.host, args.port, args.db_path)
     elif args.command == "fee-status":
@@ -482,6 +508,46 @@ def market_regime(symbols: list[str], db_path: Path, store_rows: bool) -> None:
         print(f"\nstored {len(snapshots)} market regime row(s) into {db_path}")
 
 
+def llm_report(
+    db_path: Path,
+    state_path: Path,
+    interval_hours: int,
+    force: bool,
+    send_telegram: bool,
+    use_fallback: bool,
+) -> None:
+    config = TradingConfig.from_env()
+    state = LLMReportState.load(state_path)
+    if not llm_report_due(state, interval_hours=interval_hours, force=force):
+        print("llm-report: skipped, interval not due")
+        return
+
+    context = build_report_context(TradingStore(db_path), config)
+    text = ""
+    if use_fallback:
+        text = fallback_report_text(context)
+    elif not config.llm_enabled:
+        print("llm-report: skipped, LLM disabled")
+        return
+    elif config.llm_provider.lower() != "gemini":
+        print(f"llm-report: skipped, unsupported provider {config.llm_provider}")
+        return
+    elif not config.llm_api_key:
+        print("llm-report: skipped, Gemini API key missing")
+        return
+    else:
+        prompt = build_report_prompt(context)
+        text = GeminiReportClient(config.llm_api_key, config.llm_model).generate(prompt)
+
+    text = _telegram_safe_text(text)
+    print(text)
+    if send_telegram:
+        TelegramClient(TelegramConfig.from_env()).send_message(text)
+        state.last_sent_ms = int(time.time() * 1000)
+        state.save(state_path)
+        print("llm-report: sent")
+
+
 def _score_scalp_store(store: TradingStore, current_mid_by_symbol: dict[str, float]) -> int:
     current_ms = int(time.time() * 1000)
     updated = 0
@@ -560,6 +626,13 @@ def _market_regime_snapshot(symbol: str, client: BinanceUSDMClient):
         klines_15m=client.klines(symbol=symbol, interval="15m", limit=120),
         klines_1h=client.klines(symbol=symbol, interval="1h", limit=120),
     )
+
+
+def _telegram_safe_text(text: str, limit: int = 3500) -> str:
+    clean = text.strip()
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 20].rstrip() + "\n...(truncated)"
 
 
 def fee_status(symbols: list[str], db_path: Path | None = None) -> None:

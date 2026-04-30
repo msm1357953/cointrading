@@ -13,6 +13,30 @@ Use LLMs only for:
 
 Do not use an LLM as the order-entry brain.
 
+## Gemini Reporting
+
+`llm-report` builds a compact context from SQLite and sends it to Gemini for a Korean Telegram risk summary. It is deliberately limited to reporting:
+
+```bash
+python -m cointrading.cli llm-report --send-telegram
+python -m cointrading.cli llm-report --force
+python -m cointrading.cli llm-report --fallback
+```
+
+Supported API key environment names:
+
+- `GEMINI_API_KEY`
+- `GEMINI_KEY`
+- `gemini_key`
+
+Default model:
+
+```text
+gemini-3.1-pro-preview
+```
+
+The VM runs `cointrading-llm-report.timer` every 8 hours, roughly three times per day. The report prompt explicitly forbids order execution, buy/sell instructions, and live-entry recommendations.
+
 ## First Dataset
 
 Build rows from:
@@ -47,4 +71,3 @@ A model can only influence paper trading when all are true:
 - walk-forward validation is better than the rule baseline
 - live order guards remain off
 - the model decision is logged with features and score
-

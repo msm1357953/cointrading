@@ -114,10 +114,15 @@ class TradingConfig:
     strategy_notify_interval_minutes: int = 360
     macro_regime_gate_enabled: bool = True
     macro_regime_max_age_minutes: int = 30
+    llm_enabled: bool = True
+    llm_provider: str = "gemini"
+    llm_model: str = "gemini-3.1-pro-preview"
+    llm_api_key: str = ""
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
         _load_dotenv()
+        llm_api_key = _get_first_str(("GEMINI_API_KEY", "GEMINI_KEY", "gemini_key"))
         return cls(
             initial_equity=_get_float("COINTRADING_INITIAL_EQUITY", cls.initial_equity),
             equity_asset=_get_str("COINTRADING_EQUITY_ASSET", cls.equity_asset).upper(),
@@ -224,6 +229,10 @@ class TradingConfig:
                 "COINTRADING_MACRO_REGIME_MAX_AGE_MINUTES",
                 cls.macro_regime_max_age_minutes,
             ),
+            llm_enabled=_get_bool("COINTRADING_LLM_ENABLED", cls.llm_enabled),
+            llm_provider=_get_str("COINTRADING_LLM_PROVIDER", cls.llm_provider),
+            llm_model=_get_str("COINTRADING_LLM_MODEL", cls.llm_model),
+            llm_api_key=llm_api_key,
         )
 
 

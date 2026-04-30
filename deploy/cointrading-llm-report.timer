@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Cointrading LLM risk report about three times per day
+
+[Timer]
+OnBootSec=10min
+OnUnitInactiveSec=8h
+AccuracySec=5min
+Unit=cointrading-llm-report.service
+
+[Install]
+WantedBy=timers.target
+

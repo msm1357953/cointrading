@@ -93,6 +93,7 @@ jobs:
           sudo systemctl enable --now cointrading-market-regime.timer
           sudo systemctl enable --now cointrading-strategy-evaluate.timer
           sudo systemctl enable --now cointrading-strategy-notify.timer
+          sudo systemctl enable --now cointrading-llm-report.timer
           sudo systemctl enable --now cointrading-scalp-engine.timer
           sudo systemctl start cointrading-market-regime.service
           sudo systemctl start cointrading-strategy-evaluate.service
@@ -107,5 +108,6 @@ jobs:
           systemctl is-active cointrading-market-regime.timer
           systemctl is-active cointrading-strategy-evaluate.timer
           systemctl is-active cointrading-strategy-notify.timer
+          systemctl is-active cointrading-llm-report.timer
           systemctl is-active cointrading-scalp-engine.timer
           REMOTE
