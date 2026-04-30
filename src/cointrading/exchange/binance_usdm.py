@@ -56,6 +56,10 @@ class BinanceUSDMClient:
     def funding_rate(self, symbol: str, limit: int = 1) -> list[dict[str, Any]]:
         return self._request("GET", "/fapi/v1/fundingRate", {"symbol": symbol, "limit": limit})
 
+    def exchange_info(self, symbol: str | None = None) -> dict[str, Any]:
+        params = {"symbol": symbol.upper()} if symbol else None
+        return self._request("GET", "/fapi/v1/exchangeInfo", params=params)
+
     def account_info(self) -> dict[str, Any]:
         return self._signed_request("GET", "/fapi/v3/account")
 

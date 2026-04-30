@@ -101,6 +101,32 @@ class FakeLiveOrderClient:
         self.orders[int(order_id)] = {**self.orders[int(order_id)], "status": "CANCELED"}
         return self.orders[int(order_id)]
 
+    def exchange_info(self, symbol=None):
+        symbol = symbol or "BTCUSDC"
+        return {
+            "symbols": [
+                {
+                    "symbol": symbol,
+                    "filters": [
+                        {
+                            "filterType": "PRICE_FILTER",
+                            "tickSize": "0.01",
+                        },
+                        {
+                            "filterType": "LOT_SIZE",
+                            "minQty": "0.01",
+                            "maxQty": "1000",
+                            "stepSize": "0.01",
+                        },
+                        {
+                            "filterType": "MIN_NOTIONAL",
+                            "notional": "5",
+                        },
+                    ],
+                }
+            ]
+        }
+
 
 def _signal(
     side="long",

@@ -11,8 +11,9 @@ from cointrading.account import account_summary_text
 from cointrading.backtest import Backtester
 from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.dashboard import run_dashboard
-from cointrading.execution import place_post_only_maker
+from cointrading.execution import build_post_only_intent, place_post_only_maker
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
+from cointrading.exchange_filters import SymbolFilters
 from cointrading.llm_report import (
     GeminiReportClient,
     LLMReportState,
@@ -158,6 +159,11 @@ def main(argv: list[str] | None = None) -> None:
     fee_status_parser.add_argument("--symbols", nargs="+", default=DEFAULT_FEE_SYMBOLS)
     fee_status_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
+    live_preflight_parser = subparsers.add_parser("live-preflight")
+    live_preflight_parser.add_argument("--symbols", nargs="+")
+    live_preflight_parser.add_argument("--notional", type=float, default=10.0)
+    live_preflight_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -234,6 +240,8 @@ def main(argv: list[str] | None = None) -> None:
         run_dashboard(args.host, args.port, args.db_path)
     elif args.command == "fee-status":
         fee_status(args.symbols, args.db_path)
+    elif args.command == "live-preflight":
+        live_preflight(_active_scalp_symbols(args.symbols), args.notional, args.db_path)
     elif args.command == "telegram-me":
         telegram_me()
     elif args.command == "telegram-send":
@@ -688,6 +696,69 @@ def fee_status(symbols: list[str], db_path: Path | None = None) -> None:
                 raw=commission,
             )
         print(f"{symbol.upper()}: maker {maker:.2f}bps, taker {taker:.2f}bps")
+
+
+def live_preflight(symbols: list[str], notional: float, db_path: Path) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    store = TradingStore(db_path)
+    risk = evaluate_runtime_risk(store, config)
+    usdc_balance = _asset_balance(client, config.equity_asset)
+    bnb_fee_enabled, bnb_balance = _fee_context(client)
+
+    print("10 USDC live preflight")
+    print(f"dry_run={config.dry_run}")
+    print(f"live_trading_enabled={config.live_trading_enabled}")
+    print(f"live_scalp_lifecycle_enabled={config.live_scalp_lifecycle_enabled}")
+    print(f"requested_notional={notional:.2f} {config.equity_asset}")
+    print(f"max_single_order_notional={config.max_single_order_notional:.2f}")
+    print(f"{config.equity_asset}_available={usdc_balance:.8f}")
+    print(f"bnb_fee_discount_possible={bnb_fee_enabled and bnb_balance > 0}")
+    print(f"runtime_risk={risk.mode} allows_new_entries={risk.allows_new_entries}")
+    if not risk.allows_new_entries:
+        print("preflight_block=runtime risk blocks new entries")
+    if notional > config.max_single_order_notional:
+        print("preflight_block=requested notional exceeds max single order cap")
+    print("")
+
+    for symbol in symbols:
+        symbol = symbol.upper()
+        try:
+            ticker = client.book_ticker(symbol)
+            bid = float(ticker["bidPrice"])
+            ask = float(ticker["askPrice"])
+            mid = (bid + ask) / 2.0
+            filters = SymbolFilters.from_exchange_info(client.exchange_info(symbol), symbol)
+            signal = _scalp_signal(symbol, client=client, trading_config=config)
+            decision = build_post_only_intent(signal, config, notional=notional)
+            normalized = None
+            filter_reason = decision.reason
+            if decision.intent is not None:
+                normalized, filter_reason = filters.normalize_intent(decision.intent)
+            min_notional = filters.min_order_notional_at(mid)
+        except BinanceAPIError as exc:
+            print(f"{symbol}: BLOCK exchange error: {exc}")
+            continue
+        except ValueError as exc:
+            print(f"{symbol}: BLOCK filter error: {exc}")
+            continue
+
+        print(f"{symbol}")
+        print(f"  mid={mid:.8f} min_order_notional≈{float(min_notional):.4f}")
+        print(
+            "  filters="
+            f"tick={filters.tick_size} step={filters.step_size} "
+            f"minQty={filters.min_qty} minNotional={filters.min_notional}"
+        )
+        print(f"  signal={signal.side} regime={signal.regime} reason={signal.reason}")
+        if normalized is None:
+            print(f"  decision=BLOCK {filter_reason}")
+            continue
+        print(
+            "  decision=OK "
+            f"side={normalized.side} qty={normalized.quantity:.12f} "
+            f"price={normalized.price:.12f} notional≈{normalized.quantity * (normalized.price or mid):.4f}"
+        )
 
 
 def _fee_context(client: BinanceUSDMClient) -> tuple[bool, float]:

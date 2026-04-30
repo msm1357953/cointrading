@@ -5,6 +5,7 @@ import time
 
 from cointrading.config import TradingConfig
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
+from cointrading.exchange_filters import SymbolFilters
 from cointrading.models import OrderIntent, OrderSide
 from cointrading.risk import RiskManager
 from cointrading.scalping import ScalpSignal
@@ -104,6 +105,34 @@ def place_post_only_maker(
         return ExecutionResult(
             ExecutionDecision(False, "live trading flag is disabled", decision.intent),
             order_id=order_id,
+        )
+
+    if not config.dry_run:
+        try:
+            filters = SymbolFilters.from_exchange_info(
+                client.exchange_info(decision.intent.symbol),
+                decision.intent.symbol,
+            )
+            normalized_intent, filter_reason = filters.normalize_intent(decision.intent)
+        except (BinanceAPIError, ValueError) as exc:
+            normalized_intent = None
+            filter_reason = f"exchange filter error: {exc}"
+        if normalized_intent is None:
+            order_id = store.insert_order_attempt(
+                decision.intent,
+                status="BLOCKED",
+                dry_run=False,
+                reason=filter_reason,
+                signal_id=signal_id,
+            )
+            return ExecutionResult(
+                ExecutionDecision(False, filter_reason, decision.intent),
+                order_id=order_id,
+            )
+        decision = ExecutionDecision(
+            True,
+            f"{decision.reason}; {filter_reason}",
+            normalized_intent,
         )
 
     try:

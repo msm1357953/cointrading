@@ -56,12 +56,13 @@
 - 2026-04-30: Gemini reporting was verified on the VM with `gemini-3.1-pro-preview`; the local/VM env key may be named `GEMINI_API_KEY`, `GEMINI_KEY`, or `gemini_key`. A forced Telegram risk summary was sent successfully after increasing the Gemini output budget.
 - 2026-04-30: Runtime risk mode was added. It converts recent stop-loss clusters, requote clusters, KST-day realized loss, and BTC stress into NORMAL/CAUTION/DEFENSIVE/HALT; DEFENSIVE/HALT blocks new entries, CAUTION blocks live entries, and the dashboard/Telegram/LLM context now expose this mode. Live scalp entry is also blocked unless `COINTRADING_LIVE_SCALP_LIFECYCLE_ENABLED=true`.
 - 2026-04-30: Live lifecycle tests and a minimal live reconciliation path were added. The covered path checks live entry order status, ingests user trades, submits reduce-only take-profit, closes on live take-profit fill, and cancels/replaces the target with reduce-only market exit for stop-loss. Live remains disabled by default.
+- 2026-05-01: Exchange-info filter parsing and `live-preflight` were added for the planned 10 USDC first live test. Live order intents must pass tick size, step size, minQty, and minNotional checks before they can be submitted.
 
 ## Next Work Packets
 
 1. Run the included backtest on downloaded BTCUSDT/ETHUSDT klines.
-2. Add exchange info parsing for exact tick size and quantity step size.
-3. Add exact exchange info parsing for tick size and quantity step size before allowing live orders.
+2. Run `live-preflight --notional 10` on the VM immediately before any real-money test.
+3. Add a one-shot/manual live enable path that caps notional at 10 USDC and automatically disables live mode after the first closed cycle.
 4. Add live exchange fill ingestion and open-order reconciliation.
 5. Let USDC dry-run scalping collection continue, then inspect Telegram `전략` and the dashboard strategy tab.
 6. Review maker/taker/hybrid candidates and only consider live escalation after `APPROVED` rows stay stable across larger sample sizes and their paper lifecycle outcomes are positive.
