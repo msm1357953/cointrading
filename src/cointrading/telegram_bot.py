@@ -405,7 +405,7 @@ class TelegramCommandProcessor:
 
     def strategy_text(self) -> str:
         store = TradingStore(default_db_path())
-        rows = store.latest_strategy_batch(limit=200)
+        rows = store.latest_strategy_batch()
         return strategy_notification_text(rows, reason="수동 조회", limit=8)
 
     def cycles_text(self) -> str:

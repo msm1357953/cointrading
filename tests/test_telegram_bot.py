@@ -212,6 +212,31 @@ class TelegramCommandTests(unittest.TestCase):
             reply = processor.handle_text("123", "/scalp_report BTCUSDC")
         self.assertEqual(reply, "report ok")
 
+    def test_strategy_command_uses_full_latest_batch(self) -> None:
+        processor = TelegramCommandProcessor(
+            TelegramConfig(
+                allowed_chat_ids=frozenset({"123"}),
+                commands_enabled=True,
+            ),
+            TradingConfig(),
+            TelegramBotState(),
+            exchange_client=FakeExchangeClient(),
+        )
+        with (
+            patch("cointrading.telegram_bot.TradingStore") as store_cls,
+            patch(
+                "cointrading.telegram_bot.strategy_notification_text",
+                return_value="strategy ok",
+            ) as text_fn,
+        ):
+            store = store_cls.return_value
+            store.latest_strategy_batch.return_value = ["row"]
+            reply = processor.handle_text("123", "전략")
+
+        self.assertEqual(reply, "strategy ok")
+        store.latest_strategy_batch.assert_called_once_with()
+        text_fn.assert_called_once_with(["row"], reason="수동 조회", limit=8)
+
     def test_korean_plain_commands(self) -> None:
         processor = TelegramCommandProcessor(
             TelegramConfig(
