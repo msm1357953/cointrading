@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -13,6 +14,7 @@ from cointrading.storage import TradingStore, default_db_path
 def run_dashboard(host: str = "127.0.0.1", port: int = 8080, db_path: Path | None = None) -> None:
     store_path = db_path or default_db_path()
     config = TradingConfig.from_env()
+    auth_token = os.getenv("COINTRADING_DASHBOARD_AUTH_TOKEN", "").strip()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -21,6 +23,9 @@ def run_dashboard(host: str = "127.0.0.1", port: int = 8080, db_path: Path | Non
                 self.send_error(404)
                 return
             query = parse_qs(parsed.query)
+            if not _is_authorized(self.headers.get("Authorization", ""), query, auth_token):
+                self._send_text(401, "Unauthorized\n")
+                return
             symbol = query.get("symbol", [None])[0]
             store = TradingStore(store_path)
             rows = store.list_signals(symbol=symbol, symbols=config.scalp_symbols if not symbol else None)
@@ -38,12 +43,34 @@ def run_dashboard(host: str = "127.0.0.1", port: int = 8080, db_path: Path | Non
             self.end_headers()
             self.wfile.write(payload)
 
+        def _send_text(self, status: int, text: str) -> None:
+            payload = text.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            if status == 401:
+                self.send_header("WWW-Authenticate", "Bearer")
+            self.end_headers()
+            self.wfile.write(payload)
+
         def log_message(self, format: str, *args) -> None:
             return
 
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"Dashboard: http://{host}:{port}")
     server.serve_forever()
+
+
+def _is_authorized(
+    authorization_header: str,
+    query: dict[str, list[str]],
+    auth_token: str,
+) -> bool:
+    if not auth_token:
+        return True
+    if query.get("token", [""])[0] == auth_token:
+        return True
+    return authorization_header.strip() == f"Bearer {auth_token}"
 
 
 def _page(rows_text: str, rows: list[dict[str, str]], orders, config: TradingConfig) -> str:
