@@ -336,6 +336,7 @@ def scalp_engine_step(symbols: list[str], log_path: Path, db_path: Path) -> None
     config = TradingConfig.from_env()
     client = BinanceUSDMClient(config=config)
     store = TradingStore(db_path)
+    paused = TelegramBotState.load(default_state_path()).paused
     lines: list[str] = []
     for symbol in symbols:
         symbol = symbol.upper()
@@ -346,6 +347,10 @@ def scalp_engine_step(symbols: list[str], log_path: Path, db_path: Path) -> None
             ask = float(ticker["askPrice"])
             result = manage_cycle(client, store, active_cycle, config, bid=bid, ask=ask)
             lines.append(f"{symbol}: {result.action} - {result.detail}")
+            continue
+
+        if paused:
+            lines.append(f"{symbol}: paused - no new entry")
             continue
 
         signal = _scalp_signal(symbol, client=client, trading_config=config)
