@@ -16,7 +16,7 @@ from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.scalping import ScalpSignalEngine, default_scalp_log_path, scalp_report_text
 
 
-DEFAULT_FEE_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BTCUSDC", "ETHUSDC"]
+DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC", "BTCUSDT", "ETHUSDT"]
 
 
 class TelegramAPIError(RuntimeError):
@@ -227,10 +227,11 @@ class TelegramCommandProcessor:
                 "계좌 - Binance 선물 계좌 요약",
                 "위험 - 리스크 한도 확인",
                 "수수료 - BNB 할인과 현재 수수료 확인",
-                "가격 BTCUSDT - 현재 가격 확인",
-                "스캘핑 BTCUSDT - 현재 스캘핑 신호와 장 상태 확인",
+                "가격 BTCUSDC - 현재 가격 확인",
+                "스캘핑 BTCUSDC - 현재 스캘핑 신호와 장 상태 확인",
                 "보고 - 스캘핑 dry-run 결과와 장 상태별 성과 요약",
-                "보고 BTCUSDT - BTC만 결과 요약",
+                "보고 BTCUSDC - BTCUSDC만 결과 요약",
+                "보고 전체 - 예전 USDT 로그까지 포함",
                 "정지 - 자동매매 신규 진입 정지",
                 "재개 - 자동매매 신규 진입 재개",
                 f"chat_id: {chat_id}",
@@ -249,6 +250,7 @@ class TelegramCommandProcessor:
                 f"정지 상태: {paused}",
                 "초기 기준 자산: "
                 f"{self.trading_config.initial_equity:.2f} {self.trading_config.equity_asset}",
+                f"스캘핑 대상: {', '.join(self.trading_config.scalp_symbols)}",
             ]
         )
 
@@ -285,7 +287,7 @@ class TelegramCommandProcessor:
         ]
         for symbol in symbols:
             if not self.SYMBOL_PATTERN.match(symbol):
-                return "심볼 형식이 이상합니다. 예: BTCUSDT"
+                return "심볼 형식이 이상합니다. 예: BTCUSDC"
             try:
                 commission = self.exchange_client.commission_rate(symbol)
             except BinanceAPIError:
@@ -299,9 +301,9 @@ class TelegramCommandProcessor:
         return "\n".join(lines)
 
     def price_text(self, args: list[str]) -> str:
-        symbol = args[0].upper() if args else "BTCUSDT"
+        symbol = args[0].upper() if args else self.trading_config.scalp_symbols[0]
         if not self.SYMBOL_PATTERN.match(symbol):
-            return "심볼 형식이 이상합니다. 예: BTCUSDT"
+            return "심볼 형식이 이상합니다. 예: BTCUSDC"
         klines = self.exchange_client.klines(symbol=symbol, interval="1m", limit=1)
         if not klines:
             return f"{symbol} 가격 데이터가 없습니다."
@@ -312,9 +314,9 @@ class TelegramCommandProcessor:
         return account_summary_text(self.exchange_client.account_info())
 
     def scalp_text(self, args: list[str]) -> str:
-        symbol = args[0].upper() if args else "BTCUSDT"
+        symbol = args[0].upper() if args else self.trading_config.scalp_symbols[0]
         if not self.SYMBOL_PATTERN.match(symbol):
-            return "심볼 형식이 이상합니다. 예: BTCUSDT"
+            return "심볼 형식이 이상합니다. 예: BTCUSDC"
         funding_rows = self.exchange_client.funding_rate(symbol, limit=1)
         latest_funding = None
         if funding_rows:
@@ -339,10 +341,16 @@ class TelegramCommandProcessor:
         return signal.to_text()
 
     def scalp_report_text(self, args: list[str]) -> str:
+        if args and args[0].lower() in {"all", "전체"}:
+            return scalp_report_text(default_scalp_log_path())
         symbol = args[0].upper() if args else None
         if symbol and not self.SYMBOL_PATTERN.match(symbol):
-            return "심볼 형식이 이상합니다. 예: BTCUSDT"
-        return scalp_report_text(default_scalp_log_path(), symbol)
+            return "심볼 형식이 이상합니다. 예: BTCUSDC"
+        return scalp_report_text(
+            default_scalp_log_path(),
+            symbol,
+            symbols=self.trading_config.scalp_symbols,
+        )
 
     def _fee_context(self) -> tuple[bool, float]:
         try:

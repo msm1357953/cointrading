@@ -107,6 +107,75 @@ class ScalpingTests(unittest.TestCase):
             with path.open() as file:
                 self.assertEqual(csv.DictReader(file).fieldnames, SCALP_LOG_FIELDS)
 
+    def test_report_can_focus_on_active_usdc_symbols(self) -> None:
+        rows = [
+            {
+                "timestamp_ms": "1",
+                "iso_time": "2026-04-30T00:00:00+00:00",
+                "symbol": "BTCUSDT",
+                "side": "long",
+                "reason": "legacy",
+                "regime": "legacy",
+                "trade_allowed": "true",
+                "mid_price": "100",
+                "spread_bps": "",
+                "imbalance": "",
+                "momentum_bps": "",
+                "realized_vol_bps": "",
+                "maker_roundtrip_bps": "4",
+                "taker_roundtrip_bps": "10",
+                "edge_after_maker_bps": "",
+                "book_bid_notional": "",
+                "book_ask_notional": "",
+                "book_depth_notional": "",
+                "bnb_fee_discount_enabled": "false",
+                "bnb_fee_discount_active": "false",
+                "latest_funding_rate": "",
+                "horizon_1m_bps": "",
+                "horizon_3m_bps": "",
+                "horizon_5m_bps": "8",
+            },
+            {
+                "timestamp_ms": "2",
+                "iso_time": "2026-04-30T00:01:00+00:00",
+                "symbol": "BTCUSDC",
+                "side": "long",
+                "reason": "bid imbalance with positive momentum",
+                "regime": "aligned_long",
+                "trade_allowed": "true",
+                "mid_price": "100",
+                "spread_bps": "",
+                "imbalance": "",
+                "momentum_bps": "",
+                "realized_vol_bps": "",
+                "maker_roundtrip_bps": "0",
+                "taker_roundtrip_bps": "7.2",
+                "edge_after_maker_bps": "",
+                "book_bid_notional": "",
+                "book_ask_notional": "",
+                "book_depth_notional": "",
+                "bnb_fee_discount_enabled": "true",
+                "bnb_fee_discount_active": "true",
+                "latest_funding_rate": "",
+                "horizon_1m_bps": "",
+                "horizon_3m_bps": "",
+                "horizon_5m_bps": "8",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "scalp_signals.csv"
+            with path.open("w", newline="") as file:
+                writer = csv.DictWriter(file, fieldnames=SCALP_LOG_FIELDS)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            report = scalp_report_text(path, symbols=("BTCUSDC", "ETHUSDC"))
+
+        self.assertIn("대상: BTCUSDC, ETHUSDC", report)
+        self.assertIn("전체 로그: 1개", report)
+        self.assertIn("메이커순익=8.000bps", report)
+        self.assertNotIn("이전로그", report)
+
 
 if __name__ == "__main__":
     unittest.main()

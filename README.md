@@ -24,6 +24,7 @@ Important defaults:
 - `COINTRADING_TESTNET=true`
 - `COINTRADING_INITIAL_EQUITY=1000`
 - `COINTRADING_EQUITY_ASSET=USDC`
+- `COINTRADING_SCALP_SYMBOLS=BTCUSDC,ETHUSDC`
 - `COINTRADING_MAX_DRAWDOWN_PCT=0.10`
 - `COINTRADING_DAILY_LOSS_PCT=0.03`
 
@@ -34,7 +35,7 @@ python -m cointrading.cli demo-backtest
 python -m cointrading.cli explain-mdd
 python -m cointrading.cli fetch-klines --symbol BTCUSDT --interval 1h --limit 200
 python -m cointrading.cli binance-account
-python -m cointrading.cli scalp-check --symbol BTCUSDT
+python -m cointrading.cli scalp-check --symbol BTCUSDC
 python -m cointrading.cli scalp-collect
 python -m cointrading.cli scalp-score
 python -m cointrading.cli scalp-report

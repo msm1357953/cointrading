@@ -47,15 +47,16 @@ Copy the printed `chat_id` into `.env`.
 - `계좌`: Binance 선물 계좌 요약을 보여줍니다.
 - `위험`: 리스크 한도를 보여줍니다.
 - `수수료`: BNB 수수료 할인 설정, USDC live 준비 상태, BTC/ETH USDT·USDC 현재 수수료를 보여줍니다.
-- `가격 BTCUSDT`: 최근 가격을 보여줍니다.
-- `스캘핑 BTCUSDT`: 실시간 dry-run 스캘핑 신호, 장 상태, 진입 허용 여부를 보여줍니다.
-- `장상태 BTCUSDT`: `스캘핑 BTCUSDT`와 같습니다.
+- `가격 BTCUSDC`: 최근 가격을 보여줍니다.
+- `스캘핑 BTCUSDC`: 실시간 dry-run 스캘핑 신호, 장 상태, 진입 허용 여부를 보여줍니다.
+- `장상태 BTCUSDC`: `스캘핑 BTCUSDC`와 같습니다.
 - `보고`: 전체 스캘핑 dry-run 채점 결과와 장 상태별 성과를 보여줍니다.
-- `보고 BTCUSDT`: 특정 심볼의 스캘핑 dry-run 채점 결과와 장 상태별 성과를 보여줍니다.
+- `보고 BTCUSDC`: 특정 심볼의 스캘핑 dry-run 채점 결과와 장 상태별 성과를 보여줍니다.
+- `보고 전체`: 예전 USDT 로그까지 포함한 전체 결과를 보여줍니다.
 - `정지`: 신규 진입 정지 상태로 둡니다.
 - `재개`: 신규 진입 정지를 풉니다.
 
-Slash commands such as `/status`, `/account`, `/scalp BTCUSDT`, and `/scalp_report` are still accepted.
+Slash commands such as `/status`, `/account`, `/scalp BTCUSDC`, and `/scalp_report` are still accepted.
 
 No command places live orders. Future live-trading commands should require explicit two-step confirmation and should stay blocked while `COINTRADING_DRY_RUN=true`.
 

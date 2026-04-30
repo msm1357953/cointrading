@@ -5,7 +5,7 @@ import csv
 from datetime import datetime, timezone
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, Iterable
 
 from cointrading.config import TradingConfig
 from cointrading.models import Kline, SignalSide
@@ -348,7 +348,11 @@ def score_scalp_log(path: Path, current_mid_by_symbol: dict[str, float]) -> int:
     return updated
 
 
-def scalp_report_text(path: Path, symbol: str | None = None) -> str:
+def scalp_report_text(
+    path: Path,
+    symbol: str | None = None,
+    symbols: Iterable[str] | None = None,
+) -> str:
     if not path.exists():
         return "아직 스캘핑 신호 로그가 없습니다."
     _ensure_scalp_log_schema(path)
@@ -356,13 +360,23 @@ def scalp_report_text(path: Path, symbol: str | None = None) -> str:
         rows = list(csv.DictReader(file))
     if symbol:
         rows = [row for row in rows if row.get("symbol") == symbol.upper()]
+    elif symbols is not None:
+        allowed_symbols = {item.upper() for item in symbols}
+        rows = [row for row in rows if row.get("symbol") in allowed_symbols]
     if not rows:
-        target = symbol.upper() if symbol else "all symbols"
+        if symbol:
+            target = symbol.upper()
+        elif symbols is not None:
+            target = ", ".join(sorted({item.upper() for item in symbols}))
+        else:
+            target = "all symbols"
         return f"{target} 스캘핑 신호가 아직 없습니다."
 
     lines = ["스캘핑 dry-run 리포트"]
     if symbol:
         lines.append(f"심볼: {symbol.upper()}")
+    elif symbols is not None:
+        lines.append(f"대상: {', '.join(sorted({item.upper() for item in symbols}))}")
     lines.append(f"전체 로그: {len(rows)}개")
     for horizon in ("horizon_1m_bps", "horizon_3m_bps", "horizon_5m_bps"):
         scored_rows = _scored_rows(rows, horizon)
@@ -376,8 +390,8 @@ def scalp_report_text(path: Path, symbol: str | None = None) -> str:
         avg_after_taker = avg - _avg_cost(scored_rows, "taker_roundtrip_bps")
         lines.append(
             f"{_horizon_ko(horizon)}: 표본={len(scored)} 승률={len(wins)/len(scored):.1%} "
-            f"평균={avg:.3f}bps 메이커차감={avg_after_maker:.3f}bps "
-            f"테이커차감={avg_after_taker:.3f}bps"
+            f"평균={avg:.3f}bps 메이커순익={avg_after_maker:.3f}bps "
+            f"테이커순익={avg_after_taker:.3f}bps"
         )
     lines.extend(_decision_lines(rows))
     lines.extend(_regime_distribution_lines(rows))
@@ -417,9 +431,9 @@ def _decision_lines(rows: list[dict[str, str]]) -> list[str]:
     if len(scored_rows) < 50:
         return [f"판단: 5분 표본 {len(scored_rows)}개라 아직 부족합니다. live 금지."]
     if maker_net <= 0:
-        return [f"판단: 5분 메이커차감 평균 {maker_net:.3f}bps라 live 금지."]
+        return [f"판단: 5분 메이커순익 평균 {maker_net:.3f}bps라 live 금지."]
     return [
-        f"판단: 5분 메이커차감 평균 {maker_net:.3f}bps. 그래도 post-only 테스트 전 live 금지."
+        f"판단: 5분 메이커순익 평균 {maker_net:.3f}bps. 그래도 post-only 테스트 전 live 금지."
     ]
 
 
@@ -464,7 +478,7 @@ def _group_summary_lines(
         maker_net = avg - _avg_cost(group_rows, "maker_roundtrip_bps")
         lines.append(
             f"- {label} {_call_name_fn(name_fn, key)}: 표본={len(values)} "
-            f"승률={len(wins)/len(values):.1%} 메이커차감={maker_net:.3f}bps"
+            f"승률={len(wins)/len(values):.1%} 메이커순익={maker_net:.3f}bps"
         )
     return lines
 

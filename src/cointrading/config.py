@@ -62,6 +62,14 @@ def _get_csv_set(name: str) -> set[str]:
     return {item.strip() for item in raw.split(",") if item.strip()}
 
 
+def _get_csv_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    values = tuple(item.strip().upper() for item in raw.split(",") if item.strip())
+    return values or default
+
+
 @dataclass(frozen=True)
 class TradingConfig:
     initial_equity: float = 1000.0
@@ -76,6 +84,7 @@ class TradingConfig:
     slippage_bps: float = 2.0
     dry_run: bool = True
     testnet: bool = True
+    scalp_symbols: tuple[str, ...] = ("BTCUSDC", "ETHUSDC")
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -100,6 +109,7 @@ class TradingConfig:
             slippage_bps=_get_float("COINTRADING_SLIPPAGE_BPS", cls.slippage_bps),
             dry_run=_get_bool("COINTRADING_DRY_RUN", cls.dry_run),
             testnet=_get_bool("COINTRADING_TESTNET", cls.testnet),
+            scalp_symbols=_get_csv_tuple("COINTRADING_SCALP_SYMBOLS", cls.scalp_symbols),
         )
 
 

@@ -45,36 +45,33 @@ The scanner now labels each sample with a market regime:
 ## Commands
 
 ```bash
-python -m cointrading.cli scalp-check --symbol BTCUSDT
 python -m cointrading.cli scalp-check --symbol BTCUSDC
-python -m cointrading.cli scalp-check --symbol ETHUSDT
 python -m cointrading.cli scalp-check --symbol ETHUSDC
 python -m cointrading.cli fee-status
 ```
 
-Default dry-run collection watches `BTCUSDT`, `ETHUSDT`, `BTCUSDC`, and `ETHUSDC`.
+Default dry-run collection watches `BTCUSDC` and `ETHUSDC`.
 As of the 2026-04-30 API check, BTC/ETH USDC futures return 0 maker fee and 4 bps taker fee for this account, while USDT futures return 2 bps maker and 5 bps taker.
-USDC live trading still needs USDC margin or Multi-Assets Mode; otherwise USDC symbols can be monitored but should not be live traded.
+USDC and BNB are now funded in the futures wallet, so reports default to the active USDC symbols. Use `보고 전체` only when checking old USDT logs.
 
 If this command is run outside the whitelisted VM, signed commission lookup may fail and the scanner falls back to configured fee defaults.
 
 Telegram:
 
 ```text
-스캘핑 BTCUSDT
 스캘핑 BTCUSDC
-스캘핑 ETHUSDT
 스캘핑 ETHUSDC
 보고
-보고 BTCUSDT
+보고 BTCUSDC
+보고 전체
 수수료
 ```
 
-Slash commands such as `/scalp BTCUSDT` and `/scalp_report` still work.
+Slash commands such as `/scalp BTCUSDC` and `/scalp_report` still work.
 
 ## Dry-run Collection
 
-The VM collects BTCUSDT and ETHUSDT signals every minute into:
+The VM collects active `COINTRADING_SCALP_SYMBOLS` signals every minute into:
 
 ```text
 ~/cointrading/data/scalp_signals.csv
@@ -96,7 +93,8 @@ CLI:
 python -m cointrading.cli scalp-collect
 python -m cointrading.cli scalp-score
 python -m cointrading.cli scalp-report
-python -m cointrading.cli scalp-report --symbol BTCUSDT
+python -m cointrading.cli scalp-report --symbol BTCUSDC
+python -m cointrading.cli scalp-report --all-symbols
 ```
 
 ## Live Trading Gate

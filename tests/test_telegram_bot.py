@@ -64,6 +64,12 @@ class FakeExchangeClient:
         return [{"symbol": symbol, "fundingRate": "0.00001000"}]
 
     def commission_rate(self, symbol: str):
+        if symbol.endswith("USDC"):
+            return {
+                "symbol": symbol,
+                "makerCommissionRate": "0",
+                "takerCommissionRate": "0.000400",
+            }
         return {
             "symbol": symbol,
             "makerCommissionRate": "0.000200",
@@ -109,6 +115,7 @@ class TelegramCommandTests(unittest.TestCase):
         self.assertIn("모드: mainnet", reply)
         self.assertIn("dry-run: on", reply)
         self.assertIn("초기 기준 자산: 1000.00 USDC", reply)
+        self.assertIn("스캘핑 대상: BTCUSDC, ETHUSDC", reply)
 
     def test_pause_and_resume_mutate_state(self) -> None:
         state = TelegramBotState()
@@ -163,11 +170,11 @@ class TelegramCommandTests(unittest.TestCase):
             TelegramBotState(),
             exchange_client=FakeExchangeClient(),
         )
-        reply = processor.handle_text("123", "수수료 BTCUSDT")
+        reply = processor.handle_text("123", "수수료 BTCUSDC")
         self.assertIn("BNB 수수료 할인 설정: 켜짐", reply)
         self.assertIn("실제 할인 적용: 가능", reply)
         self.assertIn("USDC 심볼 live 준비: 불가", reply)
-        self.assertIn("BTCUSDT: maker 1.80bps, taker 4.50bps", reply)
+        self.assertIn("BTCUSDC: maker 0.00bps, taker 3.60bps", reply)
 
     def test_scalp_command_uses_market_microstructure(self) -> None:
         processor = TelegramCommandProcessor(
@@ -179,10 +186,10 @@ class TelegramCommandTests(unittest.TestCase):
             TelegramBotState(),
             exchange_client=FakeExchangeClient(),
         )
-        reply = processor.handle_text("123", "/scalp BTCUSDT")
-        self.assertIn("스캘핑 신호: BTCUSDT", reply)
-        self.assertIn("메이커 왕복 비용: 3.60 bps", reply)
-        self.assertIn("테이커 왕복 비용: 9.00 bps", reply)
+        reply = processor.handle_text("123", "/scalp BTCUSDC")
+        self.assertIn("스캘핑 신호: BTCUSDC", reply)
+        self.assertIn("메이커 왕복 비용: 0.00 bps", reply)
+        self.assertIn("테이커 왕복 비용: 7.20 bps", reply)
         self.assertIn("BNB 수수료 할인: 적용 중", reply)
 
     def test_scalp_report_command(self) -> None:
@@ -196,7 +203,7 @@ class TelegramCommandTests(unittest.TestCase):
             exchange_client=FakeExchangeClient(),
         )
         with patch("cointrading.telegram_bot.scalp_report_text", return_value="report ok"):
-            reply = processor.handle_text("123", "/scalp_report BTCUSDT")
+            reply = processor.handle_text("123", "/scalp_report BTCUSDC")
         self.assertEqual(reply, "report ok")
 
     def test_korean_plain_commands(self) -> None:
@@ -210,10 +217,10 @@ class TelegramCommandTests(unittest.TestCase):
             exchange_client=FakeExchangeClient(),
         )
         self.assertIn("현재 상태", processor.handle_text("123", "상태"))
-        self.assertIn("스캘핑 신호", processor.handle_text("123", "스캘핑 BTCUSDT"))
+        self.assertIn("스캘핑 신호", processor.handle_text("123", "스캘핑 BTCUSDC"))
         self.assertIn("선물 수수료 상태", processor.handle_text("123", "수수료"))
         with patch("cointrading.telegram_bot.scalp_report_text", return_value="report ok"):
-            self.assertEqual(processor.handle_text("123", "보고 BTCUSDT"), "report ok")
+            self.assertEqual(processor.handle_text("123", "보고 BTCUSDC"), "report ok")
 
 
 if __name__ == "__main__":

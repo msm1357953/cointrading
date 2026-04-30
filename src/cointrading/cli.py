@@ -29,7 +29,7 @@ from cointrading.telegram_bot import (
 )
 
 
-DEFAULT_SCALP_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BTCUSDC", "ETHUSDC"]
+DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC", "BTCUSDT", "ETHUSDT"]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -52,24 +52,25 @@ def main(argv: list[str] | None = None) -> None:
     subparsers.add_parser("binance-account")
 
     scalp_check_parser = subparsers.add_parser("scalp-check")
-    scalp_check_parser.add_argument("--symbol", default="BTCUSDT")
+    scalp_check_parser.add_argument("--symbol", default="BTCUSDC")
     scalp_check_parser.add_argument("--depth-limit", type=int, default=20)
     scalp_check_parser.add_argument("--kline-limit", type=int, default=30)
 
     scalp_collect_parser = subparsers.add_parser("scalp-collect")
-    scalp_collect_parser.add_argument("--symbols", nargs="+", default=DEFAULT_SCALP_SYMBOLS)
+    scalp_collect_parser.add_argument("--symbols", nargs="+")
     scalp_collect_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
 
     scalp_score_parser = subparsers.add_parser("scalp-score")
-    scalp_score_parser.add_argument("--symbols", nargs="+", default=DEFAULT_SCALP_SYMBOLS)
+    scalp_score_parser.add_argument("--symbols", nargs="+")
     scalp_score_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
 
     scalp_report_parser = subparsers.add_parser("scalp-report")
     scalp_report_parser.add_argument("--symbol")
+    scalp_report_parser.add_argument("--all-symbols", action="store_true")
     scalp_report_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
 
     fee_status_parser = subparsers.add_parser("fee-status")
-    fee_status_parser.add_argument("--symbols", nargs="+", default=DEFAULT_SCALP_SYMBOLS)
+    fee_status_parser.add_argument("--symbols", nargs="+", default=DEFAULT_FEE_SYMBOLS)
 
     subparsers.add_parser("telegram-me")
 
@@ -101,11 +102,12 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "scalp-check":
         scalp_check(args.symbol, args.depth_limit, args.kline_limit)
     elif args.command == "scalp-collect":
-        scalp_collect(args.symbols, args.log_path)
+        scalp_collect(_active_scalp_symbols(args.symbols), args.log_path)
     elif args.command == "scalp-score":
-        scalp_score(args.symbols, args.log_path)
+        scalp_score(_active_scalp_symbols(args.symbols), args.log_path)
     elif args.command == "scalp-report":
-        print(scalp_report_text(args.log_path, args.symbol))
+        active_symbols = None if args.all_symbols else _active_scalp_symbols(None)
+        print(scalp_report_text(args.log_path, args.symbol, symbols=active_symbols))
     elif args.command == "fee-status":
         fee_status(args.symbols)
     elif args.command == "telegram-me":
@@ -234,6 +236,12 @@ def scalp_score(symbols: list[str], log_path: Path) -> None:
         mids[symbol.upper()] = (bid + ask) / 2.0
     updated = score_scalp_log(log_path, mids)
     print(f"Updated {updated} scalp score field(s).")
+
+
+def _active_scalp_symbols(symbols: list[str] | None) -> list[str]:
+    if symbols:
+        return [symbol.upper() for symbol in symbols]
+    return list(TradingConfig.from_env().scalp_symbols)
 
 
 def _scalp_signal(symbol: str):
