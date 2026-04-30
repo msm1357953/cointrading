@@ -42,6 +42,13 @@ def _get_float(name: str, default: float) -> float:
     return float(raw)
 
 
+def _get_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return int(raw)
+
+
 def _get_str(name: str, default: str = "") -> str:
     raw = os.getenv(name)
     if raw is None:
@@ -96,6 +103,12 @@ class TradingConfig:
     scalp_exit_reprice_seconds: float = 45.0
     scalp_max_hold_seconds: float = 180.0
     scalp_requote_bps: float = 1.5
+    strategy_gate_enabled: bool = True
+    strategy_min_samples: int = 30
+    strategy_early_block_samples: int = 8
+    strategy_min_expectancy_bps: float = 0.0
+    strategy_min_win_rate: float = 0.50
+    strategy_max_loss_win_ratio: float = 2.5
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -161,6 +174,30 @@ class TradingConfig:
             scalp_requote_bps=_get_float(
                 "COINTRADING_SCALP_REQUOTE_BPS",
                 cls.scalp_requote_bps,
+            ),
+            strategy_gate_enabled=_get_bool(
+                "COINTRADING_STRATEGY_GATE_ENABLED",
+                cls.strategy_gate_enabled,
+            ),
+            strategy_min_samples=_get_int(
+                "COINTRADING_STRATEGY_MIN_SAMPLES",
+                cls.strategy_min_samples,
+            ),
+            strategy_early_block_samples=_get_int(
+                "COINTRADING_STRATEGY_EARLY_BLOCK_SAMPLES",
+                cls.strategy_early_block_samples,
+            ),
+            strategy_min_expectancy_bps=_get_float(
+                "COINTRADING_STRATEGY_MIN_EXPECTANCY_BPS",
+                cls.strategy_min_expectancy_bps,
+            ),
+            strategy_min_win_rate=_get_float(
+                "COINTRADING_STRATEGY_MIN_WIN_RATE",
+                cls.strategy_min_win_rate,
+            ),
+            strategy_max_loss_win_ratio=_get_float(
+                "COINTRADING_STRATEGY_MAX_LOSS_WIN_RATIO",
+                cls.strategy_max_loss_win_ratio,
             ),
         )
 

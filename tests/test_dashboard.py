@@ -26,6 +26,7 @@ class DashboardTests(unittest.TestCase):
                 "signal_rows": "",
                 "order_rows": "",
                 "cycle_rows": "",
+                "strategy_rows": "",
                 "performance_rows": "",
                 "exit_reason_rows": "",
             },
@@ -33,6 +34,7 @@ class DashboardTests(unittest.TestCase):
         )
         self.assertIn("new EventSource", html)
         self.assertIn('data-tab="performance"', html)
+        self.assertIn('data-tab="strategies"', html)
         self.assertIn("최근 <span id=\"row-limit\">200</span>개 표시", html)
         self.assertNotIn("http-equiv=\"refresh\"", html)
 

@@ -133,6 +133,7 @@ def _snapshot(
         "signal_rows": _signal_rows_html(rows[-limit:]),
         "order_rows": _order_rows_html(store.recent_orders(limit=limit)),
         "cycle_rows": _cycle_rows_html(store.recent_scalp_cycles(limit=limit)),
+        "strategy_rows": _strategy_rows_html(store.latest_strategy_evaluations(limit=limit)),
         "performance_rows": _performance_rows_html(store.scalp_cycle_performance()),
         "exit_reason_rows": _exit_reason_rows_html(store.scalp_cycle_exit_reasons()),
     }
@@ -178,6 +179,28 @@ def _cycle_rows_html(cycles) -> str:
     )
 
 
+def _strategy_rows_html(rows) -> str:
+    return "\n".join(
+        "<tr>"
+        f"<td>{escape(kst_from_ms(int(row['evaluated_ms'])))}</td>"
+        f"<td>{escape(row['decision'])}</td>"
+        f"<td>{escape(row['source'])}</td>"
+        f"<td>{escape(row['symbol'])}</td>"
+        f"<td>{escape(row['regime'])}</td>"
+        f"<td>{escape(row['side'])}</td>"
+        f"<td>{float(row['take_profit_bps']):.1f}</td>"
+        f"<td>{float(row['stop_loss_bps']):.1f}</td>"
+        f"<td>{int(row['max_hold_seconds'])}s</td>"
+        f"<td>{int(row['sample_count'])}</td>"
+        f"<td>{escape(_fmt_pct(float(row['win_rate'])))}</td>"
+        f"<td>{float(row['avg_pnl_bps']):.3f}</td>"
+        f"<td>{float(row['sum_pnl_bps']):.3f}</td>"
+        f"<td>{escape(row['reason'])}</td>"
+        "</tr>"
+        for row in rows
+    )
+
+
 def _performance_rows_html(rows) -> str:
     return "\n".join(
         "<tr>"
@@ -212,6 +235,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     signal_rows = snapshot["signal_rows"]
     order_rows = snapshot["order_rows"]
     cycle_rows = snapshot["cycle_rows"]
+    strategy_rows = snapshot["strategy_rows"]
     performance_rows = snapshot["performance_rows"]
     exit_reason_rows = snapshot["exit_reason_rows"]
     return f"""<!doctype html>
@@ -244,6 +268,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
   <nav>
     <button class="active" data-tab="summary">요약</button>
     <button data-tab="performance">성과</button>
+    <button data-tab="strategies">전략후보</button>
     <button data-tab="cycles">상태머신</button>
     <button data-tab="signals">신호</button>
     <button data-tab="orders">주문</button>
@@ -262,6 +287,13 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     <table>
       <thead><tr><th>상태</th><th>이유</th><th>개수</th><th>평균손익</th><th>합계손익</th></tr></thead>
       <tbody id="exit-reason-rows">{exit_reason_rows}</tbody>
+    </table>
+  </section>
+  <section id="tab-strategies" class="tab-panel">
+    <h2>전략 후보</h2>
+    <table>
+      <thead><tr><th>평가</th><th>판정</th><th>출처</th><th>심볼</th><th>장상태</th><th>방향</th><th>TP</th><th>SL</th><th>보유</th><th>표본</th><th>승률</th><th>평균bps</th><th>합계bps</th><th>이유</th></tr></thead>
+      <tbody id="strategy-rows">{strategy_rows}</tbody>
     </table>
   </section>
   <section id="tab-cycles" class="tab-panel">
@@ -304,6 +336,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("signal-rows").innerHTML = data.signal_rows;
       document.getElementById("order-rows").innerHTML = data.order_rows;
       document.getElementById("cycle-rows").innerHTML = data.cycle_rows;
+      document.getElementById("strategy-rows").innerHTML = data.strategy_rows;
       document.getElementById("performance-rows").innerHTML = data.performance_rows;
       document.getElementById("exit-reason-rows").innerHTML = data.exit_reason_rows;
       statusDot.style.background = "#16a34a";

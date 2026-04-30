@@ -48,6 +48,7 @@
 - 2026-04-30: Dashboard full-page refresh was replaced with a server-sent events stream so visible data updates in place.
 - 2026-04-30: Dashboard was split into summary, performance, lifecycle, signal, and order tabs.
 - 2026-04-30: Dashboard signal/lifecycle/order tables now show 200 rows by default and support a bounded `limit` query parameter for longer inspection.
+- 2026-04-30: Strategy evaluation/gating was added. SQLite now stores cycle and signal-grid evaluations, the dashboard has a strategy-candidate tab, and new lifecycle entries are blocked unless the matching symbol/regime/side/current TP/SL/max-hold evaluation is approved.
 
 ## Next Work Packets
 
@@ -57,4 +58,4 @@
 4. Add live exchange fill ingestion and open-order reconciliation.
 5. Add Telegram daily status reports.
 6. Let USDC dry-run scalping collection run at least 4 hours, then inspect `보고`.
-7. Use the regime breakdown to disable weak regimes before considering any paper/live order loop.
+7. Review the strategy-candidate tab after each evaluation cycle and only consider paper/live escalation for `APPROVED` rows with stable sample sizes.

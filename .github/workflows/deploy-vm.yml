@@ -90,7 +90,9 @@ jobs:
           sudo systemctl enable --now cointrading-dashboard.service
           sudo systemctl enable --now cointrading-scalp-collect.timer
           sudo systemctl enable --now cointrading-scalp-score.timer
+          sudo systemctl enable --now cointrading-strategy-evaluate.timer
           sudo systemctl enable --now cointrading-scalp-engine.timer
+          sudo systemctl start cointrading-strategy-evaluate.service
           sudo systemctl restart cointrading-telegram.service
           sudo systemctl restart cointrading-dashboard.service
 
@@ -98,5 +100,6 @@ jobs:
           systemctl is-active cointrading-dashboard.service
           systemctl is-active cointrading-scalp-collect.timer
           systemctl is-active cointrading-scalp-score.timer
+          systemctl is-active cointrading-strategy-evaluate.timer
           systemctl is-active cointrading-scalp-engine.timer
           REMOTE

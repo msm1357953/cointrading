@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import csv
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sqlite3
 import time
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from cointrading.models import OrderIntent
 from cointrading.scalping import SCALP_LOG_FIELDS, ScalpSignal
@@ -58,12 +59,21 @@ class TradingStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA foreign_keys=ON")
-        return connection
+        try:
+            yield connection
+        except Exception:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()
+        finally:
+            connection.close()
 
     def _init_schema(self) -> None:
         with self.connect() as connection:
@@ -196,6 +206,35 @@ class TradingStore:
 
                 CREATE INDEX IF NOT EXISTS idx_scalp_cycles_symbol_status
                     ON scalp_cycles(symbol, status, updated_ms);
+
+                CREATE TABLE IF NOT EXISTS strategy_evaluations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    evaluated_ms INTEGER NOT NULL,
+                    evaluated_iso TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    regime TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    take_profit_bps REAL NOT NULL,
+                    stop_loss_bps REAL NOT NULL,
+                    max_hold_seconds INTEGER NOT NULL,
+                    sample_count INTEGER NOT NULL,
+                    win_count INTEGER NOT NULL,
+                    loss_count INTEGER NOT NULL,
+                    win_rate REAL NOT NULL,
+                    avg_pnl_bps REAL NOT NULL,
+                    sum_pnl_bps REAL NOT NULL,
+                    avg_win_bps REAL,
+                    avg_loss_bps REAL,
+                    decision TEXT NOT NULL,
+                    reason TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_strategy_evaluations_latest
+                    ON strategy_evaluations(
+                        source, symbol, regime, side,
+                        take_profit_bps, stop_loss_bps, max_hold_seconds, evaluated_ms
+                    );
                 """
             )
 
@@ -606,6 +645,119 @@ class TradingStore:
                 )
             )
 
+    def insert_strategy_evaluations(
+        self,
+        rows: Iterable[dict[str, Any]],
+        *,
+        timestamp_ms: int | None = None,
+    ) -> int:
+        ts = timestamp_ms or now_ms()
+        count = 0
+        with self.connect() as connection:
+            for row in rows:
+                connection.execute(
+                    """
+                    INSERT INTO strategy_evaluations (
+                        evaluated_ms, evaluated_iso, source, symbol, regime, side,
+                        take_profit_bps, stop_loss_bps, max_hold_seconds,
+                        sample_count, win_count, loss_count, win_rate,
+                        avg_pnl_bps, sum_pnl_bps, avg_win_bps, avg_loss_bps,
+                        decision, reason
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        ts,
+                        iso_from_ms(ts),
+                        row["source"],
+                        row["symbol"],
+                        row["regime"],
+                        row["side"],
+                        row["take_profit_bps"],
+                        row["stop_loss_bps"],
+                        row["max_hold_seconds"],
+                        row["sample_count"],
+                        row["win_count"],
+                        row["loss_count"],
+                        row["win_rate"],
+                        row["avg_pnl_bps"],
+                        row["sum_pnl_bps"],
+                        row.get("avg_win_bps"),
+                        row.get("avg_loss_bps"),
+                        row["decision"],
+                        row["reason"],
+                    ),
+                )
+                count += 1
+        return count
+
+    def latest_strategy_evaluations(
+        self,
+        *,
+        source: str | None = None,
+        limit: int = 100,
+    ) -> list[sqlite3.Row]:
+        params: list[Any] = []
+        where = ""
+        if source:
+            where = "WHERE source=?"
+            params.append(source)
+        params.append(limit)
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    f"""
+                    SELECT *
+                    FROM strategy_evaluations
+                    {where}
+                    ORDER BY evaluated_ms DESC, decision ASC, avg_pnl_bps DESC
+                    LIMIT ?
+                    """,
+                    params,
+                )
+            )
+
+    def latest_strategy_evaluation(
+        self,
+        *,
+        symbol: str,
+        regime: str,
+        side: str,
+        take_profit_bps: float,
+        stop_loss_bps: float,
+        max_hold_seconds: int,
+        source: str | None = None,
+    ) -> sqlite3.Row | None:
+        params: list[Any] = [
+            symbol.upper(),
+            regime,
+            side,
+            take_profit_bps,
+            stop_loss_bps,
+            max_hold_seconds,
+        ]
+        source_sql = ""
+        if source:
+            source_sql = "AND source=?"
+            params.append(source)
+        with self.connect() as connection:
+            return connection.execute(
+                f"""
+                SELECT *
+                FROM strategy_evaluations
+                WHERE symbol=?
+                  AND regime=?
+                  AND side=?
+                  AND ABS(take_profit_bps - ?) < 0.000001
+                  AND ABS(stop_loss_bps - ?) < 0.000001
+                  AND max_hold_seconds=?
+                  {source_sql}
+                ORDER BY evaluated_ms DESC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+
     def summary_counts(self) -> dict[str, int]:
         with self.connect() as connection:
             return {
@@ -617,6 +769,9 @@ class TradingStore:
                 ),
                 "scalp_cycles": int(
                     connection.execute("SELECT COUNT(*) FROM scalp_cycles").fetchone()[0]
+                ),
+                "strategy_evaluations": int(
+                    connection.execute("SELECT COUNT(*) FROM strategy_evaluations").fetchone()[0]
                 ),
             }
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=Evaluate scalp strategy candidates every 5 minutes
+
+[Timer]
+OnBootSec=120
+OnUnitInactiveSec=300
+AccuracySec=10
+Unit=cointrading-strategy-evaluate.service
+
+[Install]
+WantedBy=timers.target

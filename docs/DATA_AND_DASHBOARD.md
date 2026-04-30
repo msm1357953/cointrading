@@ -11,6 +11,7 @@ Tables:
 - `fills`: execution fills and realized fee/PnL records. This table is ready for exchange fill ingestion.
 - `fee_snapshots`: maker/taker fee snapshots by symbol.
 - `scalp_cycles`: post-only scalp lifecycle state, including entry waiting, take-profit waiting, reprice, stop, timeout, and realized paper PnL.
+- `strategy_evaluations`: latest strategy candidate evaluations by source, symbol, regime, side, TP/SL, max hold, sample count, win rate, expectancy, and approval decision.
 
 CSV files remain gitignored and are now treated as compatibility logs. Use `migrate-csv-to-db` to import old rows.
 
@@ -22,6 +23,7 @@ python -m cointrading.cli db-summary
 python -m cointrading.cli scalp-report
 python -m cointrading.cli maker-once --symbol BTCUSDC
 python -m cointrading.cli scalp-engine-step
+python -m cointrading.cli strategy-evaluate
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 ```
 
@@ -36,10 +38,19 @@ python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 
 The VM runs this as `cointrading-scalp-engine.timer` every 15 seconds. Live order submission still remains blocked unless both live guards are explicitly changed.
 
+## Strategy Gate
+
+`strategy-evaluate` writes two evaluation sources into SQLite:
+
+- `cycles`: actual post-only/paper lifecycle outcomes grouped by symbol, regime, and side.
+- `signal_grid`: a coarse TP/SL/max-hold grid using scored 1/3/5 minute signal returns.
+
+New lifecycle entries are blocked when `COINTRADING_STRATEGY_GATE_ENABLED=true` and the matching symbol/regime/side/current TP/SL/max-hold combination does not have an `APPROVED` evaluation. This keeps the bot collecting data while preventing weak combinations from continuing into new paper/live cycles.
+
 ## Dashboard
 
-The dashboard is a small HTTP server with tabs for summary, performance, lifecycle state, signals, and orders. It uses a server-sent events stream to update the data in place without reloading the whole page.
-Signal, lifecycle, and order tables show the latest 200 rows by default. Add `&limit=500` to the dashboard URL to inspect a longer window; the dashboard caps this at 1000 rows to keep mobile loading reasonable.
+The dashboard is a small HTTP server with tabs for summary, performance, strategy candidates, lifecycle state, signals, and orders. It uses a server-sent events stream to update the data in place without reloading the whole page.
+Signal, strategy, lifecycle, and order tables show the latest 200 rows by default. Add `&limit=500` to the dashboard URL to inspect a longer window; the dashboard caps this at 1000 rows to keep mobile loading reasonable.
 
 Set `COINTRADING_DASHBOARD_AUTH_TOKEN` before exposing it outside the VM.
 When the token is set, requests must include either `?token=...` or an `Authorization: Bearer ...` header.

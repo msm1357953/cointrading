@@ -104,6 +104,7 @@ class StorageExecutionTests(unittest.TestCase):
                 scalp_entry_timeout_seconds=45,
                 scalp_exit_reprice_seconds=45,
                 scalp_max_hold_seconds=180,
+                strategy_gate_enabled=False,
             )
             signal_id = store.insert_signal(_signal(maker_cost=0), timestamp_ms=1)
             start = start_cycle_from_signal(

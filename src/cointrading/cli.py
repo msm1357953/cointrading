@@ -24,6 +24,7 @@ from cointrading.scalping import (
     score_scalp_log,
 )
 from cointrading.storage import TradingStore, default_db_path
+from cointrading.strategy_eval import evaluate_and_store_strategy, strategy_evaluation_text
 from cointrading.strategies import MovingAverageCrossStrategy
 from cointrading.telegram_bot import (
     TelegramBotState,
@@ -95,6 +96,10 @@ def main(argv: list[str] | None = None) -> None:
     scalp_engine_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
     scalp_engine_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
+    strategy_evaluate_parser = subparsers.add_parser("strategy-evaluate")
+    strategy_evaluate_parser.add_argument("--db-path", type=Path, default=default_db_path())
+    strategy_evaluate_parser.add_argument("--limit", type=int, default=25)
+
     dashboard_parser = subparsers.add_parser("dashboard")
     dashboard_parser.add_argument("--host", default="127.0.0.1")
     dashboard_parser.add_argument("--port", type=int, default=8080)
@@ -151,6 +156,8 @@ def main(argv: list[str] | None = None) -> None:
         maker_once(args.symbol, args.db_path)
     elif args.command == "scalp-engine-step":
         scalp_engine_step(_active_scalp_symbols(args.symbols), args.log_path, args.db_path)
+    elif args.command == "strategy-evaluate":
+        strategy_evaluate(args.db_path, args.limit)
     elif args.command == "dashboard":
         run_dashboard(args.host, args.port, args.db_path)
     elif args.command == "fee-status":
@@ -365,6 +372,13 @@ def scalp_engine_step(symbols: list[str], log_path: Path, db_path: Path) -> None
         )
         lines.append(f"{symbol}: {result.action} - {result.detail}")
     print("\n".join(lines))
+
+
+def strategy_evaluate(db_path: Path, limit: int) -> None:
+    store = TradingStore(db_path)
+    rows = evaluate_and_store_strategy(store, TradingConfig.from_env())
+    print(strategy_evaluation_text(rows, limit=limit))
+    print(f"stored {len(rows)} strategy evaluation row(s) into {db_path}")
 
 
 def _score_scalp_store(store: TradingStore, current_mid_by_symbol: dict[str, float]) -> int:

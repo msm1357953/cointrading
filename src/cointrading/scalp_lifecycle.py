@@ -10,6 +10,7 @@ from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.models import OrderIntent
 from cointrading.scalping import ScalpSignal
 from cointrading.storage import TradingStore, now_ms
+from cointrading.strategy_eval import strategy_gate_decision
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,25 @@ def start_cycle_from_signal(
         return ScalpLifecycleResult(signal.symbol, "skip", "active cycle already exists")
 
     ts = timestamp_ms or now_ms()
+    gate = strategy_gate_decision(store, signal, config)
+    if not gate.allowed:
+        order_id = store.insert_order_attempt(
+            OrderIntent(
+                symbol=signal.symbol,
+                side="BUY" if signal.side != "short" else "SELL",
+                quantity=0.0,
+                order_type="LIMIT",
+                price=signal.mid_price,
+                time_in_force="GTX",
+            ),
+            status="BLOCKED",
+            dry_run=True,
+            reason=gate.reason,
+            signal_id=signal_id,
+            timestamp_ms=ts,
+        )
+        return ScalpLifecycleResult(signal.symbol, "blocked", gate.reason, order_id)
+
     result = place_post_only_maker(client, store, signal, config, signal_id=signal_id)
     intent = result.decision.intent
     if not result.decision.allowed or intent is None or result.order_id is None:
