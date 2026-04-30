@@ -10,6 +10,7 @@ Tables:
 - `orders`: post-only maker order attempts, blocked decisions, dry-run responses, and future live responses.
 - `fills`: execution fills and realized fee/PnL records. This table is ready for exchange fill ingestion.
 - `fee_snapshots`: maker/taker fee snapshots by symbol.
+- `market_regimes`: 15m/1h macro regime snapshots and strategy-router decisions.
 - `scalp_cycles`: post-only scalp lifecycle state, including entry waiting, take-profit waiting, reprice, stop, timeout, and realized paper PnL.
 - `strategy_evaluations`: latest strategy candidate evaluations by source, execution mode, symbol, regime, side, TP/SL, max hold, sample count, win rate, expectancy, and approval decision.
 
@@ -23,6 +24,8 @@ python -m cointrading.cli db-summary
 python -m cointrading.cli scalp-report
 python -m cointrading.cli maker-once --symbol BTCUSDC
 python -m cointrading.cli scalp-engine-step
+python -m cointrading.cli market-regime
+python -m cointrading.cli market-regime-collect
 python -m cointrading.cli strategy-evaluate
 python -m cointrading.cli strategy-notify
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
@@ -41,6 +44,20 @@ The VM runs this as `cointrading-scalp-engine.timer` every 15 seconds. Live orde
 
 ## Strategy Gate
 
+## Macro Regime Router
+
+`market-regime-collect` classifies each active symbol into a larger market regime using 15m and 1h candles:
+
+- `macro_bull`: long trend, pullback-long, and long-only scalping candidates.
+- `macro_bear`: short trend, rally-short, and short-only scalping candidates.
+- `macro_range`: range/mean-reversion and strict maker scalping candidates.
+- `macro_breakout`: reduced-size breakout trend candidates; scalping is blocked.
+- `macro_panic`: 신규 진입 금지.
+
+The VM runs this as `cointrading-market-regime.timer` every 5 minutes. When `COINTRADING_MACRO_REGIME_GATE_ENABLED=true`, new scalping cycles are blocked if the latest macro regime routes away from that direction. Missing or stale macro data is not treated as a hard block, so data collection can continue after restarts.
+
+## Strategy Gate
+
 `strategy-evaluate` writes two evaluation sources into SQLite:
 
 - `cycles`: actual post-only/paper lifecycle outcomes grouped by symbol, regime, and side.
@@ -56,7 +73,7 @@ Approval is based on positive net expectancy after fees/slippage, a minimum samp
 
 ## Dashboard
 
-The dashboard is a small HTTP server with tabs for summary, performance, strategy candidates, lifecycle state, signals, and orders. It uses a server-sent events stream to update the data in place without reloading the whole page.
+The dashboard is a small HTTP server with tabs for summary, performance, macro regime routing, strategy candidates, lifecycle state, signals, and orders. It uses a server-sent events stream to update the data in place without reloading the whole page.
 Signal, strategy, lifecycle, and order tables show the latest 200 rows by default. Add `&limit=500` to the dashboard URL to inspect a longer window; the dashboard caps this at 1000 rows to keep mobile loading reasonable.
 
 Set `COINTRADING_DASHBOARD_AUTH_TOKEN` before exposing it outside the VM.

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from cointrading.config import TradingConfig
 from cointrading.execution import build_post_only_intent
+from cointrading.market_regime import MarketRegimeSnapshot
 from cointrading.models import OrderIntent
 from cointrading.scalp_lifecycle import manage_cycle, start_cycle_from_signal
 from cointrading.scalping import ScalpSignal
@@ -223,6 +224,40 @@ class StorageExecutionTests(unittest.TestCase):
             cycle = store.active_scalp_cycle("DOGEUSDC")
             assert cycle is not None
             self.assertEqual(int(cycle["max_hold_deadline_ms"]), 313_000)
+
+    def test_lifecycle_blocks_scalp_against_macro_router(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            config = TradingConfig(strategy_gate_enabled=False, macro_regime_gate_enabled=True)
+            store.insert_market_regime(
+                MarketRegimeSnapshot(
+                    symbol="BTCUSDC",
+                    macro_regime="macro_bear",
+                    trade_bias="short",
+                    allowed_strategies=("trend_short_15m_1h",),
+                    blocked_reason="",
+                    last_price=100.0,
+                    trend_1h_bps=-50.0,
+                    trend_4h_bps=-120.0,
+                    realized_vol_bps=20.0,
+                    atr_bps=30.0,
+                    timestamp_ms=1_000,
+                )
+            )
+            signal = _signal(side="long")
+            signal_id = store.insert_signal(signal, timestamp_ms=2_000)
+
+            result = start_cycle_from_signal(
+                FakeOrderClient(),
+                store,
+                signal,
+                config,
+                signal_id=signal_id,
+                timestamp_ms=3_000,
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertIn("bear regime blocks long", result.detail)
 
 
 if __name__ == "__main__":

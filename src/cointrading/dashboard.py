@@ -9,6 +9,7 @@ import time
 from urllib.parse import parse_qs, urlparse
 
 from cointrading.config import TradingConfig
+from cointrading.market_regime import macro_regime_ko, trade_bias_ko
 from cointrading.scalping import scalp_report_rows_text
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms, now_ms
 
@@ -134,6 +135,9 @@ def _snapshot(
         "order_rows": _order_rows_html(store.recent_orders(limit=limit)),
         "cycle_rows": _cycle_rows_html(store.recent_scalp_cycles(limit=limit)),
         "strategy_rows": _strategy_rows_html(store.latest_strategy_evaluations(limit=limit)),
+        "market_regime_rows": _market_regime_rows_html(
+            store.latest_market_regimes(symbols=config.scalp_symbols, limit=limit)
+        ),
         "performance_rows": _performance_rows_html(store.scalp_cycle_performance()),
         "exit_reason_rows": _exit_reason_rows_html(store.scalp_cycle_exit_reasons()),
     }
@@ -202,6 +206,24 @@ def _strategy_rows_html(rows) -> str:
     )
 
 
+def _market_regime_rows_html(rows) -> str:
+    return "\n".join(
+        "<tr>"
+        f"<td>{escape(kst_from_ms(int(row['timestamp_ms'])))}</td>"
+        f"<td>{escape(row['symbol'])}</td>"
+        f"<td>{escape(macro_regime_ko(row['macro_regime']))}</td>"
+        f"<td>{escape(trade_bias_ko(row['trade_bias']))}</td>"
+        f"<td>{float(row['trend_1h_bps']):.2f}</td>"
+        f"<td>{float(row['trend_4h_bps']):.2f}</td>"
+        f"<td>{float(row['realized_vol_bps']):.2f}</td>"
+        f"<td>{float(row['atr_bps']):.2f}</td>"
+        f"<td>{escape(_allowed_strategies(row['allowed_strategies_json']))}</td>"
+        f"<td>{escape(row['blocked_reason'] or '')}</td>"
+        "</tr>"
+        for row in rows
+    )
+
+
 def _performance_rows_html(rows) -> str:
     return "\n".join(
         "<tr>"
@@ -237,6 +259,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     order_rows = snapshot["order_rows"]
     cycle_rows = snapshot["cycle_rows"]
     strategy_rows = snapshot["strategy_rows"]
+    market_regime_rows = snapshot["market_regime_rows"]
     performance_rows = snapshot["performance_rows"]
     exit_reason_rows = snapshot["exit_reason_rows"]
     return f"""<!doctype html>
@@ -269,6 +292,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
   <nav>
     <button class="active" data-tab="summary">요약</button>
     <button data-tab="performance">성과</button>
+    <button data-tab="market">장세라우터</button>
     <button data-tab="strategies">전략후보</button>
     <button data-tab="cycles">상태머신</button>
     <button data-tab="signals">신호</button>
@@ -288,6 +312,13 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     <table>
       <thead><tr><th>상태</th><th>이유</th><th>개수</th><th>평균손익</th><th>합계손익</th></tr></thead>
       <tbody id="exit-reason-rows">{exit_reason_rows}</tbody>
+    </table>
+  </section>
+  <section id="tab-market" class="tab-panel">
+    <h2>장세 라우터</h2>
+    <table>
+      <thead><tr><th>시각</th><th>심볼</th><th>큰 장세</th><th>편향</th><th>1h bps</th><th>4h bps</th><th>변동성</th><th>ATR</th><th>허용 전략</th><th>차단 이유</th></tr></thead>
+      <tbody id="market-regime-rows">{market_regime_rows}</tbody>
     </table>
   </section>
   <section id="tab-strategies" class="tab-panel">
@@ -338,6 +369,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("order-rows").innerHTML = data.order_rows;
       document.getElementById("cycle-rows").innerHTML = data.cycle_rows;
       document.getElementById("strategy-rows").innerHTML = data.strategy_rows;
+      document.getElementById("market-regime-rows").innerHTML = data.market_regime_rows;
       document.getElementById("performance-rows").innerHTML = data.performance_rows;
       document.getElementById("exit-reason-rows").innerHTML = data.exit_reason_rows;
       statusDot.style.background = "#16a34a";
@@ -371,3 +403,11 @@ def _fmt_kst(value: str | int | None) -> str:
     if value in {None, ""}:
         return ""
     return kst_from_ms(int(float(value)))
+
+
+def _allowed_strategies(raw: str) -> str:
+    try:
+        values = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        return raw or ""
+    return ", ".join(str(item) for item in values)

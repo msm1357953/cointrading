@@ -237,6 +237,28 @@ class TelegramCommandTests(unittest.TestCase):
         store.latest_strategy_batch.assert_called_once_with()
         text_fn.assert_called_once_with(["row"], reason="수동 조회", limit=8)
 
+    def test_market_command_reads_latest_regime_rows(self) -> None:
+        processor = TelegramCommandProcessor(
+            TelegramConfig(
+                allowed_chat_ids=frozenset({"123"}),
+                commands_enabled=True,
+            ),
+            TradingConfig(scalp_symbols=("BTCUSDC",)),
+            TelegramBotState(),
+            exchange_client=FakeExchangeClient(),
+        )
+        with (
+            patch("cointrading.telegram_bot.TradingStore") as store_cls,
+            patch("cointrading.telegram_bot.market_regime_rows_text", return_value="market ok") as text_fn,
+        ):
+            store = store_cls.return_value
+            store.current_market_regimes.return_value = ["row"]
+            reply = processor.handle_text("123", "장세")
+
+        self.assertEqual(reply, "market ok")
+        store.current_market_regimes.assert_called_once_with(symbols=("BTCUSDC",))
+        text_fn.assert_called_once_with(["row"])
+
     def test_korean_plain_commands(self) -> None:
         processor = TelegramCommandProcessor(
             TelegramConfig(

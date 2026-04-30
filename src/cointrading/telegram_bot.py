@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 from cointrading.account import account_summary_text
 from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
+from cointrading.market_regime import market_regime_rows_text
 from cointrading.scalping import (
     ScalpSignalEngine,
     default_scalp_log_path,
@@ -149,10 +150,16 @@ class TelegramCommandProcessor:
         "fees": "fees",
         "가격": "price",
         "price": "price",
+        "시장": "market",
+        "장세": "market",
+        "시장상태": "market",
+        "장상태": "market",
+        "라우터": "market",
+        "macro": "market",
+        "market": "market",
         "스캘핑": "scalp",
         "스캘프": "scalp",
         "신호": "scalp",
-        "장상태": "scalp",
         "scalp": "scalp",
         "보고": "scalp_report",
         "요약": "scalp_report",
@@ -221,6 +228,8 @@ class TelegramCommandProcessor:
             return self.account_text()
         if command == "price":
             return self.price_text(args)
+        if command == "market":
+            return self.market_text(args)
         if command == "scalp":
             return self.scalp_text(args)
         if command == "scalp_report":
@@ -251,6 +260,7 @@ class TelegramCommandProcessor:
                 "위험 - 리스크 한도 확인",
                 "수수료 - BNB 할인과 현재 수수료 확인",
                 "가격 BTCUSDC - 현재 가격 확인",
+                "장세 - 큰 장상태와 허용 전략 확인",
                 "스캘핑 BTCUSDC - 현재 스캘핑 신호와 장 상태 확인",
                 "보고 - 스캘핑 dry-run 결과와 장 상태별 성과 요약",
                 "보고 BTCUSDC - BTCUSDC만 결과 요약",
@@ -335,6 +345,18 @@ class TelegramCommandProcessor:
             return f"{symbol} 가격 데이터가 없습니다."
         latest = klines[-1]
         return f"{symbol} 최근 1분봉 종가: {latest.close:.4f}"
+
+    def market_text(self, args: list[str]) -> str:
+        store = TradingStore(default_db_path())
+        if args:
+            symbol = args[0].upper()
+            if not self.SYMBOL_PATTERN.match(symbol):
+                return "심볼 형식이 이상합니다. 예: BTCUSDC"
+            row = store.latest_market_regime(symbol)
+            return market_regime_rows_text([row] if row is not None else [])
+        return market_regime_rows_text(
+            store.current_market_regimes(symbols=self.trading_config.scalp_symbols)
+        )
 
     def account_text(self) -> str:
         return account_summary_text(self.exchange_client.account_info())

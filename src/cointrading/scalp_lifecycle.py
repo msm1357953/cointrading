@@ -7,6 +7,7 @@ import time
 from cointrading.config import TradingConfig
 from cointrading.execution import place_post_only_maker
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
+from cointrading.market_regime import scalp_allowed_by_macro
 from cointrading.models import OrderIntent
 from cointrading.scalping import ScalpSignal
 from cointrading.storage import TradingStore, now_ms
@@ -34,6 +35,25 @@ def start_cycle_from_signal(
         return ScalpLifecycleResult(signal.symbol, "skip", "active cycle already exists")
 
     ts = timestamp_ms or now_ms()
+    macro_allowed, macro_reason = _macro_gate_decision(store, signal, config, ts)
+    if not macro_allowed:
+        order_id = store.insert_order_attempt(
+            OrderIntent(
+                symbol=signal.symbol,
+                side="BUY" if signal.side != "short" else "SELL",
+                quantity=0.0,
+                order_type="LIMIT",
+                price=signal.mid_price,
+                time_in_force="GTX",
+            ),
+            status="BLOCKED",
+            dry_run=True,
+            reason=macro_reason,
+            signal_id=signal_id,
+            timestamp_ms=ts,
+        )
+        return ScalpLifecycleResult(signal.symbol, "blocked", macro_reason, order_id)
+
     gate = strategy_gate_decision(store, signal, config)
     if not gate.allowed:
         order_id = store.insert_order_attempt(
@@ -475,6 +495,23 @@ def _cycle_max_hold_seconds(cycle: sqlite3.Row, config: TradingConfig) -> int:
     if value is None:
         return int(config.scalp_max_hold_seconds)
     return int(value)
+
+
+def _macro_gate_decision(
+    store: TradingStore,
+    signal: ScalpSignal,
+    config: TradingConfig,
+    timestamp_ms: int,
+) -> tuple[bool, str]:
+    if not config.macro_regime_gate_enabled:
+        return True, "macro regime gate disabled"
+    row = store.latest_market_regime(signal.symbol)
+    return scalp_allowed_by_macro(
+        row,
+        signal.side,
+        max_age_ms=int(config.macro_regime_max_age_minutes) * 60_000,
+        current_ms=timestamp_ms,
+    )
 
 
 def _pnl(side: str, entry_price: float, exit_price: float, quantity: float) -> float:

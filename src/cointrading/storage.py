@@ -212,6 +212,26 @@ class TradingStore:
                 CREATE INDEX IF NOT EXISTS idx_scalp_cycles_symbol_status
                     ON scalp_cycles(symbol, status, updated_ms);
 
+                CREATE TABLE IF NOT EXISTS market_regimes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp_ms INTEGER NOT NULL,
+                    iso_time TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    macro_regime TEXT NOT NULL,
+                    trade_bias TEXT NOT NULL,
+                    allowed_strategies_json TEXT NOT NULL,
+                    blocked_reason TEXT,
+                    last_price REAL NOT NULL,
+                    trend_1h_bps REAL NOT NULL,
+                    trend_4h_bps REAL NOT NULL,
+                    realized_vol_bps REAL NOT NULL,
+                    atr_bps REAL NOT NULL,
+                    UNIQUE(timestamp_ms, symbol)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_market_regimes_symbol_time
+                    ON market_regimes(symbol, timestamp_ms);
+
                 CREATE TABLE IF NOT EXISTS strategy_evaluations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     evaluated_ms INTEGER NOT NULL,
@@ -496,6 +516,123 @@ class TradingStore:
                 ),
             )
             return int(cursor.lastrowid)
+
+    def insert_market_regime(self, snapshot) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO market_regimes (
+                    timestamp_ms, iso_time, symbol, macro_regime, trade_bias,
+                    allowed_strategies_json, blocked_reason, last_price,
+                    trend_1h_bps, trend_4h_bps, realized_vol_bps, atr_bps
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(timestamp_ms, symbol) DO UPDATE SET
+                    iso_time=excluded.iso_time,
+                    macro_regime=excluded.macro_regime,
+                    trade_bias=excluded.trade_bias,
+                    allowed_strategies_json=excluded.allowed_strategies_json,
+                    blocked_reason=excluded.blocked_reason,
+                    last_price=excluded.last_price,
+                    trend_1h_bps=excluded.trend_1h_bps,
+                    trend_4h_bps=excluded.trend_4h_bps,
+                    realized_vol_bps=excluded.realized_vol_bps,
+                    atr_bps=excluded.atr_bps
+                """,
+                (
+                    int(snapshot.timestamp_ms),
+                    iso_from_ms(int(snapshot.timestamp_ms)),
+                    snapshot.symbol.upper(),
+                    snapshot.macro_regime,
+                    snapshot.trade_bias,
+                    json.dumps(list(snapshot.allowed_strategies), sort_keys=True),
+                    snapshot.blocked_reason,
+                    float(snapshot.last_price),
+                    float(snapshot.trend_1h_bps),
+                    float(snapshot.trend_4h_bps),
+                    float(snapshot.realized_vol_bps),
+                    float(snapshot.atr_bps),
+                ),
+            )
+            if cursor.lastrowid:
+                return int(cursor.lastrowid)
+            row = connection.execute(
+                "SELECT id FROM market_regimes WHERE timestamp_ms=? AND symbol=?",
+                (int(snapshot.timestamp_ms), snapshot.symbol.upper()),
+            ).fetchone()
+            return int(row["id"])
+
+    def latest_market_regime(self, symbol: str) -> sqlite3.Row | None:
+        with self.connect() as connection:
+            return connection.execute(
+                """
+                SELECT *
+                FROM market_regimes
+                WHERE symbol=?
+                ORDER BY timestamp_ms DESC
+                LIMIT 1
+                """,
+                (symbol.upper(),),
+            ).fetchone()
+
+    def latest_market_regimes(
+        self,
+        *,
+        symbols: Iterable[str] | None = None,
+        limit: int = 100,
+    ) -> list[sqlite3.Row]:
+        params: list[Any] = []
+        where = ""
+        if symbols is not None:
+            active = [symbol.upper() for symbol in symbols]
+            if not active:
+                return []
+            where = f"WHERE symbol IN ({', '.join('?' for _ in active)})"
+            params.extend(active)
+        params.append(limit)
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    f"""
+                    SELECT *
+                    FROM market_regimes
+                    {where}
+                    ORDER BY timestamp_ms DESC
+                    LIMIT ?
+                    """,
+                    params,
+                )
+            )
+
+    def current_market_regimes(self, *, symbols: Iterable[str] | None = None) -> list[sqlite3.Row]:
+        params: list[Any] = []
+        symbol_filter = ""
+        if symbols is not None:
+            active = [symbol.upper() for symbol in symbols]
+            if not active:
+                return []
+            symbol_filter = f"AND symbol IN ({', '.join('?' for _ in active)})"
+            params.extend(active)
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    f"""
+                    SELECT m.*
+                    FROM market_regimes m
+                    JOIN (
+                        SELECT symbol, MAX(timestamp_ms) AS timestamp_ms
+                        FROM market_regimes
+                        GROUP BY symbol
+                    ) latest
+                      ON latest.symbol=m.symbol
+                     AND latest.timestamp_ms=m.timestamp_ms
+                    WHERE 1=1
+                    {symbol_filter}
+                    ORDER BY m.symbol ASC
+                    """,
+                    params,
+                )
+            )
 
     def insert_scalp_cycle(
         self,
@@ -879,6 +1016,9 @@ class TradingStore:
                 ),
                 "strategy_evaluations": int(
                     connection.execute("SELECT COUNT(*) FROM strategy_evaluations").fetchone()[0]
+                ),
+                "market_regimes": int(
+                    connection.execute("SELECT COUNT(*) FROM market_regimes").fetchone()[0]
                 ),
             }
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Cointrading macro market regime collection every five minutes
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=300s
+AccuracySec=30s
+Unit=cointrading-market-regime.service
+
+[Install]
+WantedBy=timers.target
+

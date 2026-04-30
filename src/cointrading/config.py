@@ -112,6 +112,8 @@ class TradingConfig:
     strategy_execution_mode: str = "maker_post_only"
     strategy_taker_slippage_bps: float = 1.0
     strategy_notify_interval_minutes: int = 360
+    macro_regime_gate_enabled: bool = True
+    macro_regime_max_age_minutes: int = 30
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -213,6 +215,14 @@ class TradingConfig:
             strategy_notify_interval_minutes=_get_int(
                 "COINTRADING_STRATEGY_NOTIFY_INTERVAL_MINUTES",
                 cls.strategy_notify_interval_minutes,
+            ),
+            macro_regime_gate_enabled=_get_bool(
+                "COINTRADING_MACRO_REGIME_GATE_ENABLED",
+                cls.macro_regime_gate_enabled,
+            ),
+            macro_regime_max_age_minutes=_get_int(
+                "COINTRADING_MACRO_REGIME_MAX_AGE_MINUTES",
+                cls.macro_regime_max_age_minutes,
             ),
         )
 

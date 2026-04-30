@@ -13,6 +13,7 @@ from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.dashboard import run_dashboard
 from cointrading.execution import place_post_only_maker
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
+from cointrading.market_regime import evaluate_market_regime
 from cointrading.models import Kline
 from cointrading.scalp_lifecycle import manage_cycle, start_cycle_from_signal
 from cointrading.scalping import (
@@ -118,6 +119,15 @@ def main(argv: list[str] | None = None) -> None:
     strategy_notify_parser.add_argument("--limit", type=int, default=8)
     strategy_notify_parser.add_argument("--force", action="store_true")
 
+    market_regime_parser = subparsers.add_parser("market-regime")
+    market_regime_parser.add_argument("--symbols", nargs="+")
+    market_regime_parser.add_argument("--db-path", type=Path, default=default_db_path())
+    market_regime_parser.add_argument("--store", action="store_true")
+
+    market_regime_collect_parser = subparsers.add_parser("market-regime-collect")
+    market_regime_collect_parser.add_argument("--symbols", nargs="+")
+    market_regime_collect_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
     dashboard_parser = subparsers.add_parser("dashboard")
     dashboard_parser.add_argument("--host", default="127.0.0.1")
     dashboard_parser.add_argument("--port", type=int, default=8080)
@@ -184,6 +194,10 @@ def main(argv: list[str] | None = None) -> None:
             args.limit,
             args.force,
         )
+    elif args.command == "market-regime":
+        market_regime(_active_scalp_symbols(args.symbols), args.db_path, args.store)
+    elif args.command == "market-regime-collect":
+        market_regime(_active_scalp_symbols(args.symbols), args.db_path, True)
     elif args.command == "dashboard":
         run_dashboard(args.host, args.port, args.db_path)
     elif args.command == "fee-status":
@@ -446,6 +460,28 @@ def strategy_notify(
     print("notification: sent")
 
 
+def market_regime(symbols: list[str], db_path: Path, store_rows: bool) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    store = TradingStore(db_path)
+    snapshots = []
+    for symbol in symbols:
+        try:
+            snapshot = _market_regime_snapshot(symbol.upper(), client)
+        except BinanceAPIError as exc:
+            print(f"{symbol.upper()}: market regime fetch failed - {exc}")
+            continue
+        snapshots.append(snapshot)
+        if store_rows:
+            store.insert_market_regime(snapshot)
+    if snapshots:
+        print("\n\n".join(snapshot.to_text() for snapshot in snapshots))
+    else:
+        print("No market regime snapshots collected.")
+    if store_rows:
+        print(f"\nstored {len(snapshots)} market regime row(s) into {db_path}")
+
+
 def _score_scalp_store(store: TradingStore, current_mid_by_symbol: dict[str, float]) -> int:
     current_ms = int(time.time() * 1000)
     updated = 0
@@ -515,6 +551,14 @@ def _scalp_signal(
         latest_funding_rate=latest_funding,
         bnb_fee_discount_enabled=bnb_fee_enabled,
         bnb_balance=bnb_balance,
+    )
+
+
+def _market_regime_snapshot(symbol: str, client: BinanceUSDMClient):
+    return evaluate_market_regime(
+        symbol=symbol,
+        klines_15m=client.klines(symbol=symbol, interval="15m", limit=120),
+        klines_1h=client.klines(symbol=symbol, interval="1h", limit=120),
     )
 
 
