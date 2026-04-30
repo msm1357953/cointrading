@@ -38,7 +38,7 @@ The VM runs this as `cointrading-scalp-engine.timer` every 15 seconds. Live orde
 
 ## Dashboard
 
-The dashboard is a small HTTP server. It shows the current scalp report, recent signals, recent order or blocked-order records, and scalp lifecycle state. It uses a server-sent events stream to update the data in place without reloading the whole page.
+The dashboard is a small HTTP server with tabs for summary, performance, lifecycle state, signals, and orders. It uses a server-sent events stream to update the data in place without reloading the whole page.
 
 Set `COINTRADING_DASHBOARD_AUTH_TOKEN` before exposing it outside the VM.
 When the token is set, requests must include either `?token=...` or an `Authorization: Bearer ...` header.

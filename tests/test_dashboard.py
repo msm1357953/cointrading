@@ -25,10 +25,13 @@ class DashboardTests(unittest.TestCase):
                 "signal_rows": "",
                 "order_rows": "",
                 "cycle_rows": "",
+                "performance_rows": "",
+                "exit_reason_rows": "",
             },
             TradingConfig(),
         )
         self.assertIn("new EventSource", html)
+        self.assertIn('data-tab="performance"', html)
         self.assertNotIn("http-equiv=\"refresh\"", html)
 
 

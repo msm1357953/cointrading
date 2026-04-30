@@ -114,6 +114,8 @@ def _snapshot(
         "signal_rows": _signal_rows_html(rows[-25:]),
         "order_rows": _order_rows_html(store.recent_orders(limit=10)),
         "cycle_rows": _cycle_rows_html(store.recent_scalp_cycles(limit=10)),
+        "performance_rows": _performance_rows_html(store.scalp_cycle_performance()),
+        "exit_reason_rows": _exit_reason_rows_html(store.scalp_cycle_exit_reasons()),
     }
 
 
@@ -157,10 +159,41 @@ def _cycle_rows_html(cycles) -> str:
     )
 
 
+def _performance_rows_html(rows) -> str:
+    return "\n".join(
+        "<tr>"
+        f"<td>{escape(row['symbol'])}</td>"
+        f"<td>{escape(row['side'])}</td>"
+        f"<td>{row['count']}</td>"
+        f"<td>{row['wins']}</td>"
+        f"<td>{row['losses']}</td>"
+        f"<td>{escape(_fmt_pct(_ratio(row['wins'], row['count'])))}</td>"
+        f"<td>{escape(_fmt_pnl(row['avg_pnl']))}</td>"
+        f"<td>{escape(_fmt_pnl(row['sum_pnl']))}</td>"
+        "</tr>"
+        for row in rows
+    )
+
+
+def _exit_reason_rows_html(rows) -> str:
+    return "\n".join(
+        "<tr>"
+        f"<td>{escape(row['status'])}</td>"
+        f"<td>{escape(row['reason'] or '')}</td>"
+        f"<td>{row['count']}</td>"
+        f"<td>{escape(_fmt_pnl(row['avg_pnl']))}</td>"
+        f"<td>{escape(_fmt_pnl(row['sum_pnl']))}</td>"
+        "</tr>"
+        for row in rows
+    )
+
+
 def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     signal_rows = snapshot["signal_rows"]
     order_rows = snapshot["order_rows"]
     cycle_rows = snapshot["cycle_rows"]
+    performance_rows = snapshot["performance_rows"]
+    exit_reason_rows = snapshot["exit_reason_rows"]
     return f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -176,6 +209,11 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     th {{ background: #eef2f7; }}
     .muted {{ color: #5f6875; }}
     .status {{ width: 8px; height: 8px; border-radius: 999px; background: #16a34a; display: inline-block; margin-right: 6px; }}
+    nav {{ display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0; }}
+    button {{ border: 1px solid #cfd6df; background: white; padding: 8px 12px; border-radius: 6px; cursor: pointer; }}
+    button.active {{ background: #111827; color: white; border-color: #111827; }}
+    .tab-panel {{ display: none; }}
+    .tab-panel.active {{ display: block; }}
   </style>
 </head>
 <body>
@@ -183,24 +221,59 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     <h1>Cointrading</h1>
     <p class="muted"><span id="stream-status" class="status"></span>대상: {escape(", ".join(config.scalp_symbols))} · <span id="generated-at">{escape(snapshot["generated_at"])}</span></p>
   </header>
-  <h2>요약</h2>
-  <pre id="report">{escape(snapshot["report"])}</pre>
-  <h2>최근 신호</h2>
-  <table>
-    <thead><tr><th>시간</th><th>심볼</th><th>방향</th><th>장상태</th><th>5분 bps</th></tr></thead>
-    <tbody id="signal-rows">{signal_rows}</tbody>
-  </table>
-  <h2>최근 주문/차단</h2>
-  <table>
-    <thead><tr><th>시간</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th></tr></thead>
-    <tbody id="order-rows">{order_rows}</tbody>
-  </table>
-  <h2>스캘핑 상태머신</h2>
-  <table>
-    <thead><tr><th>갱신</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th><th>실현손익</th></tr></thead>
-    <tbody id="cycle-rows">{cycle_rows}</tbody>
-  </table>
+  <nav>
+    <button class="active" data-tab="summary">요약</button>
+    <button data-tab="performance">성과</button>
+    <button data-tab="cycles">상태머신</button>
+    <button data-tab="signals">신호</button>
+    <button data-tab="orders">주문</button>
+  </nav>
+  <section id="tab-summary" class="tab-panel active">
+    <h2>요약</h2>
+    <pre id="report">{escape(snapshot["report"])}</pre>
+  </section>
+  <section id="tab-performance" class="tab-panel">
+    <h2>방향별 성과</h2>
+    <table>
+      <thead><tr><th>심볼</th><th>방향</th><th>종료</th><th>익절</th><th>손실</th><th>익절률</th><th>평균손익</th><th>합계손익</th></tr></thead>
+      <tbody id="performance-rows">{performance_rows}</tbody>
+    </table>
+    <h2>종료 사유</h2>
+    <table>
+      <thead><tr><th>상태</th><th>이유</th><th>개수</th><th>평균손익</th><th>합계손익</th></tr></thead>
+      <tbody id="exit-reason-rows">{exit_reason_rows}</tbody>
+    </table>
+  </section>
+  <section id="tab-cycles" class="tab-panel">
+    <h2>스캘핑 상태머신</h2>
+    <table>
+      <thead><tr><th>갱신</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th><th>실현손익</th></tr></thead>
+      <tbody id="cycle-rows">{cycle_rows}</tbody>
+    </table>
+  </section>
+  <section id="tab-signals" class="tab-panel">
+    <h2>최근 신호</h2>
+    <table>
+      <thead><tr><th>시간</th><th>심볼</th><th>방향</th><th>장상태</th><th>5분 bps</th></tr></thead>
+      <tbody id="signal-rows">{signal_rows}</tbody>
+    </table>
+  </section>
+  <section id="tab-orders" class="tab-panel">
+    <h2>최근 주문/차단</h2>
+    <table>
+      <thead><tr><th>시간</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th></tr></thead>
+      <tbody id="order-rows">{order_rows}</tbody>
+    </table>
+  </section>
   <script>
+    document.querySelectorAll("button[data-tab]").forEach((button) => {{
+      button.addEventListener("click", () => {{
+        document.querySelectorAll("button[data-tab]").forEach((item) => item.classList.remove("active"));
+        document.querySelectorAll(".tab-panel").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        document.getElementById(`tab-${{button.dataset.tab}}`).classList.add("active");
+      }});
+    }});
     const statusDot = document.getElementById("stream-status");
     const events = new EventSource(`/events${{window.location.search}}`);
     events.onmessage = (event) => {{
@@ -210,6 +283,8 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("signal-rows").innerHTML = data.signal_rows;
       document.getElementById("order-rows").innerHTML = data.order_rows;
       document.getElementById("cycle-rows").innerHTML = data.cycle_rows;
+      document.getElementById("performance-rows").innerHTML = data.performance_rows;
+      document.getElementById("exit-reason-rows").innerHTML = data.exit_reason_rows;
       statusDot.style.background = "#16a34a";
     }};
     events.onerror = () => {{
@@ -224,6 +299,17 @@ def _fmt_pnl(value) -> str:
     if value is None:
         return ""
     return f"{float(value):.6f}"
+
+
+def _fmt_pct(value: float) -> str:
+    return f"{value:.1%}"
+
+
+def _ratio(numerator, denominator) -> float:
+    denominator_value = float(denominator or 0)
+    if denominator_value <= 0:
+        return 0.0
+    return float(numerator or 0) / denominator_value
 
 
 def _fmt_kst(value: str | int | None) -> str:

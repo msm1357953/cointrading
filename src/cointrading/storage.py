@@ -564,6 +564,39 @@ class TradingStore:
                 )
             )
 
+    def scalp_cycle_exit_reasons(self) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    """
+                    SELECT status, reason, COUNT(*) AS count,
+                           AVG(realized_pnl) AS avg_pnl,
+                           SUM(COALESCE(realized_pnl, 0)) AS sum_pnl
+                    FROM scalp_cycles
+                    GROUP BY status, reason
+                    ORDER BY count DESC
+                    """
+                )
+            )
+
+    def scalp_cycle_performance(self) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    """
+                    SELECT symbol, side, COUNT(*) AS count,
+                           SUM(CASE WHEN status='CLOSED' THEN 1 ELSE 0 END) AS wins,
+                           SUM(CASE WHEN status='STOPPED' THEN 1 ELSE 0 END) AS losses,
+                           AVG(realized_pnl) AS avg_pnl,
+                           SUM(COALESCE(realized_pnl, 0)) AS sum_pnl
+                    FROM scalp_cycles
+                    WHERE realized_pnl IS NOT NULL
+                    GROUP BY symbol, side
+                    ORDER BY sum_pnl ASC
+                    """
+                )
+            )
+
     def recent_orders(self, limit: int = 10) -> list[sqlite3.Row]:
         with self.connect() as connection:
             return list(
