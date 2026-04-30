@@ -53,6 +53,7 @@
 - 2026-04-30: Strategy gating now uses net expectancy plus observed win/loss payoff balance instead of a hard 50% win-rate cutoff. Approved signal-grid candidates can pass their own TP/SL/max-hold values into the dry-run/paper lifecycle.
 - 2026-04-30: Macro regime routing was added. The VM classifies active symbols into bull/bear/range/breakout/panic regimes every 5 minutes, records the allowed strategy set, shows it in Telegram/dashboard, and blocks new scalping cycles when the macro router rejects that direction.
 - 2026-04-30: Gemini LLM reporting was added for Telegram risk summaries only. It runs about three times per day, uses SQLite context, and is explicitly excluded from order execution or live-entry decisions.
+- 2026-04-30: Gemini reporting was verified on the VM with `gemini-3.1-pro-preview`; the local/VM env key may be named `GEMINI_API_KEY`, `GEMINI_KEY`, or `gemini_key`. A forced Telegram risk summary was sent successfully after increasing the Gemini output budget.
 
 ## Next Work Packets
 
