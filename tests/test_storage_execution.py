@@ -5,8 +5,14 @@ from pathlib import Path
 from cointrading.config import TradingConfig
 from cointrading.execution import build_post_only_intent
 from cointrading.models import OrderIntent
+from cointrading.scalp_lifecycle import manage_cycle, start_cycle_from_signal
 from cointrading.scalping import ScalpSignal
 from cointrading.storage import TradingStore
+
+
+class FakeOrderClient:
+    def new_order(self, intent):
+        return {"dryRun": True, "params": {"symbol": intent.symbol, "side": intent.side}}
 
 
 def _signal(side="long", trade_allowed=True, maker_cost=0.0):
@@ -82,6 +88,62 @@ class StorageExecutionTests(unittest.TestCase):
         decision = build_post_only_intent(_signal(side="flat"), TradingConfig())
         self.assertFalse(decision.allowed)
         self.assertIsNone(decision.intent)
+
+    def test_scalp_lifecycle_enters_submits_target_and_closes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            client = FakeOrderClient()
+            config = TradingConfig(
+                post_only_order_notional=25,
+                max_single_order_notional=50,
+                scalp_take_profit_bps=3,
+                scalp_stop_loss_bps=6,
+                scalp_entry_timeout_seconds=45,
+                scalp_exit_reprice_seconds=45,
+                scalp_max_hold_seconds=180,
+            )
+            signal_id = store.insert_signal(_signal(maker_cost=0), timestamp_ms=1)
+            start = start_cycle_from_signal(
+                client,
+                store,
+                _signal(maker_cost=0),
+                config,
+                signal_id=signal_id,
+                timestamp_ms=1_000,
+            )
+            self.assertEqual(start.action, "entry_submitted")
+            cycle = store.active_scalp_cycle("BTCUSDC")
+            assert cycle is not None
+            self.assertEqual(cycle["status"], "ENTRY_SUBMITTED")
+
+            filled = manage_cycle(
+                client,
+                store,
+                cycle,
+                config,
+                bid=99.98,
+                ask=99.99,
+                timestamp_ms=2_000,
+            )
+            self.assertEqual(filled.action, "entry_filled")
+            cycle = store.active_scalp_cycle("BTCUSDC")
+            assert cycle is not None
+            self.assertEqual(cycle["status"], "EXIT_SUBMITTED")
+
+            closed = manage_cycle(
+                client,
+                store,
+                cycle,
+                config,
+                bid=float(cycle["target_price"]) + 0.01,
+                ask=float(cycle["target_price"]) + 0.02,
+                timestamp_ms=3_000,
+            )
+            self.assertEqual(closed.action, "take_profit")
+            self.assertIsNone(store.active_scalp_cycle("BTCUSDC"))
+            counts = store.summary_counts()
+            self.assertEqual(counts["scalp_cycles"], 1)
+            self.assertEqual(counts["fills"], 2)
 
 
 if __name__ == "__main__":

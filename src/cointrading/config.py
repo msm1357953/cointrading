@@ -89,6 +89,13 @@ class TradingConfig:
     post_only_order_notional: float = 25.0
     max_single_order_notional: float = 50.0
     min_live_edge_bps: float = 1.0
+    scalp_take_profit_bps: float = 3.0
+    scalp_min_exit_bps: float = 0.5
+    scalp_stop_loss_bps: float = 6.0
+    scalp_entry_timeout_seconds: float = 45.0
+    scalp_exit_reprice_seconds: float = 45.0
+    scalp_max_hold_seconds: float = 180.0
+    scalp_requote_bps: float = 1.5
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -127,6 +134,34 @@ class TradingConfig:
                 cls.max_single_order_notional,
             ),
             min_live_edge_bps=_get_float("COINTRADING_MIN_LIVE_EDGE_BPS", cls.min_live_edge_bps),
+            scalp_take_profit_bps=_get_float(
+                "COINTRADING_SCALP_TAKE_PROFIT_BPS",
+                cls.scalp_take_profit_bps,
+            ),
+            scalp_min_exit_bps=_get_float(
+                "COINTRADING_SCALP_MIN_EXIT_BPS",
+                cls.scalp_min_exit_bps,
+            ),
+            scalp_stop_loss_bps=_get_float(
+                "COINTRADING_SCALP_STOP_LOSS_BPS",
+                cls.scalp_stop_loss_bps,
+            ),
+            scalp_entry_timeout_seconds=_get_float(
+                "COINTRADING_SCALP_ENTRY_TIMEOUT_SECONDS",
+                cls.scalp_entry_timeout_seconds,
+            ),
+            scalp_exit_reprice_seconds=_get_float(
+                "COINTRADING_SCALP_EXIT_REPRICE_SECONDS",
+                cls.scalp_exit_reprice_seconds,
+            ),
+            scalp_max_hold_seconds=_get_float(
+                "COINTRADING_SCALP_MAX_HOLD_SECONDS",
+                cls.scalp_max_hold_seconds,
+            ),
+            scalp_requote_bps=_get_float(
+                "COINTRADING_SCALP_REQUOTE_BPS",
+                cls.scalp_requote_bps,
+            ),
         )
 
 

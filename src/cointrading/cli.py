@@ -14,6 +14,7 @@ from cointrading.dashboard import run_dashboard
 from cointrading.execution import place_post_only_maker
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.models import Kline
+from cointrading.scalp_lifecycle import manage_cycle, start_cycle_from_signal
 from cointrading.scalping import (
     ScalpSignalEngine,
     append_scalp_signal,
@@ -89,6 +90,11 @@ def main(argv: list[str] | None = None) -> None:
     maker_once_parser.add_argument("--symbol", default="BTCUSDC")
     maker_once_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
+    scalp_engine_parser = subparsers.add_parser("scalp-engine-step")
+    scalp_engine_parser.add_argument("--symbols", nargs="+")
+    scalp_engine_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
+    scalp_engine_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
     dashboard_parser = subparsers.add_parser("dashboard")
     dashboard_parser.add_argument("--host", default="127.0.0.1")
     dashboard_parser.add_argument("--port", type=int, default=8080)
@@ -143,6 +149,8 @@ def main(argv: list[str] | None = None) -> None:
         db_summary(args.db_path)
     elif args.command == "maker-once":
         maker_once(args.symbol, args.db_path)
+    elif args.command == "scalp-engine-step":
+        scalp_engine_step(_active_scalp_symbols(args.symbols), args.log_path, args.db_path)
     elif args.command == "dashboard":
         run_dashboard(args.host, args.port, args.db_path)
     elif args.command == "fee-status":
@@ -324,6 +332,36 @@ def maker_once(symbol: str, db_path: Path) -> None:
     print(f"order_log_id: {result.order_id}")
 
 
+def scalp_engine_step(symbols: list[str], log_path: Path, db_path: Path) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    store = TradingStore(db_path)
+    lines: list[str] = []
+    for symbol in symbols:
+        symbol = symbol.upper()
+        active_cycle = store.active_scalp_cycle(symbol)
+        if active_cycle is not None:
+            ticker = client.book_ticker(symbol)
+            bid = float(ticker["bidPrice"])
+            ask = float(ticker["askPrice"])
+            result = manage_cycle(client, store, active_cycle, config, bid=bid, ask=ask)
+            lines.append(f"{symbol}: {result.action} - {result.detail}")
+            continue
+
+        signal = _scalp_signal(symbol, client=client, trading_config=config)
+        append_scalp_signal(log_path, signal)
+        signal_id = store.insert_signal(signal)
+        result = start_cycle_from_signal(
+            client,
+            store,
+            signal,
+            config,
+            signal_id=signal_id,
+        )
+        lines.append(f"{symbol}: {result.action} - {result.detail}")
+    print("\n".join(lines))
+
+
 def _score_scalp_store(store: TradingStore, current_mid_by_symbol: dict[str, float]) -> int:
     current_ms = int(time.time() * 1000)
     updated = 0
@@ -365,9 +403,14 @@ def _active_scalp_symbols(symbols: list[str] | None) -> list[str]:
     return list(TradingConfig.from_env().scalp_symbols)
 
 
-def _scalp_signal(symbol: str):
-    trading_config = TradingConfig.from_env()
-    client = BinanceUSDMClient(config=trading_config)
+def _scalp_signal(
+    symbol: str,
+    *,
+    client: BinanceUSDMClient | None = None,
+    trading_config: TradingConfig | None = None,
+):
+    trading_config = trading_config or TradingConfig.from_env()
+    client = client or BinanceUSDMClient(config=trading_config)
     commission = None
     try:
         commission = client.commission_rate(symbol)

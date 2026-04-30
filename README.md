@@ -24,11 +24,13 @@ Important defaults:
 - `COINTRADING_TESTNET=true`
 - `COINTRADING_INITIAL_EQUITY=1000`
 - `COINTRADING_EQUITY_ASSET=USDC`
-- `COINTRADING_SCALP_SYMBOLS=BTCUSDC,ETHUSDC`
+- `COINTRADING_SCALP_SYMBOLS=BTCUSDC,ETHUSDC,SOLUSDC,XRPUSDC,DOGEUSDC`
 - `COINTRADING_MAX_DRAWDOWN_PCT=0.10`
 - `COINTRADING_DAILY_LOSS_PCT=0.03`
 - `COINTRADING_LIVE_TRADING_ENABLED=false`
 - `COINTRADING_POST_ONLY_ORDER_NOTIONAL=25`
+- `COINTRADING_SCALP_TAKE_PROFIT_BPS=3`
+- `COINTRADING_SCALP_STOP_LOSS_BPS=6`
 
 ## Commands
 
@@ -44,6 +46,7 @@ python -m cointrading.cli scalp-report
 python -m cointrading.cli migrate-csv-to-db
 python -m cointrading.cli db-summary
 python -m cointrading.cli maker-once --symbol BTCUSDC
+python -m cointrading.cli scalp-engine-step
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 python -m cointrading.cli fee-status
 python -m cointrading.cli telegram-me
@@ -56,4 +59,4 @@ Telegram setup details are in `docs/TELEGRAM_CONTROL.md`.
 
 ## Live Trading Warning
 
-Live order placement is intentionally guarded by both `COINTRADING_DRY_RUN` and `COINTRADING_LIVE_TRADING_ENABLED`. Do not disable them until testnet order behavior, duplicate-order handling, fees, funding, and symbol filters are verified.
+Live order placement is intentionally guarded by both `COINTRADING_DRY_RUN` and `COINTRADING_LIVE_TRADING_ENABLED`. The scalp lifecycle state machine runs in dry-run/paper mode by default and records entry, take-profit, stop, timeout, and reprice decisions. Do not disable the live guards until exchange reconciliation, symbol filters, and duplicate-order handling are verified.

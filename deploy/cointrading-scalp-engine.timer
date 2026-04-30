@@ -1,0 +1,11 @@
+[Unit]
+Description=Run post-only scalp lifecycle every 15 seconds
+
+[Timer]
+OnBootSec=45
+OnUnitInactiveSec=15
+AccuracySec=2
+Unit=cointrading-scalp-engine.service
+
+[Install]
+WantedBy=timers.target

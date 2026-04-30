@@ -35,7 +35,8 @@ def run_dashboard(host: str = "127.0.0.1", port: int = 8080, db_path: Path | Non
                 symbols=config.scalp_symbols if not symbol else None,
             )
             orders = store.recent_orders(limit=10)
-            body = _page(report, rows[-25:], orders, config)
+            cycles = store.recent_scalp_cycles(limit=10)
+            body = _page(report, rows[-25:], orders, cycles, config)
             payload = body.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -73,7 +74,13 @@ def _is_authorized(
     return authorization_header.strip() == f"Bearer {auth_token}"
 
 
-def _page(rows_text: str, rows: list[dict[str, str]], orders, config: TradingConfig) -> str:
+def _page(
+    rows_text: str,
+    rows: list[dict[str, str]],
+    orders,
+    cycles,
+    config: TradingConfig,
+) -> str:
     signal_rows = "\n".join(
         "<tr>"
         f"<td>{escape(row.get('iso_time', ''))}</td>"
@@ -93,6 +100,17 @@ def _page(rows_text: str, rows: list[dict[str, str]], orders, config: TradingCon
         f"<td>{escape(order['reason'] or '')}</td>"
         "</tr>"
         for order in orders
+    )
+    cycle_rows = "\n".join(
+        "<tr>"
+        f"<td>{escape(cycle['updated_iso'])}</td>"
+        f"<td>{escape(cycle['symbol'])}</td>"
+        f"<td>{escape(cycle['side'])}</td>"
+        f"<td>{escape(cycle['status'])}</td>"
+        f"<td>{escape(cycle['reason'] or '')}</td>"
+        f"<td>{escape(_fmt_pnl(cycle['realized_pnl']))}</td>"
+        "</tr>"
+        for cycle in cycles
     )
     return f"""<!doctype html>
 <html lang="ko">
@@ -127,5 +145,16 @@ def _page(rows_text: str, rows: list[dict[str, str]], orders, config: TradingCon
     <thead><tr><th>시간</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th></tr></thead>
     <tbody>{order_rows}</tbody>
   </table>
+  <h2>스캘핑 상태머신</h2>
+  <table>
+    <thead><tr><th>갱신</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th><th>실현손익</th></tr></thead>
+    <tbody>{cycle_rows}</tbody>
+  </table>
 </body>
 </html>"""
+
+
+def _fmt_pnl(value) -> str:
+    if value is None:
+        return ""
+    return f"{float(value):.6f}"

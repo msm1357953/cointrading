@@ -43,13 +43,14 @@
 - Telegram and CLI fee/status defaults focus on USDC symbols; `보고 전체` is only for legacy USDT logs.
 - 2026-04-30: SQLite store, order/fee tables, Telegram DB-backed reports, a token-protected cloud dashboard service, and a dry-run post-only maker command were added.
 - 2026-04-30: SOLUSDC, XRPUSDC, and DOGEUSDC were added to VM dry-run collection for altcoin comparison. First checks showed enough top-book liquidity, but immediate signals were all `quiet_chop`.
+- 2026-04-30: Post-only scalp lifecycle state machine was added in dry-run/paper mode. It tracks entry wait, paper fill, immediate take-profit, timeout/reprice, stop-loss, max-hold exit, fills, and paper PnL.
 
 ## Next Work Packets
 
 1. Run the included backtest on downloaded BTCUSDT/ETHUSDT klines.
 2. Add exchange info parsing for exact tick size and quantity step size.
 3. Add exact exchange info parsing for tick size and quantity step size before allowing live orders.
-4. Add fill ingestion and open-order reconciliation.
+4. Add live exchange fill ingestion and open-order reconciliation.
 5. Add Telegram daily status reports.
 6. Let USDC dry-run scalping collection run at least 4 hours, then inspect `보고`.
 7. Use the regime breakdown to disable weak regimes before considering any paper/live order loop.

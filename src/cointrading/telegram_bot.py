@@ -163,6 +163,10 @@ class TelegramCommandProcessor:
         "주문": "orders",
         "주문기록": "orders",
         "orders": "orders",
+        "포지션": "cycles",
+        "사이클": "cycles",
+        "상태머신": "cycles",
+        "cycles": "cycles",
         "scalp_report": "scalp_report",
         "scalp-report": "scalp_report",
         "정지": "pause",
@@ -219,6 +223,8 @@ class TelegramCommandProcessor:
             return self.scalp_report_text(args)
         if command == "orders":
             return self.orders_text()
+        if command == "cycles":
+            return self.cycles_text()
         if command == "pause":
             self.state.paused = True
             return "정지했습니다. 이후 자동매매 루프는 신규 진입을 거부해야 합니다."
@@ -244,6 +250,7 @@ class TelegramCommandProcessor:
                 "보고 BTCUSDC - BTCUSDC만 결과 요약",
                 "보고 전체 - 예전 USDT 로그까지 포함",
                 "주문 - 최근 dry-run 주문/차단 기록",
+                "포지션 - 스캘핑 상태머신 기록",
                 "정지 - 자동매매 신규 진입 정지",
                 "재개 - 자동매매 신규 진입 재개",
                 f"chat_id: {chat_id}",
@@ -385,6 +392,22 @@ class TelegramCommandProcessor:
             lines.append(
                 f"{order['symbol']} {order['side']} {order['status']} "
                 f"qty={float(order['quantity']):.6f} price={price}"
+            )
+        return "\n".join(lines)
+
+    def cycles_text(self) -> str:
+        store = TradingStore(default_db_path())
+        cycles = store.recent_scalp_cycles(limit=5)
+        if not cycles:
+            return "아직 스캘핑 상태머신 기록이 없습니다."
+        lines = ["최근 스캘핑 상태머신"]
+        for cycle in cycles:
+            pnl = ""
+            if cycle["realized_pnl"] is not None:
+                pnl = f" pnl={float(cycle['realized_pnl']):.6f}"
+            lines.append(
+                f"{cycle['symbol']} {cycle['side']} {cycle['status']} "
+                f"{cycle['reason'] or ''}{pnl}"
             )
         return "\n".join(lines)
 
