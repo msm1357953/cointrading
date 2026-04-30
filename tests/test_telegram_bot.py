@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from cointrading.config import TelegramConfig, TradingConfig
@@ -74,6 +76,25 @@ class FakeExchangeClient:
             "symbol": symbol,
             "makerCommissionRate": "0.000200",
             "takerCommissionRate": "0.000500",
+        }
+
+    def exchange_info(self, symbol: str | None = None):
+        return {
+            "symbols": [
+                {
+                    "symbol": symbol or "ETHUSDC",
+                    "filters": [
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                        {
+                            "filterType": "LOT_SIZE",
+                            "minQty": "0.001",
+                            "maxQty": "1000",
+                            "stepSize": "0.001",
+                        },
+                        {"filterType": "MIN_NOTIONAL", "notional": "20"},
+                    ],
+                }
+            ]
         }
 
 
@@ -236,6 +257,28 @@ class TelegramCommandTests(unittest.TestCase):
         self.assertEqual(reply, "strategy ok")
         store.latest_strategy_batch.assert_called_once_with()
         text_fn.assert_called_once_with(["row"], reason="수동 조회", limit=8)
+
+    def test_entry_check_command_reports_strategy_setups_without_ordering(self) -> None:
+        processor = TelegramCommandProcessor(
+            TelegramConfig(
+                allowed_chat_ids=frozenset({"123"}),
+                commands_enabled=True,
+            ),
+            TradingConfig(),
+            TelegramBotState(),
+            exchange_client=FakeExchangeClient(),
+        )
+
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "cointrading.telegram_bot.default_db_path",
+            return_value=Path(directory) / "cointrading.sqlite",
+        ):
+            reply = processor.handle_text("123", "진입 ETHUSDC 25")
+
+        self.assertIn("최소 주문 규모", reply)
+        self.assertIn("진입 점검: ETHUSDC", reply)
+        self.assertIn("전략별 판단", reply)
+        self.assertIn("주문은 넣지 않습니다", reply)
 
     def test_market_command_reads_latest_regime_rows(self) -> None:
         processor = TelegramCommandProcessor(

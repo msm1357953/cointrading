@@ -13,7 +13,8 @@ from urllib.request import Request, urlopen
 from cointrading.account import account_summary_text
 from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
-from cointrading.market_regime import market_regime_rows_text
+from cointrading.exchange_filters import SymbolFilters
+from cointrading.market_regime import evaluate_market_regime, market_regime_rows_text
 from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
 from cointrading.scalping import (
     ScalpSignalEngine,
@@ -22,6 +23,7 @@ from cointrading.scalping import (
 )
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms
 from cointrading.strategy_notify import strategy_notification_text
+from cointrading.strategy_router import evaluate_strategy_setups, strategy_setups_text
 
 
 DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC"]
@@ -174,6 +176,12 @@ class TelegramCommandProcessor:
         "전략": "strategy",
         "전략후보": "strategy",
         "strategy": "strategy",
+        "진입": "entry_check",
+        "진입점검": "entry_check",
+        "점검": "entry_check",
+        "프리플라이트": "entry_check",
+        "preflight": "entry_check",
+        "entry": "entry_check",
         "주문": "orders",
         "주문기록": "orders",
         "orders": "orders",
@@ -239,6 +247,8 @@ class TelegramCommandProcessor:
             return self.scalp_report_text(args)
         if command == "strategy":
             return self.strategy_text()
+        if command == "entry_check":
+            return self.entry_check_text(args)
         if command == "orders":
             return self.orders_text()
         if command == "cycles":
@@ -269,6 +279,7 @@ class TelegramCommandProcessor:
                 "보고 BTCUSDC - BTCUSDC만 결과 요약",
                 "보고 전체 - 예전 USDT 로그까지 포함",
                 "전략 - maker/taker/hybrid 전략 후보 요약",
+                "진입 ETHUSDC 25 - 전략별 진입 점검. 주문은 넣지 않음",
                 "주문 - 최근 dry-run 주문/차단 기록",
                 "포지션 - 스캘핑 상태머신 기록",
                 "정지 - 자동매매 신규 진입 정지",
@@ -446,6 +457,73 @@ class TelegramCommandProcessor:
         rows = store.latest_strategy_batch()
         return strategy_notification_text(rows, reason="수동 조회", limit=8)
 
+    def entry_check_text(self, args: list[str]) -> str:
+        symbol, notional = self._entry_check_args(args)
+        if not self.SYMBOL_PATTERN.match(symbol):
+            return "심볼 형식이 이상합니다. 예: ETHUSDC"
+        store = TradingStore(default_db_path())
+        risk = evaluate_runtime_risk(store, self.trading_config)
+        funding_rows = self.exchange_client.funding_rate(symbol, limit=1)
+        latest_funding = None
+        if funding_rows:
+            latest_funding = float(funding_rows[-1]["fundingRate"])
+        commission = None
+        try:
+            commission = self.exchange_client.commission_rate(symbol)
+        except BinanceAPIError:
+            commission = None
+        bnb_fee_enabled, bnb_balance = self._fee_context()
+        signal = ScalpSignalEngine().evaluate(
+            symbol=symbol,
+            book_ticker=self.exchange_client.book_ticker(symbol),
+            order_book=self.exchange_client.order_book(symbol, limit=20),
+            klines=self.exchange_client.klines(symbol, interval="1m", limit=30),
+            trading_config=self.trading_config,
+            commission_rate=commission,
+            latest_funding_rate=latest_funding,
+            bnb_fee_discount_enabled=bnb_fee_enabled,
+            bnb_balance=bnb_balance,
+        )
+        try:
+            macro_row = evaluate_market_regime(
+                symbol=symbol,
+                klines_15m=self.exchange_client.klines(symbol=symbol, interval="15m", limit=120),
+                klines_1h=self.exchange_client.klines(symbol=symbol, interval="1h", limit=120),
+            )
+            store.insert_market_regime(macro_row)
+        except BinanceAPIError:
+            macro_row = store.latest_market_regime(symbol)
+        setups = evaluate_strategy_setups(
+            scalp_signal=signal,
+            macro_row=macro_row,
+            runtime_risk=risk,
+            macro_max_age_ms=self.trading_config.macro_regime_max_age_minutes * 60_000,
+        )
+        lines: list[str] = []
+        try:
+            ticker = self.exchange_client.book_ticker(symbol)
+            mid = (float(ticker["bidPrice"]) + float(ticker["askPrice"])) / 2.0
+            filters = SymbolFilters.from_exchange_info(
+                self.exchange_client.exchange_info(symbol),
+                symbol,
+            )
+            lines.append(
+                f"최소 주문 규모: 약 {filters.min_order_notional_at(mid):.4f} "
+                f"{self.trading_config.equity_asset}"
+            )
+        except (AttributeError, BinanceAPIError, ValueError):
+            pass
+        lines.append(
+            strategy_setups_text(
+                setups,
+                symbol=symbol,
+                notional=notional,
+                runtime_risk=risk,
+            )
+        )
+        lines.append("주의: 이 명령은 점검만 하고 live 주문은 넣지 않습니다.")
+        return "\n".join(lines)
+
     def cycles_text(self) -> str:
         store = TradingStore(default_db_path())
         cycles = store.recent_scalp_cycles(limit=5)
@@ -486,6 +564,22 @@ class TelegramCommandProcessor:
             if row.get("asset") == asset:
                 return float(row.get("availableBalance") or row.get("balance") or 0)
         return 0.0
+
+    def _entry_check_args(self, args: list[str]) -> tuple[str, float]:
+        symbol = self.trading_config.scalp_symbols[0]
+        notional = self.trading_config.post_only_order_notional
+        for arg in args:
+            upper = arg.upper()
+            if self.SYMBOL_PATTERN.match(upper) and any(
+                upper.endswith(asset) for asset in ("USDC", "USDT")
+            ):
+                symbol = upper
+                continue
+            try:
+                notional = float(arg)
+            except ValueError:
+                continue
+        return symbol, notional
 
     @staticmethod
     def _parse_command(text: str) -> tuple[str, list[str]]:

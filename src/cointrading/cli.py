@@ -44,6 +44,7 @@ from cointrading.strategy_notify import (
     strategy_notification_decision,
     strategy_notification_text,
 )
+from cointrading.strategy_router import evaluate_strategy_setups, strategy_setups_text
 from cointrading.strategies import MovingAverageCrossStrategy
 from cointrading.telegram_bot import (
     TelegramBotState,
@@ -706,7 +707,7 @@ def live_preflight(symbols: list[str], notional: float, db_path: Path) -> None:
     usdc_balance = _asset_balance(client, config.equity_asset)
     bnb_fee_enabled, bnb_balance = _fee_context(client)
 
-    print("10 USDC live preflight")
+    print("live preflight")
     print(f"dry_run={config.dry_run}")
     print(f"live_trading_enabled={config.live_trading_enabled}")
     print(f"live_scalp_lifecycle_enabled={config.live_scalp_lifecycle_enabled}")
@@ -730,6 +731,17 @@ def live_preflight(symbols: list[str], notional: float, db_path: Path) -> None:
             mid = (bid + ask) / 2.0
             filters = SymbolFilters.from_exchange_info(client.exchange_info(symbol), symbol)
             signal = _scalp_signal(symbol, client=client, trading_config=config)
+            try:
+                macro_row = _market_regime_snapshot(symbol, client)
+                store.insert_market_regime(macro_row)
+            except BinanceAPIError:
+                macro_row = store.latest_market_regime(symbol)
+            setups = evaluate_strategy_setups(
+                scalp_signal=signal,
+                macro_row=macro_row,
+                runtime_risk=risk,
+                macro_max_age_ms=config.macro_regime_max_age_minutes * 60_000,
+            )
             decision = build_post_only_intent(signal, config, notional=notional)
             normalized = None
             filter_reason = decision.reason
@@ -751,6 +763,17 @@ def live_preflight(symbols: list[str], notional: float, db_path: Path) -> None:
             f"minQty={filters.min_qty} minNotional={filters.min_notional}"
         )
         print(f"  signal={signal.side} regime={signal.regime} reason={signal.reason}")
+        print(
+            "\n".join(
+                f"  {line}"
+                for line in strategy_setups_text(
+                    setups,
+                    symbol=symbol,
+                    notional=notional,
+                    runtime_risk=risk,
+                ).splitlines()
+            )
+        )
         if normalized is None:
             print(f"  decision=BLOCK {filter_reason}")
             continue

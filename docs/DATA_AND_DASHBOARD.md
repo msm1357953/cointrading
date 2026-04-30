@@ -28,6 +28,7 @@ python -m cointrading.cli market-regime
 python -m cointrading.cli market-regime-collect
 python -m cointrading.cli strategy-evaluate
 python -m cointrading.cli strategy-notify
+python -m cointrading.cli live-preflight --notional 25 --symbols ETHUSDC
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 ```
 
@@ -55,6 +56,8 @@ The VM runs this as `cointrading-scalp-engine.timer` every 15 seconds. Live orde
 - `macro_panic`: 신규 진입 금지.
 
 The VM runs this as `cointrading-market-regime.timer` every 5 minutes. When `COINTRADING_MACRO_REGIME_GATE_ENABLED=true`, new scalping cycles are blocked if the latest macro regime routes away from that direction. Missing or stale macro data is not treated as a hard block, so data collection can continue after restarts.
+
+`live-preflight` now prints a strategy-by-strategy entry check. `thin_book` is treated as a maker-scalping block only, not as a blanket ban for every possible strategy. Macro trend, range, and breakout candidates are shown as observe/paper candidates until their own live state machines exist.
 
 ## Strategy Gate
 
