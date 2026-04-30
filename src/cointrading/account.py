@@ -12,17 +12,17 @@ def account_summary_text(account: dict[str, Any]) -> str:
     return "\n".join(
         [
             "Binance 선물 계좌",
-            f"지갑: {_fmt_usdt(account.get('totalWalletBalance'))}",
-            f"사용 가능: {_fmt_usdt(account.get('availableBalance'))}",
-            f"미실현 손익: {_fmt_usdt(account.get('totalUnrealizedProfit'))}",
-            f"유지 증거금: {_fmt_usdt(account.get('totalMaintMargin'))}",
+            f"지갑: {_fmt_usd_m(account.get('totalWalletBalance'))}",
+            f"사용 가능: {_fmt_usd_m(account.get('availableBalance'))}",
+            f"미실현 손익: {_fmt_usd_m(account.get('totalUnrealizedProfit'))}",
+            f"유지 증거금: {_fmt_usd_m(account.get('totalMaintMargin'))}",
             f"열린 포지션: {len(open_positions)}",
         ]
     )
 
 
-def _fmt_usdt(value: Any) -> str:
-    return f"{_to_float(value):.4f} USDT"
+def _fmt_usd_m(value: Any) -> str:
+    return f"{_to_float(value):.4f} USD-M"
 
 
 def _to_float(value: Any) -> float:

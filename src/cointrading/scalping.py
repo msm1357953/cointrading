@@ -68,8 +68,8 @@ class ScalpSignal:
                 f"호가 불균형: {self.imbalance:.3f}",
                 f"모멘텀: {self.momentum_bps:.3f} bps",
                 f"단기 변동성: {self.realized_vol_bps:.3f} bps",
-                f"비용차감 여유: {self.edge_after_maker_bps:.3f} bps",
-                f"상위호가 유동성: {self.book_depth_notional:,.0f} USDT",
+                f"메이커 순여유: {self.edge_after_maker_bps:.3f} bps",
+                f"상위호가 유동성: {self.book_depth_notional:,.0f} {_quote_asset(self.symbol)}",
                 f"메이커 왕복 비용: {self.maker_roundtrip_bps:.2f} bps",
                 f"테이커 왕복 비용: {self.taker_roundtrip_bps:.2f} bps",
                 f"BNB 수수료 할인: {bnb_discount}",
@@ -363,6 +363,14 @@ def scalp_report_text(
     elif symbols is not None:
         allowed_symbols = {item.upper() for item in symbols}
         rows = [row for row in rows if row.get("symbol") in allowed_symbols]
+    return scalp_report_rows_text(rows, symbol=symbol, symbols=symbols)
+
+
+def scalp_report_rows_text(
+    rows: list[dict[str, str]],
+    symbol: str | None = None,
+    symbols: Iterable[str] | None = None,
+) -> str:
     if not rows:
         if symbol:
             target = symbol.upper()
@@ -511,6 +519,13 @@ def _side_ko(side: SignalSide) -> str:
         "short": "숏 후보",
         "flat": "관망",
     }[side]
+
+
+def _quote_asset(symbol: str) -> str:
+    for quote in ("USDC", "USDT", "BUSD"):
+        if symbol.upper().endswith(quote):
+            return quote
+    return "quote"
 
 
 def _side_group_ko(side: str) -> str:

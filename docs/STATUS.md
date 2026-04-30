@@ -21,6 +21,7 @@
 - Final Binance account jurisdiction and futures eligibility are not verified here.
 - Real API keys are stored only in gitignored `.env` files locally and on the VM.
 - Fees, funding, and symbol filters must be refreshed from Binance before live use.
+- Live order placement remains disabled unless both `COINTRADING_DRY_RUN=false` and `COINTRADING_LIVE_TRADING_ENABLED=true`.
 
 ## Infrastructure
 
@@ -35,17 +36,19 @@
 
 ## Latest Verification
 
-- 2026-04-30: local and VM unit tests passed, 18 tests.
+- 2026-04-30: local and VM unit tests passed, 21 tests.
 - 2026-04-30: `cointrading-telegram.service`, `cointrading-scalp-collect.timer`, and `cointrading-scalp-score.timer` are active on the VM.
 - 2026-04-30: API fee check shows BTCUSDC/ETHUSDC at maker 0 bps and taker 4 bps before BNB discount for this account.
 - 2026-04-30: BNB and USDC are funded in the futures wallet, so USDC symbols are the active dry-run universe.
+- Telegram and CLI fee/status defaults now focus on BTCUSDC/ETHUSDC; `보고 전체` is only for legacy USDT logs.
+- 2026-04-30: SQLite store, order/fee tables, Telegram DB-backed reports, a local dashboard, and a dry-run post-only maker command were added.
 
 ## Next Work Packets
 
 1. Run the included backtest on downloaded BTCUSDT/ETHUSDT klines.
 2. Add exchange info parsing for exact tick size and quantity step size.
-3. Add paper-trading logs before allowing live orders.
-4. Add live order safeguards only after testnet behavior is verified.
-5. Add paper-trading logs and Telegram daily status reports.
-6. Let dry-run scalping collection run at least 4 hours, then inspect `/scalp_report`.
+3. Add exact exchange info parsing for tick size and quantity step size before allowing live orders.
+4. Add fill ingestion and open-order reconciliation.
+5. Add Telegram daily status reports.
+6. Let USDC dry-run scalping collection run at least 4 hours, then inspect `보고`.
 7. Use the regime breakdown to disable weak regimes before considering any paper/live order loop.

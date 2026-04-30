@@ -35,8 +35,8 @@ class FakeExchangeClient:
     def account_balance(self):
         return [
             {"asset": "BNB", "balance": "0.10000000", "availableBalance": "0.10000000"},
-            {"asset": "USDT", "balance": "1000.00000000", "availableBalance": "1000.00000000"},
-            {"asset": "USDC", "balance": "0.00000000", "availableBalance": "0.00000000"},
+            {"asset": "USDT", "balance": "0.00000000", "availableBalance": "0.00000000"},
+            {"asset": "USDC", "balance": "1000.00000000", "availableBalance": "1000.00000000"},
         ]
 
     def fee_burn_status(self):
@@ -157,7 +157,7 @@ class TelegramCommandTests(unittest.TestCase):
             exchange_client=FakeExchangeClient(),
         )
         reply = processor.handle_text("123", "/account")
-        self.assertIn("지갑: 1181.5509 USDT", reply)
+        self.assertIn("지갑: 1181.5509 USD-M", reply)
         self.assertIn("열린 포지션: 1", reply)
 
     def test_fee_command_reports_bnb_discount(self) -> None:
@@ -173,7 +173,7 @@ class TelegramCommandTests(unittest.TestCase):
         reply = processor.handle_text("123", "수수료 BTCUSDC")
         self.assertIn("BNB 수수료 할인 설정: 켜짐", reply)
         self.assertIn("실제 할인 적용: 가능", reply)
-        self.assertIn("USDC 심볼 live 준비: 불가", reply)
+        self.assertIn("USDC 심볼 live 준비: 가능", reply)
         self.assertIn("BTCUSDC: maker 0.00bps, taker 3.60bps", reply)
 
     def test_scalp_command_uses_market_microstructure(self) -> None:
@@ -202,7 +202,7 @@ class TelegramCommandTests(unittest.TestCase):
             TelegramBotState(),
             exchange_client=FakeExchangeClient(),
         )
-        with patch("cointrading.telegram_bot.scalp_report_text", return_value="report ok"):
+        with patch("cointrading.telegram_bot.scalp_report_rows_text", return_value="report ok"):
             reply = processor.handle_text("123", "/scalp_report BTCUSDC")
         self.assertEqual(reply, "report ok")
 
@@ -219,7 +219,7 @@ class TelegramCommandTests(unittest.TestCase):
         self.assertIn("현재 상태", processor.handle_text("123", "상태"))
         self.assertIn("스캘핑 신호", processor.handle_text("123", "스캘핑 BTCUSDC"))
         self.assertIn("선물 수수료 상태", processor.handle_text("123", "수수료"))
-        with patch("cointrading.telegram_bot.scalp_report_text", return_value="report ok"):
+        with patch("cointrading.telegram_bot.scalp_report_rows_text", return_value="report ok"):
             self.assertEqual(processor.handle_text("123", "보고 BTCUSDC"), "report ok")
 
 

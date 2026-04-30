@@ -4,20 +4,25 @@ import argparse
 import csv
 import math
 from pathlib import Path
+import time
 from typing import Iterable
 
 from cointrading.account import account_summary_text
 from cointrading.backtest import Backtester
 from cointrading.config import TelegramConfig, TradingConfig
+from cointrading.dashboard import run_dashboard
+from cointrading.execution import place_post_only_maker
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.models import Kline
 from cointrading.scalping import (
     ScalpSignalEngine,
     append_scalp_signal,
     default_scalp_log_path,
+    scalp_report_rows_text,
     scalp_report_text,
     score_scalp_log,
 )
+from cointrading.storage import TradingStore, default_db_path
 from cointrading.strategies import MovingAverageCrossStrategy
 from cointrading.telegram_bot import (
     TelegramBotState,
@@ -29,7 +34,7 @@ from cointrading.telegram_bot import (
 )
 
 
-DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC", "BTCUSDT", "ETHUSDT"]
+DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC"]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -59,18 +64,39 @@ def main(argv: list[str] | None = None) -> None:
     scalp_collect_parser = subparsers.add_parser("scalp-collect")
     scalp_collect_parser.add_argument("--symbols", nargs="+")
     scalp_collect_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
+    scalp_collect_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
     scalp_score_parser = subparsers.add_parser("scalp-score")
     scalp_score_parser.add_argument("--symbols", nargs="+")
     scalp_score_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
+    scalp_score_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
     scalp_report_parser = subparsers.add_parser("scalp-report")
     scalp_report_parser.add_argument("--symbol")
     scalp_report_parser.add_argument("--all-symbols", action="store_true")
     scalp_report_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
+    scalp_report_parser.add_argument("--db-path", type=Path, default=default_db_path())
+    scalp_report_parser.add_argument("--csv", action="store_true")
+
+    migrate_parser = subparsers.add_parser("migrate-csv-to-db")
+    migrate_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
+    migrate_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
+    db_summary_parser = subparsers.add_parser("db-summary")
+    db_summary_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
+    maker_once_parser = subparsers.add_parser("maker-once")
+    maker_once_parser.add_argument("--symbol", default="BTCUSDC")
+    maker_once_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
+    dashboard_parser = subparsers.add_parser("dashboard")
+    dashboard_parser.add_argument("--host", default="127.0.0.1")
+    dashboard_parser.add_argument("--port", type=int, default=8080)
+    dashboard_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
     fee_status_parser = subparsers.add_parser("fee-status")
     fee_status_parser.add_argument("--symbols", nargs="+", default=DEFAULT_FEE_SYMBOLS)
+    fee_status_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
     subparsers.add_parser("telegram-me")
 
@@ -102,14 +128,25 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "scalp-check":
         scalp_check(args.symbol, args.depth_limit, args.kline_limit)
     elif args.command == "scalp-collect":
-        scalp_collect(_active_scalp_symbols(args.symbols), args.log_path)
+        scalp_collect(_active_scalp_symbols(args.symbols), args.log_path, args.db_path)
     elif args.command == "scalp-score":
-        scalp_score(_active_scalp_symbols(args.symbols), args.log_path)
+        scalp_score(_active_scalp_symbols(args.symbols), args.log_path, args.db_path)
     elif args.command == "scalp-report":
         active_symbols = None if args.all_symbols else _active_scalp_symbols(None)
-        print(scalp_report_text(args.log_path, args.symbol, symbols=active_symbols))
+        if args.csv:
+            print(scalp_report_text(args.log_path, args.symbol, symbols=active_symbols))
+        else:
+            print(scalp_report_db_text(args.db_path, args.log_path, args.symbol, active_symbols))
+    elif args.command == "migrate-csv-to-db":
+        migrate_csv_to_db(args.log_path, args.db_path)
+    elif args.command == "db-summary":
+        db_summary(args.db_path)
+    elif args.command == "maker-once":
+        maker_once(args.symbol, args.db_path)
+    elif args.command == "dashboard":
+        run_dashboard(args.host, args.port, args.db_path)
     elif args.command == "fee-status":
-        fee_status(args.symbols)
+        fee_status(args.symbols, args.db_path)
     elif args.command == "telegram-me":
         telegram_me()
     elif args.command == "telegram-send":
@@ -217,16 +254,18 @@ def scalp_check(symbol: str, depth_limit: int, kline_limit: int) -> None:
     print(signal.to_text())
 
 
-def scalp_collect(symbols: list[str], log_path: Path) -> None:
+def scalp_collect(symbols: list[str], log_path: Path, db_path: Path) -> None:
     count = 0
+    store = TradingStore(db_path)
     for symbol in symbols:
         signal = _scalp_signal(symbol.upper())
         append_scalp_signal(log_path, signal)
+        store.insert_signal(signal)
         count += 1
-    print(f"Collected {count} scalp signal(s) into {log_path}")
+    print(f"Collected {count} scalp signal(s) into {db_path} and {log_path}")
 
 
-def scalp_score(symbols: list[str], log_path: Path) -> None:
+def scalp_score(symbols: list[str], log_path: Path, db_path: Path) -> None:
     client = BinanceUSDMClient(config=TradingConfig.from_env())
     mids: dict[str, float] = {}
     for symbol in symbols:
@@ -235,7 +274,89 @@ def scalp_score(symbols: list[str], log_path: Path) -> None:
         ask = float(ticker["askPrice"])
         mids[symbol.upper()] = (bid + ask) / 2.0
     updated = score_scalp_log(log_path, mids)
-    print(f"Updated {updated} scalp score field(s).")
+    store = TradingStore(db_path)
+    store.migrate_csv_signals(log_path)
+    updated_db = _score_scalp_store(store, mids)
+    print(f"Updated {updated} CSV score field(s), {updated_db} DB score field(s).")
+
+
+def scalp_report_db_text(
+    db_path: Path,
+    csv_path: Path,
+    symbol: str | None,
+    active_symbols: list[str] | None,
+) -> str:
+    store = TradingStore(db_path)
+    store.migrate_csv_signals(csv_path)
+    rows = store.list_signals(symbol=symbol, symbols=active_symbols)
+    return scalp_report_rows_text(rows, symbol=symbol, symbols=active_symbols)
+
+
+def migrate_csv_to_db(log_path: Path, db_path: Path) -> None:
+    count = TradingStore(db_path).migrate_csv_signals(log_path)
+    print(f"Migrated {count} CSV signal row(s) into {db_path}")
+
+
+def db_summary(db_path: Path) -> None:
+    store = TradingStore(db_path)
+    counts = store.summary_counts()
+    print("SQLite summary")
+    for key, value in counts.items():
+        print(f"{key}: {value}")
+
+
+def maker_once(symbol: str, db_path: Path) -> None:
+    symbol = symbol.upper()
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    store = TradingStore(db_path)
+    signal = _scalp_signal(symbol)
+    signal_id = store.insert_signal(signal)
+    result = place_post_only_maker(client, store, signal, config, signal_id=signal_id)
+    print(signal.to_text())
+    print("")
+    print(f"post-only decision: {'allowed' if result.decision.allowed else 'blocked'}")
+    print(f"reason: {result.decision.reason}")
+    if result.decision.intent is not None:
+        print(f"intent: {result.decision.intent}")
+    if result.response is not None:
+        print(f"response: {result.response}")
+    print(f"order_log_id: {result.order_id}")
+
+
+def _score_scalp_store(store: TradingStore, current_mid_by_symbol: dict[str, float]) -> int:
+    current_ms = int(time.time() * 1000)
+    updated = 0
+    horizons = {
+        "horizon_1m_bps": 60_000,
+        "horizon_3m_bps": 180_000,
+        "horizon_5m_bps": 300_000,
+    }
+    for row in store.pending_score_rows(current_ms):
+        symbol = row["symbol"]
+        current_mid = current_mid_by_symbol.get(symbol)
+        if current_mid is None:
+            continue
+        signed_return_bps = _signed_return_bps(row["side"], row["mid_price"], current_mid)
+        scores: dict[str, float] = {}
+        for field, horizon_ms in horizons.items():
+            if row[field] is None and current_ms - int(row["timestamp_ms"]) >= horizon_ms:
+                scores[field] = signed_return_bps
+        if scores:
+            store.update_signal_scores(int(row["id"]), scores)
+            updated += len(scores)
+    return updated
+
+
+def _signed_return_bps(side: str, entry_mid: float, current_mid: float) -> float:
+    if entry_mid <= 0:
+        return 0.0
+    raw = ((current_mid / entry_mid) - 1.0) * 10_000.0
+    if side == "long":
+        return raw
+    if side == "short":
+        return -raw
+    return 0.0
 
 
 def _active_scalp_symbols(symbols: list[str] | None) -> list[str]:
@@ -270,9 +391,10 @@ def _scalp_signal(symbol: str):
     )
 
 
-def fee_status(symbols: list[str]) -> None:
+def fee_status(symbols: list[str], db_path: Path | None = None) -> None:
     client = BinanceUSDMClient(config=TradingConfig.from_env())
     bnb_fee_enabled, bnb_balance = _fee_context(client)
+    bnb_fee_active = bnb_fee_enabled and bnb_balance > 0
     usdc_balance = _asset_balance(client, "USDC")
     try:
         multi_assets = bool(client.multi_assets_margin().get("multiAssetsMargin"))
@@ -283,7 +405,7 @@ def fee_status(symbols: list[str]) -> None:
     print(f"선물 지갑 BNB 잔고: {bnb_balance:.8f} BNB")
     print(
         "실제 할인 적용: "
-        f"{'가능' if bnb_fee_enabled and bnb_balance > 0 else '불가'}"
+        f"{'가능' if bnb_fee_active else '불가'}"
     )
     print(f"Multi-Assets Mode: {'켜짐' if multi_assets else '꺼짐'}")
     print(f"선물 지갑 USDC 잔고: {usdc_balance:.8f} USDC")
@@ -299,9 +421,18 @@ def fee_status(symbols: list[str]) -> None:
             continue
         maker = float(commission["makerCommissionRate"]) * 10_000.0
         taker = float(commission["takerCommissionRate"]) * 10_000.0
-        if bnb_fee_enabled and bnb_balance > 0:
+        if bnb_fee_active:
             maker *= 0.90
             taker *= 0.90
+        if db_path is not None:
+            TradingStore(db_path).record_fee_snapshot(
+                symbol.upper(),
+                maker,
+                taker,
+                bnb_fee_discount_enabled=bnb_fee_enabled,
+                bnb_fee_discount_active=bnb_fee_active,
+                raw=commission,
+            )
         print(f"{symbol.upper()}: maker {maker:.2f}bps, taker {taker:.2f}bps")
 
 

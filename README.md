@@ -27,6 +27,8 @@ Important defaults:
 - `COINTRADING_SCALP_SYMBOLS=BTCUSDC,ETHUSDC`
 - `COINTRADING_MAX_DRAWDOWN_PCT=0.10`
 - `COINTRADING_DAILY_LOSS_PCT=0.03`
+- `COINTRADING_LIVE_TRADING_ENABLED=false`
+- `COINTRADING_POST_ONLY_ORDER_NOTIONAL=25`
 
 ## Commands
 
@@ -39,6 +41,10 @@ python -m cointrading.cli scalp-check --symbol BTCUSDC
 python -m cointrading.cli scalp-collect
 python -m cointrading.cli scalp-score
 python -m cointrading.cli scalp-report
+python -m cointrading.cli migrate-csv-to-db
+python -m cointrading.cli db-summary
+python -m cointrading.cli maker-once --symbol BTCUSDC
+python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 python -m cointrading.cli fee-status
 python -m cointrading.cli telegram-me
 python -m cointrading.cli telegram-updates --limit 5
@@ -50,4 +56,4 @@ Telegram setup details are in `docs/TELEGRAM_CONTROL.md`.
 
 ## Live Trading Warning
 
-Live order placement is intentionally guarded by `dry_run`. Do not disable it until testnet order behavior, duplicate-order handling, fees, funding, and symbol filters are verified.
+Live order placement is intentionally guarded by both `COINTRADING_DRY_RUN` and `COINTRADING_LIVE_TRADING_ENABLED`. Do not disable them until testnet order behavior, duplicate-order handling, fees, funding, and symbol filters are verified.

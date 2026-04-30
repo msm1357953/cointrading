@@ -95,7 +95,11 @@ python -m cointrading.cli scalp-score
 python -m cointrading.cli scalp-report
 python -m cointrading.cli scalp-report --symbol BTCUSDC
 python -m cointrading.cli scalp-report --all-symbols
+python -m cointrading.cli migrate-csv-to-db
+python -m cointrading.cli db-summary
 ```
+
+New signal data is written to SQLite at `data/cointrading.sqlite`; the CSV remains as a compatibility log and migration source.
 
 ## Live Trading Gate
 
@@ -107,3 +111,11 @@ Do not place live scalping orders until:
 - cancel/replace logic is idempotent
 - duplicate order protection is tested after API timeouts
 - daily loss and kill switch are enforced outside strategy code
+
+The first post-only maker engine is exposed as:
+
+```bash
+python -m cointrading.cli maker-once --symbol BTCUSDC
+```
+
+It builds a Binance USD-M `LIMIT` order with `timeInForce=GTX`, records the attempt to SQLite, and remains dry-run unless both `COINTRADING_DRY_RUN=false` and `COINTRADING_LIVE_TRADING_ENABLED=true` are set.

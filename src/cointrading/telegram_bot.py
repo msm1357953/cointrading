@@ -13,10 +13,15 @@ from urllib.request import Request, urlopen
 from cointrading.account import account_summary_text
 from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
-from cointrading.scalping import ScalpSignalEngine, default_scalp_log_path, scalp_report_text
+from cointrading.scalping import (
+    ScalpSignalEngine,
+    default_scalp_log_path,
+    scalp_report_rows_text,
+)
+from cointrading.storage import TradingStore, default_db_path
 
 
-DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC", "BTCUSDT", "ETHUSDT"]
+DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC"]
 
 
 class TelegramAPIError(RuntimeError):
@@ -149,11 +154,15 @@ class TelegramCommandProcessor:
         "장상태": "scalp",
         "scalp": "scalp",
         "보고": "scalp_report",
+        "요약": "scalp_report",
         "리포트": "scalp_report",
         "결과": "scalp_report",
         "결과보고": "scalp_report",
         "스캘핑보고": "scalp_report",
         "스캘프보고": "scalp_report",
+        "주문": "orders",
+        "주문기록": "orders",
+        "orders": "orders",
         "scalp_report": "scalp_report",
         "scalp-report": "scalp_report",
         "정지": "pause",
@@ -208,6 +217,8 @@ class TelegramCommandProcessor:
             return self.scalp_text(args)
         if command == "scalp_report":
             return self.scalp_report_text(args)
+        if command == "orders":
+            return self.orders_text()
         if command == "pause":
             self.state.paused = True
             return "정지했습니다. 이후 자동매매 루프는 신규 진입을 거부해야 합니다."
@@ -232,6 +243,7 @@ class TelegramCommandProcessor:
                 "보고 - 스캘핑 dry-run 결과와 장 상태별 성과 요약",
                 "보고 BTCUSDC - BTCUSDC만 결과 요약",
                 "보고 전체 - 예전 USDT 로그까지 포함",
+                "주문 - 최근 dry-run 주문/차단 기록",
                 "정지 - 자동매매 신규 진입 정지",
                 "재개 - 자동매매 신규 진입 재개",
                 f"chat_id: {chat_id}",
@@ -341,16 +353,40 @@ class TelegramCommandProcessor:
         return signal.to_text()
 
     def scalp_report_text(self, args: list[str]) -> str:
+        store = TradingStore(default_db_path())
+        store.migrate_csv_signals(default_scalp_log_path())
         if args and args[0].lower() in {"all", "전체"}:
-            return scalp_report_text(default_scalp_log_path())
+            rows = store.list_signals()
+            return _with_recent_order_summary(scalp_report_rows_text(rows), store)
         symbol = args[0].upper() if args else None
         if symbol and not self.SYMBOL_PATTERN.match(symbol):
             return "심볼 형식이 이상합니다. 예: BTCUSDC"
-        return scalp_report_text(
-            default_scalp_log_path(),
+        rows = store.list_signals(
             symbol,
             symbols=self.trading_config.scalp_symbols,
         )
+        return _with_recent_order_summary(
+            scalp_report_rows_text(
+                rows,
+                symbol=symbol,
+                symbols=self.trading_config.scalp_symbols,
+            ),
+            store,
+        )
+
+    def orders_text(self) -> str:
+        store = TradingStore(default_db_path())
+        orders = store.recent_orders(limit=5)
+        if not orders:
+            return "아직 주문 기록이 없습니다."
+        lines = ["최근 주문 기록"]
+        for order in orders:
+            price = "n/a" if order["price"] is None else f"{float(order['price']):.4f}"
+            lines.append(
+                f"{order['symbol']} {order['side']} {order['status']} "
+                f"qty={float(order['quantity']):.6f} price={price}"
+            )
+        return "\n".join(lines)
 
     def _fee_context(self) -> tuple[bool, float]:
         try:
@@ -435,3 +471,13 @@ def poll_forever(
         except Exception as exc:
             print(f"Telegram polling error: {exc}", flush=True)
         time.sleep(interval_seconds)
+
+
+def _with_recent_order_summary(text: str, store: TradingStore) -> str:
+    orders = store.recent_orders(limit=3)
+    if not orders:
+        return text
+    lines = [text, "최근 주문/차단"]
+    for order in orders:
+        lines.append(f"- {order['symbol']} {order['side']} {order['status']}: {order['reason']}")
+    return "\n".join(lines)

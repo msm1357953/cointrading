@@ -85,6 +85,10 @@ class TradingConfig:
     dry_run: bool = True
     testnet: bool = True
     scalp_symbols: tuple[str, ...] = ("BTCUSDC", "ETHUSDC")
+    live_trading_enabled: bool = False
+    post_only_order_notional: float = 25.0
+    max_single_order_notional: float = 50.0
+    min_live_edge_bps: float = 1.0
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -110,6 +114,19 @@ class TradingConfig:
             dry_run=_get_bool("COINTRADING_DRY_RUN", cls.dry_run),
             testnet=_get_bool("COINTRADING_TESTNET", cls.testnet),
             scalp_symbols=_get_csv_tuple("COINTRADING_SCALP_SYMBOLS", cls.scalp_symbols),
+            live_trading_enabled=_get_bool(
+                "COINTRADING_LIVE_TRADING_ENABLED",
+                cls.live_trading_enabled,
+            ),
+            post_only_order_notional=_get_float(
+                "COINTRADING_POST_ONLY_ORDER_NOTIONAL",
+                cls.post_only_order_notional,
+            ),
+            max_single_order_notional=_get_float(
+                "COINTRADING_MAX_SINGLE_ORDER_NOTIONAL",
+                cls.max_single_order_notional,
+            ),
+            min_live_edge_bps=_get_float("COINTRADING_MIN_LIVE_EDGE_BPS", cls.min_live_edge_bps),
         )
 
 

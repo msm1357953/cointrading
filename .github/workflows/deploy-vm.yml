@@ -47,7 +47,7 @@ jobs:
           fi
           mkdir -p "$runtime_backup/data"
           if [ -d data ]; then
-            find data -maxdepth 1 -type f \( -name '*.csv' -o -name '*.json' \) \
+            find data -maxdepth 1 -type f \( -name '*.csv' -o -name '*.json' -o -name '*.sqlite' -o -name '*.sqlite-*' \) \
               -exec cp {} "$runtime_backup/data/" \;
           fi
 

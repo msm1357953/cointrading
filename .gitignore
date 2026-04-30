@@ -7,4 +7,6 @@ __pycache__/
 .mypy_cache/
 data/*.csv
 data/*.json
+data/*.sqlite
+data/*.sqlite-*
 logs/
