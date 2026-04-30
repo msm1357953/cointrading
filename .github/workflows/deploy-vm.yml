@@ -87,11 +87,14 @@ jobs:
           sudo cp deploy/cointrading-*.service deploy/cointrading-*.timer /etc/systemd/system/
           sudo systemctl daemon-reload
           sudo systemctl enable --now cointrading-telegram.service
+          sudo systemctl enable --now cointrading-dashboard.service
           sudo systemctl enable --now cointrading-scalp-collect.timer
           sudo systemctl enable --now cointrading-scalp-score.timer
           sudo systemctl restart cointrading-telegram.service
+          sudo systemctl restart cointrading-dashboard.service
 
           systemctl is-active cointrading-telegram.service
+          systemctl is-active cointrading-dashboard.service
           systemctl is-active cointrading-scalp-collect.timer
           systemctl is-active cointrading-scalp-score.timer
           REMOTE

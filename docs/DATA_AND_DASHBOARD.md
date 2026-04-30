@@ -26,3 +26,10 @@ python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 ## Dashboard
 
 The dashboard is a small local HTTP server. It shows the current scalp report, recent signals, and recent order or blocked-order records. It is intentionally bound to `127.0.0.1` by default; do not expose it publicly without authentication.
+
+On the VM it runs as `cointrading-dashboard.service`, still bound to `127.0.0.1:8080`.
+Use an SSH tunnel before opening it from a local browser:
+
+```bash
+gcloud compute ssh cointrading-vm --project=seokmin-494312 --zone=asia-northeast3-a -- -L 8080:127.0.0.1:8080
+```

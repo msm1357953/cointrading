@@ -41,7 +41,7 @@
 - 2026-04-30: API fee check shows BTCUSDC/ETHUSDC at maker 0 bps and taker 4 bps before BNB discount for this account.
 - 2026-04-30: BNB and USDC are funded in the futures wallet, so USDC symbols are the active dry-run universe.
 - Telegram and CLI fee/status defaults now focus on BTCUSDC/ETHUSDC; `보고 전체` is only for legacy USDT logs.
-- 2026-04-30: SQLite store, order/fee tables, Telegram DB-backed reports, a local dashboard, and a dry-run post-only maker command were added.
+- 2026-04-30: SQLite store, order/fee tables, Telegram DB-backed reports, a VM-local dashboard service, and a dry-run post-only maker command were added.
 
 ## Next Work Packets
 

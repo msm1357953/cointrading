@@ -1,0 +1,16 @@
+[Unit]
+Description=Cointrading local dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=msm1357953_gmail_com
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
