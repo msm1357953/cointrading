@@ -68,6 +68,13 @@ from cointrading.telegram_bot import (
     poll_forever,
     poll_once,
 )
+from cointrading.trade_event_notify import (
+    TradeEventNotifyState,
+    apply_trade_event_notification_state,
+    default_trade_event_notify_state_path,
+    trade_event_notification_decision,
+    trade_event_notification_text,
+)
 
 
 DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC"]
@@ -209,6 +216,18 @@ def main(argv: list[str] | None = None) -> None:
     )
     live_supervisor_notify_parser.add_argument("--force", action="store_true")
 
+    trade_event_notify_parser = subparsers.add_parser("trade-event-notify")
+    trade_event_notify_parser.add_argument("--db-path", type=Path, default=default_db_path())
+    trade_event_notify_parser.add_argument(
+        "--state-path",
+        type=Path,
+        default=default_trade_event_notify_state_path(),
+    )
+    trade_event_notify_parser.add_argument("--summary-interval-minutes", type=int, default=60)
+    trade_event_notify_parser.add_argument("--event-limit", type=int, default=10)
+    trade_event_notify_parser.add_argument("--force-summary", action="store_true")
+    trade_event_notify_parser.add_argument("--no-send", action="store_true")
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -302,6 +321,15 @@ def main(argv: list[str] | None = None) -> None:
             args.db_path,
             args.state_path,
             args.force,
+        )
+    elif args.command == "trade-event-notify":
+        trade_event_notify(
+            args.db_path,
+            args.state_path,
+            args.summary_interval_minutes,
+            args.event_limit,
+            args.force_summary,
+            args.no_send,
         )
     elif args.command == "telegram-me":
         telegram_me()
@@ -751,6 +779,48 @@ def live_supervisor_notify(
         return
     apply_live_supervisor_notify_state(state, signature=signature).save(state_path)
     print("live-supervisor-notify: sent")
+
+
+def trade_event_notify(
+    db_path: Path,
+    state_path: Path,
+    summary_interval_minutes: int,
+    event_limit: int,
+    force_summary: bool,
+    no_send: bool,
+) -> None:
+    store = TradingStore(db_path)
+    state = TradeEventNotifyState.load(state_path)
+    events, include_summary = trade_event_notification_decision(
+        store,
+        state,
+        summary_interval_minutes=summary_interval_minutes,
+        force_summary=force_summary,
+    )
+    text = trade_event_notification_text(
+        events,
+        store,
+        include_summary=include_summary,
+        event_limit=event_limit,
+    )
+    print(text)
+    if not events and not include_summary:
+        print("trade-event-notify: skipped")
+        return
+    if no_send:
+        print("trade-event-notify: print only")
+        return
+    try:
+        TelegramClient(TelegramConfig.from_env()).send_message(_telegram_safe_text(text))
+    except Exception as exc:
+        print(f"trade-event-notify: failed - {exc}")
+        return
+    apply_trade_event_notification_state(
+        state,
+        events,
+        summary_sent=include_summary,
+    ).save(state_path)
+    print("trade-event-notify: sent")
 
 
 def llm_report(

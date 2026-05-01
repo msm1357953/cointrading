@@ -49,6 +49,7 @@ jobs:
             cointrading-strategy-evaluate.timer \
             cointrading-strategy-notify.timer \
             cointrading-live-supervisor-notify.timer \
+            cointrading-trade-event-notify.timer \
             cointrading-llm-report.timer \
             cointrading-scalp-engine.timer \
             cointrading-strategy-engine.timer || true
@@ -62,6 +63,7 @@ jobs:
             cointrading-strategy-evaluate.service \
             cointrading-strategy-notify.service \
             cointrading-live-supervisor-notify.service \
+            cointrading-trade-event-notify.service \
             cointrading-llm-report.service \
             cointrading-scalp-engine.service \
             cointrading-strategy-engine.service || true
@@ -125,6 +127,7 @@ jobs:
           sudo systemctl enable --now cointrading-strategy-evaluate.timer
           sudo systemctl enable --now cointrading-strategy-notify.timer
           sudo systemctl enable --now cointrading-live-supervisor-notify.timer
+          sudo systemctl enable --now cointrading-trade-event-notify.timer
           sudo systemctl enable --now cointrading-llm-report.timer
           sudo systemctl enable --now cointrading-scalp-engine.timer
           sudo systemctl enable --now cointrading-strategy-engine.timer
@@ -133,6 +136,7 @@ jobs:
           sudo systemctl start cointrading-strategy-evaluate.service
           sudo systemctl start cointrading-strategy-notify.service
           sudo systemctl start cointrading-live-supervisor-notify.service
+          sudo systemctl start cointrading-trade-event-notify.service
           sudo systemctl restart cointrading-telegram.service
           sudo systemctl restart cointrading-dashboard.service
 
@@ -145,6 +149,7 @@ jobs:
           systemctl is-active cointrading-strategy-evaluate.timer
           systemctl is-active cointrading-strategy-notify.timer
           systemctl is-active cointrading-live-supervisor-notify.timer
+          systemctl is-active cointrading-trade-event-notify.timer
           systemctl is-active cointrading-llm-report.timer
           systemctl is-active cointrading-scalp-engine.timer
           systemctl is-active cointrading-strategy-engine.timer

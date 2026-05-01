@@ -56,6 +56,7 @@ Copy the printed `chat_id` into `.env`.
 - `진입 ETHUSDC 25`: 해당 심볼/규모에 대해 스캘핑, RSI/EMA 추세, RSI/볼린저 평균회귀, 돌파 후보를 분리해서 점검합니다. 이 명령은 주문을 넣지 않습니다.
 - `실전 ETHUSDC 25`: 시장상황과 장세를 새로 수집한 뒤 실전 가능/불가 최종 감독 판정을 보여줍니다. 이 명령도 주문을 넣지 않습니다.
 - 자동 후보 알림: VM은 `live-supervisor-notify`를 주기적으로 실행해 안전잠금만 남은 진입 후보가 새로 생기면 텔레그램으로 알려줍니다. 이 알림도 주문을 넣지 않고, `실전 80` 재확인과 수동 승인 전까지 live 플래그는 꺼진 상태를 유지합니다.
+- 자동 거래 이벤트 알림: VM은 `trade-event-notify`를 1분마다 실행합니다. 새 진입 시도, 진입 체결, 익절, 손절, 시간 종료, 진입 취소를 별도 메시지로 보내고, 기본 60분마다 진행 중 사이클의 진입가/현재가/목표가/손절가/추정 미실현손익과 최근 24시간 종료 요약을 보냅니다.
 - `보고`: 전체 스캘핑 dry-run 채점 결과와 장 상태별 성과를 보여줍니다.
 - `보고 BTCUSDC`: 특정 심볼의 스캘핑 dry-run 채점 결과와 장 상태별 성과를 보여줍니다.
 - `보고 전체`: 예전 USDT 로그까지 포함한 전체 결과를 보여줍니다.
@@ -69,6 +70,8 @@ Slash commands such as `/status`, `/account`, `/scalp BTCUSDC`, and `/scalp_repo
 
 Strategy notification messages are candidate evaluations, not trade confirmations. They group duplicated TP/SL/hold-time parameter variants so `APPROVED` counts do not look like separate live orders. Telegram reports separate `전략유형` such as maker scalping, trend-follow, range-reversion, and breakout from `주문방식` such as post-only maker or market/taker.
 Strategy reports also show the simple execution gate summary. In the default first-live setup it says live-only, `trend_follow` only, one entry per KST day, 60-minute same-symbol cooldown, and two consecutive losses halt new entries.
+
+Trade event messages are the practical position feed. Candidate reports answer "which setup might be allowed"; trade event reports answer "what actually entered, what is open now, and how it exited."
 
 No Telegram command places live orders. Future live-trading commands should require explicit two-step confirmation and should stay blocked while `COINTRADING_DRY_RUN=true`. Macro strategy live orders also require `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true`. Live entries additionally require the one-shot guard unless `COINTRADING_LIVE_ONE_SHOT_REQUIRED=false`.
 

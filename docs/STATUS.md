@@ -72,6 +72,7 @@
 - 2026-05-01: Live-supervisor paper gates were tightened before any real-money one-shot. A candidate now needs at least 20 closed paper cycles, positive all-time and recent paper PnL, a paper payoff ratio of at least 1.2, and a recent stop/max-hold exit ratio no higher than 65% before it can produce an actionable Telegram alert. Signal-grid approval alone is no longer enough, and research-only execution modes without matching live state machines are blocked.
 - 2026-05-01: Telegram and dashboard candidate wording now separates strategy type from order execution. For example, maker-post-only candidates are shown as `전략=메이커 스캘핑` and `주문=지정가 메이커` instead of treating the order type as the strategy name.
 - 2026-05-01: A simple live execution gate was added for the first real-money phase. By default it applies to live strategy entries only, allows `trend_follow` only, limits entries to one per KST day, enforces a 60-minute same-symbol cooldown after close, and halts new entries after two consecutive live strategy losses. Paper collection remains unaffected unless `COINTRADING_SIMPLE_TRADE_GATE_APPLY_TO_DRY_RUN=true`.
+- 2026-05-01: Telegram trade-event notifications were added separately from candidate evaluation reports. The VM can now send concise entry attempt, entry fill, take-profit, stop-loss, max-hold, cancellation, and periodic position-status reports with entry/current/target/stop prices and estimated unrealized PnL.
 
 ## Next Work Packets
 
