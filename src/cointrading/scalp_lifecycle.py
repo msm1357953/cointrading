@@ -45,6 +45,12 @@ def start_cycle_from_signal(
 ) -> ScalpLifecycleResult:
     if store.active_scalp_cycle(signal.symbol) is not None:
         return ScalpLifecycleResult(signal.symbol, "skip", "active cycle already exists")
+    if signal.symbol.upper() in store.active_cycle_symbols():
+        return ScalpLifecycleResult(
+            signal.symbol,
+            "skip",
+            "another strategy cycle is already active for this symbol",
+        )
 
     ts = timestamp_ms or now_ms()
     if not config.dry_run and not config.live_scalp_lifecycle_enabled:

@@ -79,8 +79,13 @@ def start_strategy_cycle_from_setup(
         )
     if setup.status != SETUP_PASS or setup.side not in {"long", "short"}:
         return StrategyLifecycleResult(setup.strategy, symbol, "blocked", setup.reason)
-    if store.active_strategy_cycle(setup.strategy, symbol) is not None:
-        return StrategyLifecycleResult(setup.strategy, symbol, "skip", "active strategy cycle exists")
+    if symbol in store.active_cycle_symbols():
+        return StrategyLifecycleResult(
+            setup.strategy,
+            symbol,
+            "skip",
+            "another cycle is already active for this symbol",
+        )
     if not config.dry_run and not config.live_strategy_lifecycle_enabled:
         return _blocked_order_attempt(
             store,

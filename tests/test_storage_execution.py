@@ -194,6 +194,43 @@ class StorageExecutionTests(unittest.TestCase):
             self.assertEqual(counts["fee_snapshots"], 1)
             self.assertEqual(store.recent_orders()[0]["id"], order_id)
 
+    def test_active_cycle_symbols_combines_scalp_and_strategy_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            store.insert_scalp_cycle(
+                symbol="BTCUSDC",
+                side="long",
+                status="OPEN",
+                quantity=0.25,
+                entry_price=100.0,
+                target_price=100.1,
+                stop_price=99.5,
+                maker_one_way_bps=0.0,
+                taker_one_way_bps=3.6,
+                entry_deadline_ms=60_000,
+            )
+            store.insert_strategy_cycle(
+                strategy="trend_follow",
+                execution_mode="taker_trend",
+                symbol="ETHUSDC",
+                side="long",
+                status="OPEN",
+                quantity=0.01,
+                entry_price=100.0,
+                target_price=101.0,
+                stop_price=99.0,
+                entry_order_type="MARKET",
+                take_profit_bps=100,
+                stop_loss_bps=50,
+                max_hold_seconds=3_600,
+                maker_one_way_bps=0.0,
+                taker_one_way_bps=3.6,
+                entry_deadline_ms=60_000,
+                dry_run=True,
+            )
+
+            self.assertEqual(store.active_cycle_symbols(), {"BTCUSDC", "ETHUSDC"})
+
     def test_post_only_intent_uses_gtx_and_passive_price(self) -> None:
         decision = build_post_only_intent(
             _signal(),
@@ -210,6 +247,43 @@ class StorageExecutionTests(unittest.TestCase):
         decision = build_post_only_intent(_signal(side="flat"), TradingConfig())
         self.assertFalse(decision.allowed)
         self.assertIsNone(decision.intent)
+
+    def test_scalp_entry_skips_when_strategy_cycle_active_for_symbol(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            store.insert_strategy_cycle(
+                strategy="trend_follow",
+                execution_mode="taker_trend",
+                symbol="BTCUSDC",
+                side="long",
+                status="OPEN",
+                quantity=0.25,
+                entry_price=100.0,
+                target_price=101.0,
+                stop_price=99.0,
+                entry_order_type="MARKET",
+                take_profit_bps=100,
+                stop_loss_bps=50,
+                max_hold_seconds=3_600,
+                maker_one_way_bps=0.0,
+                taker_one_way_bps=3.6,
+                entry_deadline_ms=60_000,
+                dry_run=True,
+            )
+            signal = _signal()
+            signal_id = store.insert_signal(signal, timestamp_ms=1)
+            result = start_cycle_from_signal(
+                FakeOrderClient(),
+                store,
+                signal,
+                TradingConfig(runtime_risk_enabled=False),
+                signal_id=signal_id,
+                timestamp_ms=2,
+            )
+
+            self.assertEqual(result.action, "skip")
+            self.assertIn("already active for this symbol", result.detail)
+            self.assertIsNone(store.active_scalp_cycle("BTCUSDC"))
 
     def test_scalp_lifecycle_enters_submits_target_and_closes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

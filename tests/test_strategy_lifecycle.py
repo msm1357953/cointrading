@@ -114,6 +114,85 @@ def _setup(strategy="trend_follow", side="long") -> StrategySetup:
 
 
 class StrategyLifecycleTests(unittest.TestCase):
+    def test_strategy_entry_skips_when_scalp_cycle_active_for_symbol(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            store.insert_scalp_cycle(
+                symbol="ETHUSDC",
+                side="long",
+                status="OPEN",
+                quantity=0.25,
+                entry_price=100.0,
+                target_price=100.1,
+                stop_price=99.5,
+                maker_one_way_bps=0.0,
+                taker_one_way_bps=3.6,
+                entry_deadline_ms=60_000,
+            )
+            client = FakeStrategyClient()
+
+            result = start_strategy_cycle_from_setup(
+                client,
+                store,
+                _setup(),
+                TradingConfig(
+                    strategy_lifecycle_enabled=True,
+                    runtime_risk_enabled=False,
+                ),
+                symbol="ETHUSDC",
+                bid=99.9,
+                ask=100.0,
+                timestamp_ms=1_000,
+            )
+
+            self.assertEqual(result.action, "skip")
+            self.assertIn("already active for this symbol", result.detail)
+            self.assertEqual(client.new_order_intents, [])
+            self.assertIsNone(store.active_strategy_cycle("trend_follow", "ETHUSDC"))
+
+    def test_strategy_entry_skips_when_different_strategy_active_for_symbol(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            store.insert_strategy_cycle(
+                strategy="range_reversion",
+                execution_mode="maker_range",
+                symbol="ETHUSDC",
+                side="short",
+                status="OPEN",
+                quantity=0.25,
+                entry_price=100.0,
+                target_price=99.0,
+                stop_price=101.0,
+                entry_order_type="LIMIT",
+                take_profit_bps=20,
+                stop_loss_bps=25,
+                max_hold_seconds=3_600,
+                maker_one_way_bps=0.0,
+                taker_one_way_bps=3.6,
+                entry_deadline_ms=60_000,
+                dry_run=True,
+            )
+            client = FakeStrategyClient()
+
+            result = start_strategy_cycle_from_setup(
+                client,
+                store,
+                _setup(strategy="trend_follow", side="long"),
+                TradingConfig(
+                    strategy_lifecycle_enabled=True,
+                    runtime_risk_enabled=False,
+                ),
+                symbol="ETHUSDC",
+                bid=99.9,
+                ask=100.0,
+                timestamp_ms=1_000,
+            )
+
+            self.assertEqual(result.action, "skip")
+            self.assertIn("already active for this symbol", result.detail)
+            self.assertEqual(client.new_order_intents, [])
+            self.assertIsNone(store.active_strategy_cycle("trend_follow", "ETHUSDC"))
+
     def test_trend_strategy_paper_cycle_opens_and_closes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")

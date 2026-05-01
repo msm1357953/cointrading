@@ -486,11 +486,11 @@ def strategy_engine_step(symbols: list[str], log_path: Path, db_path: Path) -> N
         )
         lines.append(f"{cycle['strategy']} {cycle['symbol']}: {result.action} - {result.detail}")
 
-    active_symbols = {str(cycle["symbol"]) for cycle in store.active_strategy_cycles()}
+    active_symbols = store.active_cycle_symbols()
     for symbol in symbols:
         symbol = symbol.upper()
         if symbol in active_symbols:
-            lines.append(f"{symbol}: strategy cycle already active")
+            lines.append(f"{symbol}: cycle already active for symbol")
             continue
         if paused:
             lines.append(f"{symbol}: paused - no strategy entry")

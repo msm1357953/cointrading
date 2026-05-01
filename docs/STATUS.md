@@ -60,6 +60,7 @@
 - 2026-05-01: Strategy entry routing was separated from the scalping signal. `thin_book` now blocks only maker-scalping entries; macro trend/range/breakout candidates are reported separately as observe/paper candidates until their own live state machines exist. Telegram `진입 ETHUSDC 25` and CLI `live-preflight` show the same strategy-by-strategy entry check.
 - 2026-05-01: Macro strategy lifecycle state machines were added for `trend_follow`, `range_reversion`, and `breakout_reduced`. They use the shared SQLite/order/fill records, track entry/open/exit states, handle paper and live reconciliation paths, and require `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true` before live strategy orders can be submitted. The VM deploy now installs `cointrading-strategy-engine.timer`, but live remains off by default.
 - 2026-05-01: Telegram strategy notifications were made more decision-oriented. They now say that the report is a signal-log candidate evaluation rather than an order/position report, show live safety flags, group duplicate TP/SL/hold-time variants, and include active macro strategy state machines.
+- 2026-05-01: A global per-symbol lifecycle lock was added. Scalp and macro strategy engines now share the same active-symbol guard, so only one lifecycle can open/manage a given symbol at a time.
 
 ## Next Work Packets
 

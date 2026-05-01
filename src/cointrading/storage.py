@@ -845,6 +845,21 @@ class TradingStore:
                 )
             )
 
+    def active_cycle_symbols(self) -> set[str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT symbol
+                FROM scalp_cycles
+                WHERE status IN ('ENTRY_SUBMITTED', 'OPEN', 'EXIT_SUBMITTED')
+                UNION
+                SELECT symbol
+                FROM strategy_cycles
+                WHERE status IN ('ENTRY_SUBMITTED', 'OPEN', 'EXIT_SUBMITTED')
+                """
+            )
+            return {str(row["symbol"]).upper() for row in rows}
+
     def recent_scalp_cycles(self, limit: int = 10) -> list[sqlite3.Row]:
         with self.connect() as connection:
             return list(
