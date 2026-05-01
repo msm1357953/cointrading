@@ -128,7 +128,7 @@ class StrategyNotifyTests(unittest.TestCase):
         self.assertIn("BTCUSDC 롱 / 상승 정렬 / 지정가 메이커 / 파라미터 2개", text)
         self.assertIn("XRPUSDC 숏 / 하락 정렬 / 지정가 메이커", text)
         self.assertIn("현재 전략 상태머신", text)
-        self.assertIn("레인지 평균회귀 BTCUSDC 롱 OPEN", text)
+        self.assertIn("레인지 평균회귀 BTCUSDC 롱 보유 중", text)
 
 
 if __name__ == "__main__":

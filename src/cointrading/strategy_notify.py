@@ -41,6 +41,23 @@ STRATEGY_LABELS = {
     "breakout_reduced": "축소 돌파",
     "maker_scalp": "메이커 스캘핑",
 }
+STATUS_LABELS = {
+    "ENTRY_SUBMITTED": "진입 대기",
+    "OPEN": "보유 중",
+    "EXIT_SUBMITTED": "청산 대기",
+    "CLOSED": "익절 종료",
+    "STOPPED": "종료",
+}
+REASON_LABELS = {
+    "strategy exit waiting": "목표가/손절/시간제한 청산 대기",
+    "entry waiting": "진입 체결 대기",
+    "not filled yet": "아직 미체결",
+    "entry filled; strategy position open": "진입 체결 후 보유 중",
+    "live strategy position open": "실전 포지션 보유 중",
+    "take_profit": "목표가 도달",
+    "stop_loss": "손절 조건",
+    "max_hold_exit": "최대 보유시간 도달",
+}
 
 
 @dataclass
@@ -300,10 +317,11 @@ def _active_cycle_lines(cycles: list, *, limit: int) -> list[str]:
         pnl = ""
         if cycle["realized_pnl"] is not None:
             pnl = f" 손익={float(cycle['realized_pnl']):.6f}"
+        reason = str(cycle["reason"] or "")
         lines.append(
             f"- {_strategy_label(cycle['strategy'])} {cycle['symbol']} "
-            f"{_side_label(cycle['side'])} {cycle['status']} "
-            f"{cycle['reason'] or ''}{pnl}"
+            f"{_side_label(cycle['side'])} {_status_label(cycle['status'])} "
+            f"{_reason_label(reason)}{pnl}"
         )
     return lines
 
@@ -339,6 +357,14 @@ def _side_label(side: str) -> str:
 
 def _strategy_label(strategy: str) -> str:
     return STRATEGY_LABELS.get(strategy, strategy)
+
+
+def _status_label(status: str) -> str:
+    return STATUS_LABELS.get(status, status)
+
+
+def _reason_label(reason: str) -> str:
+    return REASON_LABELS.get(reason, reason)
 
 
 def _short_reason(reason: str) -> str:
