@@ -41,6 +41,27 @@ jobs:
           set -euo pipefail
           cd "$VM_PROJECT_DIR"
 
+          sudo systemctl stop \
+            cointrading-scalp-collect.timer \
+            cointrading-scalp-score.timer \
+            cointrading-market-regime.timer \
+            cointrading-strategy-evaluate.timer \
+            cointrading-strategy-notify.timer \
+            cointrading-llm-report.timer \
+            cointrading-scalp-engine.timer \
+            cointrading-strategy-engine.timer || true
+          sudo systemctl stop \
+            cointrading-telegram.service \
+            cointrading-dashboard.service \
+            cointrading-scalp-collect.service \
+            cointrading-scalp-score.service \
+            cointrading-market-regime.service \
+            cointrading-strategy-evaluate.service \
+            cointrading-strategy-notify.service \
+            cointrading-llm-report.service \
+            cointrading-scalp-engine.service \
+            cointrading-strategy-engine.service || true
+
           runtime_backup="$(mktemp -d)"
           if [ -f .env ]; then
             cp .env "$runtime_backup/.env"
