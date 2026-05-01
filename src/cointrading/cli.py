@@ -23,6 +23,7 @@ from cointrading.llm_report import (
     fallback_report_text,
     llm_report_due,
 )
+from cointrading.market_context import collect_market_context, market_context_rows_text
 from cointrading.market_regime import evaluate_market_regime
 from cointrading.models import Kline
 from cointrading.risk_state import evaluate_runtime_risk
@@ -46,6 +47,11 @@ from cointrading.strategy_notify import (
     strategy_notification_text,
 )
 from cointrading.strategy_router import evaluate_strategy_setups, strategy_setups_text
+from cointrading.symbol_supervisor import (
+    refresh_supervisor_inputs,
+    supervise_symbols,
+    supervisor_report_text,
+)
 from cointrading.strategies import MovingAverageCrossStrategy
 from cointrading.telegram_bot import (
     TelegramBotState,
@@ -149,6 +155,15 @@ def main(argv: list[str] | None = None) -> None:
     market_regime_collect_parser.add_argument("--symbols", nargs="+")
     market_regime_collect_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
+    market_context_parser = subparsers.add_parser("market-context")
+    market_context_parser.add_argument("--symbols", nargs="+")
+    market_context_parser.add_argument("--db-path", type=Path, default=default_db_path())
+    market_context_parser.add_argument("--store", action="store_true")
+
+    market_context_collect_parser = subparsers.add_parser("market-context-collect")
+    market_context_collect_parser.add_argument("--symbols", nargs="+")
+    market_context_collect_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
     llm_report_parser = subparsers.add_parser("llm-report")
     llm_report_parser.add_argument("--db-path", type=Path, default=default_db_path())
     llm_report_parser.add_argument("--state-path", type=Path, default=default_llm_report_state_path())
@@ -170,6 +185,11 @@ def main(argv: list[str] | None = None) -> None:
     live_preflight_parser.add_argument("--symbols", nargs="+")
     live_preflight_parser.add_argument("--notional", type=float, default=10.0)
     live_preflight_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
+    live_supervisor_parser = subparsers.add_parser("live-supervisor")
+    live_supervisor_parser.add_argument("--symbols", nargs="+")
+    live_supervisor_parser.add_argument("--notional", type=float, default=25.0)
+    live_supervisor_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
     subparsers.add_parser("telegram-me")
 
@@ -236,6 +256,10 @@ def main(argv: list[str] | None = None) -> None:
         market_regime(_active_scalp_symbols(args.symbols), args.db_path, args.store)
     elif args.command == "market-regime-collect":
         market_regime(_active_scalp_symbols(args.symbols), args.db_path, True)
+    elif args.command == "market-context":
+        market_context(_active_scalp_symbols(args.symbols), args.db_path, args.store)
+    elif args.command == "market-context-collect":
+        market_context(_active_scalp_symbols(args.symbols), args.db_path, True)
     elif args.command == "llm-report":
         llm_report(
             args.db_path,
@@ -251,6 +275,8 @@ def main(argv: list[str] | None = None) -> None:
         fee_status(args.symbols, args.db_path)
     elif args.command == "live-preflight":
         live_preflight(_active_scalp_symbols(args.symbols), args.notional, args.db_path)
+    elif args.command == "live-supervisor":
+        live_supervisor(_active_scalp_symbols(args.symbols), args.notional, args.db_path)
     elif args.command == "telegram-me":
         telegram_me()
     elif args.command == "telegram-send":
@@ -613,6 +639,49 @@ def market_regime(symbols: list[str], db_path: Path, store_rows: bool) -> None:
         print("No market regime snapshots collected.")
     if store_rows:
         print(f"\nstored {len(snapshots)} market regime row(s) into {db_path}")
+
+
+def market_context(symbols: list[str], db_path: Path, store_rows: bool) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    store = TradingStore(db_path)
+    snapshots = []
+    for symbol in symbols:
+        try:
+            snapshot = collect_market_context(client, symbol.upper())
+        except BinanceAPIError as exc:
+            print(f"{symbol.upper()}: market context fetch failed - {exc}")
+            continue
+        snapshots.append(snapshot)
+        if store_rows:
+            store.insert_market_context(snapshot)
+    if snapshots:
+        print("\n\n".join(snapshot.to_text() for snapshot in snapshots))
+    else:
+        rows = store.latest_market_contexts(symbols=symbols)
+        print(market_context_rows_text(rows))
+    if store_rows:
+        print(f"\nstored {len(snapshots)} market context row(s) into {db_path}")
+
+
+def live_supervisor(symbols: list[str], notional: float, db_path: Path) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    store = TradingStore(db_path)
+    warnings = refresh_supervisor_inputs(client, store, symbols)
+    reports = supervise_symbols(
+        client,
+        store,
+        config,
+        symbols,
+        notional=notional,
+    )
+    if warnings:
+        print("수집 경고")
+        for warning in warnings:
+            print(f"- {warning}")
+        print("")
+    print(supervisor_report_text(reports))
 
 
 def llm_report(

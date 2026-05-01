@@ -50,9 +50,11 @@ Copy the printed `chat_id` into `.env`.
 - `가격 BTCUSDC`: 최근 가격을 보여줍니다.
 - `장세`: 큰 장상태와 현재 허용 전략 세트를 보여줍니다.
 - `장세 BTCUSDC`: 특정 심볼의 큰 장상태와 허용 전략 세트를 보여줍니다.
+- `시장상황`: 펀딩, 프리미엄, 미결제약정, 호가 유동성을 새로 수집해 보여줍니다.
 - `스캘핑 BTCUSDC`: 실시간 dry-run 스캘핑 신호, 장 상태, 진입 허용 여부를 보여줍니다.
 - `장상태 BTCUSDC`: `장세 BTCUSDC`와 같습니다.
 - `진입 ETHUSDC 25`: 해당 심볼/규모에 대해 스캘핑, 추세, 레인지, 돌파 후보를 분리해서 점검합니다. 이 명령은 주문을 넣지 않습니다.
+- `실전 ETHUSDC 25`: 시장상황과 장세를 새로 수집한 뒤 실전 가능/불가 최종 감독 판정을 보여줍니다. 이 명령도 주문을 넣지 않습니다.
 - `보고`: 전체 스캘핑 dry-run 채점 결과와 장 상태별 성과를 보여줍니다.
 - `보고 BTCUSDC`: 특정 심볼의 스캘핑 dry-run 채점 결과와 장 상태별 성과를 보여줍니다.
 - `보고 전체`: 예전 USDT 로그까지 포함한 전체 결과를 보여줍니다.
@@ -66,7 +68,7 @@ Slash commands such as `/status`, `/account`, `/scalp BTCUSDC`, and `/scalp_repo
 
 Strategy notification messages are candidate evaluations, not trade confirmations. They group duplicated TP/SL/hold-time parameter variants so `APPROVED` counts do not look like separate live orders.
 
-No command places live orders. Future live-trading commands should require explicit two-step confirmation and should stay blocked while `COINTRADING_DRY_RUN=true`. Macro strategy live orders also require `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true`.
+No Telegram command places live orders. Future live-trading commands should require explicit two-step confirmation and should stay blocked while `COINTRADING_DRY_RUN=true`. Macro strategy live orders also require `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true`. Live entries additionally require the one-shot guard unless `COINTRADING_LIVE_ONE_SHOT_REQUIRED=false`.
 
 ## Run Once
 

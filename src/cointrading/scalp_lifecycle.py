@@ -6,8 +6,9 @@ import sqlite3
 import time
 
 from cointrading.config import TradingConfig
-from cointrading.execution import place_post_only_maker
+from cointrading.execution import build_post_only_intent, place_post_only_maker
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
+from cointrading.live_guard import consume_live_one_shot, validate_live_one_shot
 from cointrading.market_regime import scalp_allowed_by_macro
 from cointrading.models import OrderIntent
 from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
@@ -102,6 +103,26 @@ def start_cycle_from_signal(
         )
         return ScalpLifecycleResult(signal.symbol, "blocked", gate.reason, order_id)
 
+    decision = build_post_only_intent(signal, config)
+    if decision.intent is not None and not config.dry_run:
+        price = decision.intent.price or signal.mid_price
+        guard = validate_live_one_shot(
+            config,
+            symbol=signal.symbol,
+            strategy="maker_scalp",
+            notional=abs(decision.intent.quantity) * price,
+        )
+        if not guard.allowed:
+            order_id = _insert_blocked_attempt(
+                store,
+                signal,
+                signal_id,
+                ts,
+                guard.reason,
+                dry_run=False,
+            )
+            return ScalpLifecycleResult(signal.symbol, "blocked", guard.reason, order_id)
+
     result = place_post_only_maker(client, store, signal, config, signal_id=signal_id)
     intent = result.decision.intent
     if not result.decision.allowed or intent is None or result.order_id is None:
@@ -138,6 +159,13 @@ def start_cycle_from_signal(
         strategy_max_hold_seconds=max_hold_seconds,
         timestamp_ms=ts,
     )
+    if not config.dry_run:
+        consume_live_one_shot(
+            symbol=signal.symbol,
+            strategy="maker_scalp",
+            notional=abs(intent.quantity) * intent.price,
+            cycle_id=cycle_id,
+        )
     return ScalpLifecycleResult(
         signal.symbol,
         "entry_submitted",

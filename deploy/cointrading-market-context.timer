@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Cointrading market context collection every minute
+
+[Timer]
+OnBootSec=60s
+OnUnitInactiveSec=60s
+AccuracySec=10s
+Unit=cointrading-market-context.service
+
+[Install]
+WantedBy=timers.target

@@ -61,6 +61,7 @@
 - 2026-05-01: Macro strategy lifecycle state machines were added for `trend_follow`, `range_reversion`, and `breakout_reduced`. They use the shared SQLite/order/fill records, track entry/open/exit states, handle paper and live reconciliation paths, and require `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true` before live strategy orders can be submitted. The VM deploy now installs `cointrading-strategy-engine.timer`, but live remains off by default.
 - 2026-05-01: Telegram strategy notifications were made more decision-oriented. They now say that the report is a signal-log candidate evaluation rather than an order/position report, show live safety flags, group duplicate TP/SL/hold-time variants, and include active macro strategy state machines.
 - 2026-05-01: A global per-symbol lifecycle lock was added. Scalp and macro strategy engines now share the same active-symbol guard, so only one lifecycle can open/manage a given symbol at a time.
+- 2026-05-01: Market-context collection and live supervision were added. The VM now stores mark/index premium, funding, open interest, spread, top-book/depth liquidity, and imbalance; `live-supervisor`/Telegram `실전` combines fresh market context, macro regime, strategy candidates, paper lifecycle performance, active locks, real Binance orders/positions, min-notional checks, runtime risk, live flags, and one-shot guards into a final go/no-go report.
 
 ## Next Work Packets
 

@@ -6,6 +6,7 @@ import sqlite3
 from cointrading.config import TradingConfig
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.exchange_filters import SymbolFilters
+from cointrading.live_guard import consume_live_one_shot, validate_live_one_shot
 from cointrading.models import OrderIntent, OrderSide
 from cointrading.risk import RiskManager
 from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
@@ -126,6 +127,15 @@ def start_strategy_cycle_from_setup(
     normalized_intent, filter_reason = _normalize_intent(client, intent, config)
     if normalized_intent is None:
         return _blocked_order_attempt(store, setup, symbol, filter_reason, config, ts)
+    if not config.dry_run:
+        guard = validate_live_one_shot(
+            config,
+            symbol=symbol,
+            strategy=setup.strategy,
+            notional=abs(normalized_intent.quantity) * mid,
+        )
+        if not guard.allowed:
+            return _blocked_order_attempt(store, setup, symbol, guard.reason, config, ts)
 
     try:
         response = client.new_order(normalized_intent)
@@ -174,6 +184,13 @@ def start_strategy_cycle_from_setup(
         setup=asdict(setup),
         timestamp_ms=ts,
     )
+    if not config.dry_run:
+        consume_live_one_shot(
+            symbol=symbol,
+            strategy=setup.strategy,
+            notional=abs(normalized_intent.quantity) * entry_price,
+            cycle_id=cycle_id,
+        )
     return StrategyLifecycleResult(
         setup.strategy,
         symbol,

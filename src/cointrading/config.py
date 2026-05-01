@@ -140,6 +140,16 @@ class TradingConfig:
     runtime_risk_btc_atr_defensive_bps: float = 180.0
     live_scalp_lifecycle_enabled: bool = False
     live_strategy_lifecycle_enabled: bool = False
+    live_one_shot_required: bool = True
+    live_one_shot_enabled: bool = False
+    live_one_shot_symbol: str = ""
+    live_one_shot_strategy: str = ""
+    live_one_shot_notional: float = 25.0
+    supervisor_min_samples: int = 100
+    supervisor_min_avg_pnl_bps: float = 0.5
+    supervisor_min_cycle_count: int = 3
+    supervisor_min_cycle_sum_pnl: float = 0.0
+    supervisor_data_max_age_minutes: int = 10
     llm_enabled: bool = True
     llm_provider: str = "gemini"
     llm_model: str = "gemini-3.1-pro-preview"
@@ -358,6 +368,46 @@ class TradingConfig:
             live_strategy_lifecycle_enabled=_get_bool(
                 "COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED",
                 cls.live_strategy_lifecycle_enabled,
+            ),
+            live_one_shot_required=_get_bool(
+                "COINTRADING_LIVE_ONE_SHOT_REQUIRED",
+                cls.live_one_shot_required,
+            ),
+            live_one_shot_enabled=_get_bool(
+                "COINTRADING_LIVE_ONE_SHOT_ENABLED",
+                cls.live_one_shot_enabled,
+            ),
+            live_one_shot_symbol=_get_str(
+                "COINTRADING_LIVE_ONE_SHOT_SYMBOL",
+                cls.live_one_shot_symbol,
+            ).upper(),
+            live_one_shot_strategy=_get_str(
+                "COINTRADING_LIVE_ONE_SHOT_STRATEGY",
+                cls.live_one_shot_strategy,
+            ),
+            live_one_shot_notional=_get_float(
+                "COINTRADING_LIVE_ONE_SHOT_NOTIONAL",
+                cls.live_one_shot_notional,
+            ),
+            supervisor_min_samples=_get_int(
+                "COINTRADING_SUPERVISOR_MIN_SAMPLES",
+                cls.supervisor_min_samples,
+            ),
+            supervisor_min_avg_pnl_bps=_get_float(
+                "COINTRADING_SUPERVISOR_MIN_AVG_PNL_BPS",
+                cls.supervisor_min_avg_pnl_bps,
+            ),
+            supervisor_min_cycle_count=_get_int(
+                "COINTRADING_SUPERVISOR_MIN_CYCLE_COUNT",
+                cls.supervisor_min_cycle_count,
+            ),
+            supervisor_min_cycle_sum_pnl=_get_float(
+                "COINTRADING_SUPERVISOR_MIN_CYCLE_SUM_PNL",
+                cls.supervisor_min_cycle_sum_pnl,
+            ),
+            supervisor_data_max_age_minutes=_get_int(
+                "COINTRADING_SUPERVISOR_DATA_MAX_AGE_MINUTES",
+                cls.supervisor_data_max_age_minutes,
             ),
             llm_enabled=_get_bool("COINTRADING_LLM_ENABLED", cls.llm_enabled),
             llm_provider=_get_str("COINTRADING_LLM_PROVIDER", cls.llm_provider),

@@ -1,0 +1,11 @@
+[Unit]
+Description=Cointrading market context collection
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=msm1357953_gmail_com
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+EnvironmentFile=/home/msm1357953_gmail_com/cointrading/.env
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli market-context-collect

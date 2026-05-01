@@ -277,6 +277,32 @@ class TradingStore:
                 CREATE INDEX IF NOT EXISTS idx_market_regimes_symbol_time
                     ON market_regimes(symbol, timestamp_ms);
 
+                CREATE TABLE IF NOT EXISTS market_contexts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp_ms INTEGER NOT NULL,
+                    iso_time TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    mark_price REAL NOT NULL,
+                    index_price REAL NOT NULL,
+                    premium_bps REAL NOT NULL,
+                    funding_rate REAL,
+                    next_funding_ms INTEGER,
+                    open_interest REAL,
+                    bid_price REAL NOT NULL,
+                    ask_price REAL NOT NULL,
+                    spread_bps REAL NOT NULL,
+                    top_bid_notional REAL NOT NULL,
+                    top_ask_notional REAL NOT NULL,
+                    depth_bid_notional REAL NOT NULL,
+                    depth_ask_notional REAL NOT NULL,
+                    depth_imbalance REAL NOT NULL,
+                    raw_json TEXT,
+                    UNIQUE(timestamp_ms, symbol)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_market_contexts_symbol_time
+                    ON market_contexts(symbol, timestamp_ms);
+
                 CREATE TABLE IF NOT EXISTS strategy_evaluations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     evaluated_ms INTEGER NOT NULL,
@@ -638,6 +664,96 @@ class TradingStore:
                 (int(snapshot.timestamp_ms), snapshot.symbol.upper()),
             ).fetchone()
             return int(row["id"])
+
+    def insert_market_context(self, snapshot) -> int:
+        payload = {
+            "timestamp_ms": int(snapshot.timestamp_ms),
+            "iso_time": iso_from_ms(int(snapshot.timestamp_ms)),
+            "symbol": snapshot.symbol.upper(),
+            "mark_price": float(snapshot.mark_price),
+            "index_price": float(snapshot.index_price),
+            "premium_bps": float(snapshot.premium_bps),
+            "funding_rate": snapshot.funding_rate,
+            "next_funding_ms": snapshot.next_funding_ms,
+            "open_interest": snapshot.open_interest,
+            "bid_price": float(snapshot.bid_price),
+            "ask_price": float(snapshot.ask_price),
+            "spread_bps": float(snapshot.spread_bps),
+            "top_bid_notional": float(snapshot.top_bid_notional),
+            "top_ask_notional": float(snapshot.top_ask_notional),
+            "depth_bid_notional": float(snapshot.depth_bid_notional),
+            "depth_ask_notional": float(snapshot.depth_ask_notional),
+            "depth_imbalance": float(snapshot.depth_imbalance),
+            "raw_json": json.dumps(snapshot.raw, sort_keys=True),
+        }
+        columns = list(payload)
+        placeholders = ", ".join("?" for _ in columns)
+        updates = ", ".join(
+            f"{column}=excluded.{column}"
+            for column in columns
+            if column not in {"timestamp_ms", "symbol"}
+        )
+        sql = (
+            f"INSERT INTO market_contexts ({', '.join(columns)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(timestamp_ms, symbol) DO UPDATE SET {updates}"
+        )
+        with self.connect() as connection:
+            cursor = connection.execute(sql, [payload[column] for column in columns])
+            if cursor.lastrowid:
+                return int(cursor.lastrowid)
+            row = connection.execute(
+                "SELECT id FROM market_contexts WHERE timestamp_ms=? AND symbol=?",
+                (payload["timestamp_ms"], payload["symbol"]),
+            ).fetchone()
+            return int(row["id"])
+
+    def latest_market_context(self, symbol: str) -> sqlite3.Row | None:
+        with self.connect() as connection:
+            return connection.execute(
+                """
+                SELECT *
+                FROM market_contexts
+                WHERE symbol=?
+                ORDER BY timestamp_ms DESC
+                LIMIT 1
+                """,
+                (symbol.upper(),),
+            ).fetchone()
+
+    def latest_market_contexts(
+        self,
+        *,
+        symbols: Iterable[str] | None = None,
+        limit: int = 20,
+    ) -> list[sqlite3.Row]:
+        params: list[Any] = []
+        symbol_sql = ""
+        if symbols:
+            symbol_values = [symbol.upper() for symbol in symbols]
+            placeholders = ", ".join("?" for _ in symbol_values)
+            symbol_sql = f"WHERE c.symbol IN ({placeholders})"
+            params.extend(symbol_values)
+        params.append(limit)
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    f"""
+                    SELECT c.*
+                    FROM market_contexts c
+                    JOIN (
+                        SELECT symbol, MAX(timestamp_ms) AS timestamp_ms
+                        FROM market_contexts
+                        GROUP BY symbol
+                    ) latest
+                      ON latest.symbol=c.symbol
+                     AND latest.timestamp_ms=c.timestamp_ms
+                    {symbol_sql}
+                    ORDER BY c.symbol ASC
+                    LIMIT ?
+                    """,
+                    params,
+                )
+            )
 
     def latest_market_regime(self, symbol: str) -> sqlite3.Row | None:
         with self.connect() as connection:
@@ -1299,6 +1415,9 @@ class TradingStore:
                 ),
                 "market_regimes": int(
                     connection.execute("SELECT COUNT(*) FROM market_regimes").fetchone()[0]
+                ),
+                "market_contexts": int(
+                    connection.execute("SELECT COUNT(*) FROM market_contexts").fetchone()[0]
                 ),
             }
 

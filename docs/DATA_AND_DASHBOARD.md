@@ -11,6 +11,7 @@ Tables:
 - `fills`: execution fills and realized fee/PnL records. This table is ready for exchange fill ingestion.
 - `fee_snapshots`: maker/taker fee snapshots by symbol.
 - `market_regimes`: 15m/1h macro regime snapshots and strategy-router decisions.
+- `market_contexts`: mark/index premium, funding, open interest, spread, top-book liquidity, order-book depth, and depth imbalance snapshots.
 - `scalp_cycles`: post-only scalp lifecycle state, including entry waiting, take-profit waiting, reprice, stop, timeout, and realized paper PnL.
 - `strategy_cycles`: trend, range, and breakout lifecycle state, including entry/open/exit status, TP/SL/max-hold, live order IDs, fills, and realized PnL.
 - `strategy_evaluations`: latest strategy candidate evaluations by source, execution mode, symbol, regime, side, TP/SL, max hold, sample count, win rate, expectancy, and approval decision.
@@ -27,10 +28,13 @@ python -m cointrading.cli maker-once --symbol BTCUSDC
 python -m cointrading.cli scalp-engine-step
 python -m cointrading.cli market-regime
 python -m cointrading.cli market-regime-collect
+python -m cointrading.cli market-context
+python -m cointrading.cli market-context-collect
 python -m cointrading.cli strategy-evaluate
 python -m cointrading.cli strategy-notify
 python -m cointrading.cli strategy-engine-step
 python -m cointrading.cli live-preflight --notional 25 --symbols ETHUSDC
+python -m cointrading.cli live-supervisor --notional 25 --symbols ETHUSDC
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 ```
 
@@ -59,6 +63,8 @@ The VM runs this as `cointrading-scalp-engine.timer` every 15 seconds. Live orde
 
 The VM runs this as `cointrading-market-regime.timer` every 5 minutes. When `COINTRADING_MACRO_REGIME_GATE_ENABLED=true`, new scalping cycles are blocked if the latest macro regime routes away from that direction. Missing or stale macro data is not treated as a hard block, so data collection can continue after restarts.
 
+`market-context-collect` runs every minute on the VM and records funding, premium, open interest, spread, top-book liquidity, order-book depth, and imbalance. `live-supervisor` refreshes both market context and macro regime before producing a final go/no-go report.
+
 `live-preflight` now prints a strategy-by-strategy entry check. `thin_book` is treated as a maker-scalping block only, not as a blanket ban for every possible strategy. Macro trend, range, and breakout candidates are shown as observe/paper candidates until their own live state machines exist.
 
 ## Macro Strategy Lifecycle
@@ -74,8 +80,11 @@ The live path is guarded independently from scalping. It requires all of:
 - `COINTRADING_DRY_RUN=false`
 - `COINTRADING_LIVE_TRADING_ENABLED=true`
 - `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true`
+- `COINTRADING_LIVE_ONE_SHOT_ENABLED=true` while `COINTRADING_LIVE_ONE_SHOT_REQUIRED=true`
 
 With default settings it runs in dry-run/paper mode only. The VM runs this as `cointrading-strategy-engine.timer` every minute.
+
+The one-shot guard is consumed after the first live lifecycle starts. This prevents a temporary live enable from accidentally becoming continuous trading.
 
 ## Strategy Gate
 

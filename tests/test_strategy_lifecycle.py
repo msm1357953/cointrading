@@ -279,6 +279,7 @@ class StrategyLifecycleTests(unittest.TestCase):
                 dry_run=False,
                 live_trading_enabled=True,
                 live_strategy_lifecycle_enabled=True,
+                live_one_shot_required=False,
                 runtime_risk_enabled=False,
                 strategy_order_notional=25,
                 max_single_order_notional=25,

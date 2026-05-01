@@ -14,6 +14,7 @@ from cointrading.account import account_summary_text
 from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.exchange_filters import SymbolFilters
+from cointrading.market_context import collect_market_context, market_context_rows_text
 from cointrading.market_regime import evaluate_market_regime, market_regime_rows_text
 from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
 from cointrading.scalping import (
@@ -24,6 +25,11 @@ from cointrading.scalping import (
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms
 from cointrading.strategy_notify import strategy_notification_text
 from cointrading.strategy_router import evaluate_strategy_setups, strategy_setups_text
+from cointrading.symbol_supervisor import (
+    refresh_supervisor_inputs,
+    supervise_symbols,
+    supervisor_report_text,
+)
 
 
 DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC"]
@@ -162,6 +168,9 @@ class TelegramCommandProcessor:
         "라우터": "market",
         "macro": "market",
         "market": "market",
+        "시장상황": "market_context",
+        "컨텍스트": "market_context",
+        "market_context": "market_context",
         "스캘핑": "scalp",
         "스캘프": "scalp",
         "신호": "scalp",
@@ -185,6 +194,10 @@ class TelegramCommandProcessor:
         "프리플라이트": "entry_check",
         "preflight": "entry_check",
         "entry": "entry_check",
+        "실전": "live_supervisor",
+        "실전점검": "live_supervisor",
+        "감독": "live_supervisor",
+        "supervisor": "live_supervisor",
         "주문": "orders",
         "주문기록": "orders",
         "orders": "orders",
@@ -244,6 +257,8 @@ class TelegramCommandProcessor:
             return self.price_text(args)
         if command == "market":
             return self.market_text(args)
+        if command == "market_context":
+            return self.market_context_text(args)
         if command == "scalp":
             return self.scalp_text(args)
         if command == "scalp_report":
@@ -252,6 +267,8 @@ class TelegramCommandProcessor:
             return self.strategy_text()
         if command == "entry_check":
             return self.entry_check_text(args)
+        if command == "live_supervisor":
+            return self.live_supervisor_text(args)
         if command == "orders":
             return self.orders_text()
         if command == "cycles":
@@ -277,12 +294,14 @@ class TelegramCommandProcessor:
                 "수수료 - BNB 할인과 현재 수수료 확인",
                 "가격 BTCUSDC - 현재 가격 확인",
                 "장세 - 큰 장상태와 허용 전략 확인",
+                "시장상황 - 펀딩, 프리미엄, 미결제약정, 호가 유동성 확인",
                 "스캘핑 BTCUSDC - 현재 스캘핑 신호와 장 상태 확인",
                 "보고 - 스캘핑 dry-run 결과와 장 상태별 성과 요약",
                 "보고 BTCUSDC - BTCUSDC만 결과 요약",
                 "보고 전체 - 예전 USDT 로그까지 포함",
                 "전략 - 신호 로그 기반 후보평가, live 잠금, 전략 상태머신 요약",
                 "진입 ETHUSDC 25 - 전략별 진입 점검. 주문은 넣지 않음",
+                "실전 ETHUSDC 25 - 실전 가능/불가 최종 감독 판정",
                 "주문 - 최근 dry-run 주문/차단 기록",
                 "포지션 - 스캘핑 상태머신 기록",
                 "정지 - 자동매매 신규 진입 정지",
@@ -390,6 +409,24 @@ class TelegramCommandProcessor:
         return market_regime_rows_text(
             store.current_market_regimes(symbols=self.trading_config.scalp_symbols)
         )
+
+    def market_context_text(self, args: list[str]) -> str:
+        store = TradingStore(default_db_path())
+        symbols = [item.upper() for item in args] if args else list(self.trading_config.scalp_symbols)
+        for symbol in symbols:
+            if not self.SYMBOL_PATTERN.match(symbol):
+                return "심볼 형식이 이상합니다. 예: BTCUSDC"
+        snapshots = []
+        for symbol in symbols:
+            try:
+                snapshot = collect_market_context(self.exchange_client, symbol)
+            except BinanceAPIError:
+                continue
+            store.insert_market_context(snapshot)
+            snapshots.append(snapshot)
+        if snapshots:
+            return "\n\n".join(snapshot.to_text() for snapshot in snapshots)
+        return market_context_rows_text(store.latest_market_contexts(symbols=symbols))
 
     def account_text(self) -> str:
         return account_summary_text(self.exchange_client.account_info())
@@ -537,6 +574,25 @@ class TelegramCommandProcessor:
         )
         lines.append("주의: 이 명령은 점검만 하고 live 주문은 넣지 않습니다.")
         return "\n".join(lines)
+
+    def live_supervisor_text(self, args: list[str]) -> str:
+        symbol, notional = self._entry_check_args(args)
+        symbols = [symbol] if args else list(self.trading_config.scalp_symbols)
+        if symbol and not self.SYMBOL_PATTERN.match(symbol):
+            return "심볼 형식이 이상합니다. 예: ETHUSDC"
+        store = TradingStore(default_db_path())
+        warnings = refresh_supervisor_inputs(self.exchange_client, store, symbols)
+        reports = supervise_symbols(
+            self.exchange_client,
+            store,
+            self.trading_config,
+            symbols,
+            notional=notional,
+        )
+        text = supervisor_report_text(reports)
+        if not warnings:
+            return text
+        return "\n".join(["수집 경고", *[f"- {warning}" for warning in warnings], "", text])
 
     def cycles_text(self) -> str:
         store = TradingStore(default_db_path())

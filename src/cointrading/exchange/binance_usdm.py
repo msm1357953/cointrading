@@ -53,6 +53,12 @@ class BinanceUSDMClient:
     def book_ticker(self, symbol: str) -> dict[str, Any]:
         return self._request("GET", "/fapi/v1/ticker/bookTicker", {"symbol": symbol})
 
+    def mark_price(self, symbol: str) -> dict[str, Any]:
+        return self._request("GET", "/fapi/v1/premiumIndex", {"symbol": symbol})
+
+    def open_interest(self, symbol: str) -> dict[str, Any]:
+        return self._request("GET", "/fapi/v1/openInterest", {"symbol": symbol})
+
     def funding_rate(self, symbol: str, limit: int = 1) -> list[dict[str, Any]]:
         return self._request("GET", "/fapi/v1/fundingRate", {"symbol": symbol, "limit": limit})
 
