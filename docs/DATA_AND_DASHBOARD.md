@@ -12,6 +12,7 @@ Tables:
 - `fee_snapshots`: maker/taker fee snapshots by symbol.
 - `market_regimes`: 15m/1h macro regime snapshots and strategy-router decisions.
 - `scalp_cycles`: post-only scalp lifecycle state, including entry waiting, take-profit waiting, reprice, stop, timeout, and realized paper PnL.
+- `strategy_cycles`: trend, range, and breakout lifecycle state, including entry/open/exit status, TP/SL/max-hold, live order IDs, fills, and realized PnL.
 - `strategy_evaluations`: latest strategy candidate evaluations by source, execution mode, symbol, regime, side, TP/SL, max hold, sample count, win rate, expectancy, and approval decision.
 
 CSV files remain gitignored and are now treated as compatibility logs. Use `migrate-csv-to-db` to import old rows.
@@ -28,6 +29,7 @@ python -m cointrading.cli market-regime
 python -m cointrading.cli market-regime-collect
 python -m cointrading.cli strategy-evaluate
 python -m cointrading.cli strategy-notify
+python -m cointrading.cli strategy-engine-step
 python -m cointrading.cli live-preflight --notional 25 --symbols ETHUSDC
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 ```
@@ -59,6 +61,22 @@ The VM runs this as `cointrading-market-regime.timer` every 5 minutes. When `COI
 
 `live-preflight` now prints a strategy-by-strategy entry check. `thin_book` is treated as a maker-scalping block only, not as a blanket ban for every possible strategy. Macro trend, range, and breakout candidates are shown as observe/paper candidates until their own live state machines exist.
 
+## Macro Strategy Lifecycle
+
+`strategy-engine-step` manages non-scalping strategy cycles:
+
+- `trend_follow`: market entry, TP/SL/max-hold exit management.
+- `range_reversion`: post-only range-edge entry, TP/SL/max-hold exit management.
+- `breakout_reduced`: reduced-size market entry, TP/SL/max-hold exit management.
+
+The live path is guarded independently from scalping. It requires all of:
+
+- `COINTRADING_DRY_RUN=false`
+- `COINTRADING_LIVE_TRADING_ENABLED=true`
+- `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true`
+
+With default settings it runs in dry-run/paper mode only. The VM runs this as `cointrading-strategy-engine.timer` every minute.
+
 ## Strategy Gate
 
 `strategy-evaluate` writes two evaluation sources into SQLite:
@@ -76,7 +94,7 @@ Approval is based on positive net expectancy after fees/slippage, a minimum samp
 
 ## Dashboard
 
-The dashboard is a small HTTP server with tabs for summary, performance, macro regime routing, strategy candidates, lifecycle state, signals, and orders. It uses a server-sent events stream to update the data in place without reloading the whole page.
+The dashboard is a small HTTP server with tabs for summary, performance, macro regime routing, strategy candidates, scalp lifecycle state, macro strategy lifecycle state, signals, and orders. It uses a server-sent events stream to update the data in place without reloading the whole page.
 Signal, strategy, lifecycle, and order tables show the latest 200 rows by default. Add `&limit=500` to the dashboard URL to inspect a longer window; the dashboard caps this at 1000 rows to keep mobile loading reasonable.
 
 Set `COINTRADING_DASHBOARD_AUTH_TOKEN` before exposing it outside the VM.

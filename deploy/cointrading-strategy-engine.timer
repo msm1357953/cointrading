@@ -1,0 +1,11 @@
+[Unit]
+Description=Run macro strategy lifecycle every minute
+
+[Timer]
+OnBootSec=75
+OnUnitInactiveSec=60
+AccuracySec=5
+Unit=cointrading-strategy-engine.service
+
+[Install]
+WantedBy=timers.target

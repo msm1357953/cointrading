@@ -212,6 +212,47 @@ class TradingStore:
                 CREATE INDEX IF NOT EXISTS idx_scalp_cycles_symbol_status
                     ON scalp_cycles(symbol, status, updated_ms);
 
+                CREATE TABLE IF NOT EXISTS strategy_cycles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_ms INTEGER NOT NULL,
+                    created_iso TEXT NOT NULL,
+                    updated_ms INTEGER NOT NULL,
+                    updated_iso TEXT NOT NULL,
+                    strategy TEXT NOT NULL,
+                    execution_mode TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    reason TEXT,
+                    entry_order_id INTEGER,
+                    exit_order_id INTEGER,
+                    quantity REAL NOT NULL,
+                    entry_price REAL NOT NULL,
+                    target_price REAL NOT NULL,
+                    stop_price REAL NOT NULL,
+                    entry_order_type TEXT NOT NULL,
+                    take_profit_bps REAL NOT NULL,
+                    stop_loss_bps REAL NOT NULL,
+                    max_hold_seconds INTEGER NOT NULL,
+                    maker_one_way_bps REAL NOT NULL,
+                    taker_one_way_bps REAL NOT NULL,
+                    entry_deadline_ms INTEGER NOT NULL,
+                    exit_deadline_ms INTEGER,
+                    max_hold_deadline_ms INTEGER,
+                    opened_ms INTEGER,
+                    closed_ms INTEGER,
+                    last_mid_price REAL,
+                    realized_pnl REAL,
+                    reprice_count INTEGER NOT NULL DEFAULT 0,
+                    dry_run INTEGER NOT NULL,
+                    setup_json TEXT,
+                    FOREIGN KEY(entry_order_id) REFERENCES orders(id),
+                    FOREIGN KEY(exit_order_id) REFERENCES orders(id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_strategy_cycles_symbol_status
+                    ON strategy_cycles(strategy, symbol, status, updated_ms);
+
                 CREATE TABLE IF NOT EXISTS market_regimes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp_ms INTEGER NOT NULL,
@@ -273,6 +314,7 @@ class TradingStore:
             _ensure_column(connection, "scalp_cycles", "strategy_take_profit_bps", "REAL")
             _ensure_column(connection, "scalp_cycles", "strategy_stop_loss_bps", "REAL")
             _ensure_column(connection, "scalp_cycles", "strategy_max_hold_seconds", "INTEGER")
+            _ensure_column(connection, "strategy_cycles", "setup_json", "TEXT")
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_strategy_evaluations_latest_mode
@@ -841,6 +883,189 @@ class TradingStore:
                 )
             )
 
+    def insert_strategy_cycle(
+        self,
+        *,
+        strategy: str,
+        execution_mode: str,
+        symbol: str,
+        side: str,
+        status: str,
+        quantity: float,
+        entry_price: float,
+        target_price: float,
+        stop_price: float,
+        entry_order_type: str,
+        take_profit_bps: float,
+        stop_loss_bps: float,
+        max_hold_seconds: int,
+        maker_one_way_bps: float,
+        taker_one_way_bps: float,
+        entry_deadline_ms: int,
+        dry_run: bool,
+        reason: str = "",
+        entry_order_id: int | None = None,
+        exit_order_id: int | None = None,
+        exit_deadline_ms: int | None = None,
+        max_hold_deadline_ms: int | None = None,
+        opened_ms: int | None = None,
+        last_mid_price: float | None = None,
+        setup: dict[str, Any] | None = None,
+        timestamp_ms: int | None = None,
+    ) -> int:
+        ts = timestamp_ms or now_ms()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO strategy_cycles (
+                    created_ms, created_iso, updated_ms, updated_iso,
+                    strategy, execution_mode, symbol, side, status, reason,
+                    entry_order_id, exit_order_id,
+                    quantity, entry_price, target_price, stop_price, entry_order_type,
+                    take_profit_bps, stop_loss_bps, max_hold_seconds,
+                    maker_one_way_bps, taker_one_way_bps,
+                    entry_deadline_ms, exit_deadline_ms, max_hold_deadline_ms,
+                    opened_ms, last_mid_price, dry_run, setup_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ts,
+                    iso_from_ms(ts),
+                    ts,
+                    iso_from_ms(ts),
+                    strategy,
+                    execution_mode,
+                    symbol.upper(),
+                    side,
+                    status,
+                    reason,
+                    entry_order_id,
+                    exit_order_id,
+                    quantity,
+                    entry_price,
+                    target_price,
+                    stop_price,
+                    entry_order_type,
+                    take_profit_bps,
+                    stop_loss_bps,
+                    max_hold_seconds,
+                    maker_one_way_bps,
+                    taker_one_way_bps,
+                    entry_deadline_ms,
+                    exit_deadline_ms,
+                    max_hold_deadline_ms,
+                    opened_ms,
+                    last_mid_price,
+                    1 if dry_run else 0,
+                    json.dumps(setup, sort_keys=True) if setup is not None else None,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def update_strategy_cycle(
+        self,
+        cycle_id: int,
+        *,
+        timestamp_ms: int | None = None,
+        **fields: Any,
+    ) -> None:
+        allowed = {
+            "status",
+            "reason",
+            "exit_order_id",
+            "quantity",
+            "entry_price",
+            "target_price",
+            "stop_price",
+            "entry_deadline_ms",
+            "exit_deadline_ms",
+            "max_hold_deadline_ms",
+            "opened_ms",
+            "closed_ms",
+            "last_mid_price",
+            "realized_pnl",
+            "reprice_count",
+        }
+        updates = {key: value for key, value in fields.items() if key in allowed}
+        ts = timestamp_ms or now_ms()
+        updates["updated_ms"] = ts
+        updates["updated_iso"] = iso_from_ms(ts)
+        if not updates:
+            return
+        assignment = ", ".join(f"{field}=?" for field in updates)
+        with self.connect() as connection:
+            connection.execute(
+                f"UPDATE strategy_cycles SET {assignment} WHERE id=?",
+                [*updates.values(), cycle_id],
+            )
+
+    def active_strategy_cycle(self, strategy: str, symbol: str) -> sqlite3.Row | None:
+        with self.connect() as connection:
+            return connection.execute(
+                """
+                SELECT * FROM strategy_cycles
+                WHERE strategy=? AND symbol=? AND status IN ('ENTRY_SUBMITTED', 'OPEN', 'EXIT_SUBMITTED')
+                ORDER BY updated_ms DESC
+                LIMIT 1
+                """,
+                (strategy, symbol.upper()),
+            ).fetchone()
+
+    def active_strategy_cycles(self) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    """
+                    SELECT * FROM strategy_cycles
+                    WHERE status IN ('ENTRY_SUBMITTED', 'OPEN', 'EXIT_SUBMITTED')
+                    ORDER BY updated_ms DESC
+                    """
+                )
+            )
+
+    def recent_strategy_cycles(self, limit: int = 10) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    "SELECT * FROM strategy_cycles ORDER BY updated_ms DESC LIMIT ?",
+                    (limit,),
+                )
+            )
+
+    def strategy_cycle_exit_reasons(self) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    """
+                    SELECT strategy, status, reason, COUNT(*) AS count,
+                           AVG(realized_pnl) AS avg_pnl,
+                           SUM(COALESCE(realized_pnl, 0)) AS sum_pnl
+                    FROM strategy_cycles
+                    GROUP BY strategy, status, reason
+                    ORDER BY count DESC
+                    """
+                )
+            )
+
+    def strategy_cycle_performance(self) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    """
+                    SELECT strategy, symbol, side, COUNT(*) AS count,
+                           SUM(CASE WHEN status='CLOSED' THEN 1 ELSE 0 END) AS wins,
+                           SUM(CASE WHEN status='STOPPED' THEN 1 ELSE 0 END) AS losses,
+                           AVG(realized_pnl) AS avg_pnl,
+                           SUM(COALESCE(realized_pnl, 0)) AS sum_pnl
+                    FROM strategy_cycles
+                    WHERE realized_pnl IS NOT NULL
+                    GROUP BY strategy, symbol, side
+                    ORDER BY sum_pnl ASC
+                    """
+                )
+            )
+
     def recent_orders(self, limit: int = 10) -> list[sqlite3.Row]:
         with self.connect() as connection:
             return list(
@@ -1046,6 +1271,9 @@ class TradingStore:
                 ),
                 "scalp_cycles": int(
                     connection.execute("SELECT COUNT(*) FROM scalp_cycles").fetchone()[0]
+                ),
+                "strategy_cycles": int(
+                    connection.execute("SELECT COUNT(*) FROM strategy_cycles").fetchone()[0]
                 ),
                 "strategy_evaluations": int(
                     connection.execute("SELECT COUNT(*) FROM strategy_evaluations").fetchone()[0]

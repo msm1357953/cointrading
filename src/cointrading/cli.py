@@ -37,6 +37,7 @@ from cointrading.scalping import (
 )
 from cointrading.storage import TradingStore, default_db_path
 from cointrading.strategy_eval import evaluate_and_store_strategy, strategy_evaluation_text
+from cointrading.strategy_lifecycle import manage_strategy_cycle, start_strategy_cycle_from_setup
 from cointrading.strategy_notify import (
     StrategyNotifyState,
     apply_strategy_notification_state,
@@ -118,6 +119,11 @@ def main(argv: list[str] | None = None) -> None:
     scalp_engine_parser.add_argument("--symbols", nargs="+")
     scalp_engine_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
     scalp_engine_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
+    strategy_engine_parser = subparsers.add_parser("strategy-engine-step")
+    strategy_engine_parser.add_argument("--symbols", nargs="+")
+    strategy_engine_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
+    strategy_engine_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
     strategy_evaluate_parser = subparsers.add_parser("strategy-evaluate")
     strategy_evaluate_parser.add_argument("--db-path", type=Path, default=default_db_path())
@@ -214,6 +220,8 @@ def main(argv: list[str] | None = None) -> None:
         maker_once(args.symbol, args.db_path)
     elif args.command == "scalp-engine-step":
         scalp_engine_step(_active_scalp_symbols(args.symbols), args.log_path, args.db_path)
+    elif args.command == "strategy-engine-step":
+        strategy_engine_step(_active_scalp_symbols(args.symbols), args.log_path, args.db_path)
     elif args.command == "strategy-evaluate":
         strategy_evaluate(args.db_path, args.limit)
     elif args.command == "strategy-notify":
@@ -456,6 +464,80 @@ def scalp_engine_step(symbols: list[str], log_path: Path, db_path: Path) -> None
             signal_id=signal_id,
         )
         lines.append(f"{symbol}: {result.action} - {result.detail}")
+    print("\n".join(lines))
+
+
+def strategy_engine_step(symbols: list[str], log_path: Path, db_path: Path) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    store = TradingStore(db_path)
+    paused = TelegramBotState.load(default_state_path()).paused
+    lines: list[str] = []
+
+    for cycle in store.active_strategy_cycles():
+        ticker = client.book_ticker(str(cycle["symbol"]))
+        result = manage_strategy_cycle(
+            client,
+            store,
+            cycle,
+            config,
+            bid=float(ticker["bidPrice"]),
+            ask=float(ticker["askPrice"]),
+        )
+        lines.append(f"{cycle['strategy']} {cycle['symbol']}: {result.action} - {result.detail}")
+
+    active_symbols = {str(cycle["symbol"]) for cycle in store.active_strategy_cycles()}
+    for symbol in symbols:
+        symbol = symbol.upper()
+        if symbol in active_symbols:
+            lines.append(f"{symbol}: strategy cycle already active")
+            continue
+        if paused:
+            lines.append(f"{symbol}: paused - no strategy entry")
+            continue
+
+        ticker = client.book_ticker(symbol)
+        bid = float(ticker["bidPrice"])
+        ask = float(ticker["askPrice"])
+        signal = _scalp_signal(symbol, client=client, trading_config=config)
+        append_scalp_signal(log_path, signal)
+        store.insert_signal(signal)
+        klines_15m = client.klines(symbol=symbol, interval="15m", limit=120)
+        try:
+            macro_row = evaluate_market_regime(
+                symbol=symbol,
+                klines_15m=klines_15m,
+                klines_1h=client.klines(symbol=symbol, interval="1h", limit=120),
+            )
+            store.insert_market_regime(macro_row)
+        except BinanceAPIError:
+            macro_row = store.latest_market_regime(symbol)
+        risk = evaluate_runtime_risk(store, config, symbol=symbol)
+        setups = evaluate_strategy_setups(
+            scalp_signal=signal,
+            macro_row=macro_row,
+            runtime_risk=risk,
+            macro_max_age_ms=config.macro_regime_max_age_minutes * 60_000,
+            klines_15m=klines_15m,
+        )
+        candidates = [
+            setup
+            for setup in setups
+            if setup.strategy != "maker_scalp" and setup.live_supported and setup.status == "PASS"
+        ]
+        if not candidates:
+            lines.append(f"{symbol}: no strategy PASS candidate")
+            continue
+        result = start_strategy_cycle_from_setup(
+            client,
+            store,
+            candidates[0],
+            config,
+            symbol=symbol,
+            bid=bid,
+            ask=ask,
+        )
+        lines.append(f"{symbol}: {result.strategy} {result.action} - {result.detail}")
     print("\n".join(lines))
 
 
@@ -731,8 +813,13 @@ def live_preflight(symbols: list[str], notional: float, db_path: Path) -> None:
             mid = (bid + ask) / 2.0
             filters = SymbolFilters.from_exchange_info(client.exchange_info(symbol), symbol)
             signal = _scalp_signal(symbol, client=client, trading_config=config)
+            klines_15m = client.klines(symbol=symbol, interval="15m", limit=120)
             try:
-                macro_row = _market_regime_snapshot(symbol, client)
+                macro_row = evaluate_market_regime(
+                    symbol=symbol,
+                    klines_15m=klines_15m,
+                    klines_1h=client.klines(symbol=symbol, interval="1h", limit=120),
+                )
                 store.insert_market_regime(macro_row)
             except BinanceAPIError:
                 macro_row = store.latest_market_regime(symbol)
@@ -741,6 +828,7 @@ def live_preflight(symbols: list[str], notional: float, db_path: Path) -> None:
                 macro_row=macro_row,
                 runtime_risk=risk,
                 macro_max_age_ms=config.macro_regime_max_age_minutes * 60_000,
+                klines_15m=klines_15m,
             )
             decision = build_post_only_intent(signal, config, notional=notional)
             normalized = None
@@ -775,10 +863,10 @@ def live_preflight(symbols: list[str], notional: float, db_path: Path) -> None:
             )
         )
         if normalized is None:
-            print(f"  decision=BLOCK {filter_reason}")
+            print(f"  maker_scalp_decision=BLOCK {filter_reason}")
             continue
         print(
-            "  decision=OK "
+            "  maker_scalp_decision=OK "
             f"side={normalized.side} qty={normalized.quantity:.12f} "
             f"price={normalized.price:.12f} notional≈{normalized.quantity * (normalized.price or mid):.4f}"
         )

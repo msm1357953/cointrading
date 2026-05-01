@@ -307,6 +307,9 @@ class TelegramCommandProcessor:
                 "초기 기준 자산: "
                 f"{self.trading_config.initial_equity:.2f} {self.trading_config.equity_asset}",
                 f"스캘핑 대상: {', '.join(self.trading_config.scalp_symbols)}",
+                "전략 상태머신: "
+                f"{'켜짐' if self.trading_config.strategy_lifecycle_enabled else '꺼짐'} "
+                f"(live {'켜짐' if self.trading_config.live_strategy_lifecycle_enabled else '꺼짐'})",
             ]
         )
 
@@ -484,10 +487,11 @@ class TelegramCommandProcessor:
             bnb_fee_discount_enabled=bnb_fee_enabled,
             bnb_balance=bnb_balance,
         )
+        klines_15m = self.exchange_client.klines(symbol=symbol, interval="15m", limit=120)
         try:
             macro_row = evaluate_market_regime(
                 symbol=symbol,
-                klines_15m=self.exchange_client.klines(symbol=symbol, interval="15m", limit=120),
+                klines_15m=klines_15m,
                 klines_1h=self.exchange_client.klines(symbol=symbol, interval="1h", limit=120),
             )
             store.insert_market_regime(macro_row)
@@ -498,6 +502,7 @@ class TelegramCommandProcessor:
             macro_row=macro_row,
             runtime_risk=risk,
             macro_max_age_ms=self.trading_config.macro_regime_max_age_minutes * 60_000,
+            klines_15m=klines_15m,
         )
         lines: list[str] = []
         try:
@@ -527,8 +532,9 @@ class TelegramCommandProcessor:
     def cycles_text(self) -> str:
         store = TradingStore(default_db_path())
         cycles = store.recent_scalp_cycles(limit=5)
-        if not cycles:
-            return "아직 스캘핑 상태머신 기록이 없습니다."
+        strategy_cycles = store.recent_strategy_cycles(limit=5)
+        if not cycles and not strategy_cycles:
+            return "아직 상태머신 기록이 없습니다."
         lines = ["최근 스캘핑 상태머신 (KST)"]
         for cycle in cycles:
             pnl = ""
@@ -537,6 +543,18 @@ class TelegramCommandProcessor:
             lines.append(
                 f"{kst_from_ms(int(cycle['updated_ms']))} "
                 f"{cycle['symbol']} {cycle['side']} {cycle['status']} "
+                f"{cycle['reason'] or ''}{pnl}"
+            )
+        if strategy_cycles:
+            lines.append("")
+            lines.append("최근 전략 상태머신 (KST)")
+        for cycle in strategy_cycles:
+            pnl = ""
+            if cycle["realized_pnl"] is not None:
+                pnl = f" pnl={float(cycle['realized_pnl']):.6f}"
+            lines.append(
+                f"{kst_from_ms(int(cycle['updated_ms']))} "
+                f"{cycle['strategy']} {cycle['symbol']} {cycle['side']} {cycle['status']} "
                 f"{cycle['reason'] or ''}{pnl}"
             )
         return "\n".join(lines)

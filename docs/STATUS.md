@@ -58,15 +58,16 @@
 - 2026-04-30: Live lifecycle tests and a minimal live reconciliation path were added. The covered path checks live entry order status, ingests user trades, submits reduce-only take-profit, closes on live take-profit fill, and cancels/replaces the target with reduce-only market exit for stop-loss. Live remains disabled by default.
 - 2026-05-01: Exchange-info filter parsing and `live-preflight` were added for the planned tiny first live test. Live order intents must pass tick size, step size, minQty, and minNotional checks before they can be submitted.
 - 2026-05-01: Strategy entry routing was separated from the scalping signal. `thin_book` now blocks only maker-scalping entries; macro trend/range/breakout candidates are reported separately as observe/paper candidates until their own live state machines exist. Telegram `진입 ETHUSDC 25` and CLI `live-preflight` show the same strategy-by-strategy entry check.
+- 2026-05-01: Macro strategy lifecycle state machines were added for `trend_follow`, `range_reversion`, and `breakout_reduced`. They use the shared SQLite/order/fill records, track entry/open/exit states, handle paper and live reconciliation paths, and require `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true` before live strategy orders can be submitted. The VM deploy now installs `cointrading-strategy-engine.timer`, but live remains off by default.
 
 ## Next Work Packets
 
 1. Run the included backtest on downloaded BTCUSDT/ETHUSDT klines.
 2. Run `live-preflight --notional <tiny size> --symbols <symbol>` on the VM immediately before any real-money test.
 3. Add a one-shot/manual live enable path that caps notional to the chosen tiny size and automatically disables live mode after the first closed cycle.
-4. Add live exchange fill ingestion and open-order reconciliation.
+4. Continue validating live exchange fill ingestion and open-order reconciliation on tiny one-shot tests.
 5. Let USDC dry-run scalping collection continue, then inspect Telegram `전략` and the dashboard strategy tab.
 6. Review maker/taker/hybrid candidates and only consider live escalation after `APPROVED` rows stay stable across larger sample sizes and their paper lifecycle outcomes are positive.
 7. Add a local ML feature dataset from signals, macro regimes, orders, fills, and strategy outcomes; keep Gemini as reporting/monitoring only.
 8. Add exact exchange info parsing for tick size and quantity step size before allowing live orders.
-9. Before any real-money test, use only the maker-scalp live engine unless a separate trend/range/breakout lifecycle has been implemented and tested.
+9. Before any real-money test, run `live-preflight`, confirm Telegram `진입 <symbol> <notional>`, and keep either scalp or macro strategy live flags explicitly off unless doing a deliberate one-shot test.

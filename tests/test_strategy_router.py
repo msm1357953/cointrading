@@ -1,12 +1,12 @@
 import unittest
 
 from cointrading.market_regime import MACRO_BULL, MACRO_PANIC, MarketRegimeSnapshot
+from cointrading.models import Kline
 from cointrading.risk_state import RISK_NORMAL, RuntimeRiskSnapshot
 from cointrading.scalping import ScalpSignal
 from cointrading.strategy_router import (
     SETUP_BLOCK,
     SETUP_PASS,
-    SETUP_WATCH,
     evaluate_strategy_setups,
     strategy_setups_text,
 )
@@ -71,6 +71,26 @@ def _signal(side: str = "flat", regime: str = "thin_book") -> ScalpSignal:
     )
 
 
+def _range_klines(last: float) -> list[Kline]:
+    rows = []
+    for index in range(24):
+        close = 100.0 + (index % 4)
+        if index == 23:
+            close = last
+        rows.append(
+            Kline(
+                open_time=index * 900_000,
+                open=close,
+                high=104.0,
+                low=96.0,
+                close=close,
+                volume=100.0,
+                close_time=((index + 1) * 900_000) - 1,
+            )
+        )
+    return rows
+
+
 class StrategyRouterTests(unittest.TestCase):
     def test_thin_book_blocks_only_maker_scalp_not_macro_trend_watch(self) -> None:
         setups = evaluate_strategy_setups(
@@ -83,9 +103,9 @@ class StrategyRouterTests(unittest.TestCase):
 
         by_name = {setup.strategy: setup for setup in setups}
         self.assertEqual(by_name["maker_scalp"].status, SETUP_BLOCK)
-        self.assertEqual(by_name["trend_follow"].status, SETUP_WATCH)
+        self.assertEqual(by_name["trend_follow"].status, SETUP_PASS)
         self.assertIn("스캘핑만 차단", by_name["maker_scalp"].reason)
-        self.assertIn("thin book", by_name["trend_follow"].reason)
+        self.assertTrue(by_name["trend_follow"].live_supported)
 
     def test_aligned_scalp_can_be_live_supported_pass(self) -> None:
         setups = evaluate_strategy_setups(
@@ -113,6 +133,31 @@ class StrategyRouterTests(unittest.TestCase):
 
         self.assertIn("실전 엔진 결론: 지금 자동 주문 후보 없음", text)
         self.assertIn("패닉", text)
+
+    def test_range_reversion_passes_only_near_band_edges(self) -> None:
+        lower_setups = evaluate_strategy_setups(
+            scalp_signal=_signal(),
+            macro_row=_macro("macro_range", "neutral"),
+            runtime_risk=_risk(),
+            macro_max_age_ms=60_000,
+            klines_15m=_range_klines(96.5),
+            current_ms=2_000,
+        )
+        middle_setups = evaluate_strategy_setups(
+            scalp_signal=_signal(),
+            macro_row=_macro("macro_range", "neutral"),
+            runtime_risk=_risk(),
+            macro_max_age_ms=60_000,
+            klines_15m=_range_klines(100.0),
+            current_ms=2_000,
+        )
+
+        lower = {setup.strategy: setup for setup in lower_setups}["range_reversion"]
+        middle = {setup.strategy: setup for setup in middle_setups}["range_reversion"]
+        self.assertEqual(lower.status, SETUP_PASS)
+        self.assertEqual(lower.side, "long")
+        self.assertEqual(middle.status, "WATCH")
+        self.assertEqual(middle.side, "flat")
 
 
 if __name__ == "__main__":

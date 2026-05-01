@@ -112,6 +112,18 @@ class TradingConfig:
     strategy_execution_mode: str = "maker_post_only"
     strategy_taker_slippage_bps: float = 1.0
     strategy_notify_interval_minutes: int = 360
+    strategy_lifecycle_enabled: bool = True
+    strategy_order_notional: float = 25.0
+    strategy_entry_timeout_seconds: float = 120.0
+    trend_take_profit_bps: float = 80.0
+    trend_stop_loss_bps: float = 40.0
+    trend_max_hold_seconds: float = 14_400.0
+    range_take_profit_bps: float = 20.0
+    range_stop_loss_bps: float = 25.0
+    range_max_hold_seconds: float = 3_600.0
+    breakout_take_profit_bps: float = 100.0
+    breakout_stop_loss_bps: float = 50.0
+    breakout_max_hold_seconds: float = 7_200.0
     macro_regime_gate_enabled: bool = True
     macro_regime_max_age_minutes: int = 30
     runtime_risk_enabled: bool = True
@@ -127,6 +139,7 @@ class TradingConfig:
     runtime_risk_btc_vol_defensive_bps: float = 120.0
     runtime_risk_btc_atr_defensive_bps: float = 180.0
     live_scalp_lifecycle_enabled: bool = False
+    live_strategy_lifecycle_enabled: bool = False
     llm_enabled: bool = True
     llm_provider: str = "gemini"
     llm_model: str = "gemini-3.1-pro-preview"
@@ -234,6 +247,54 @@ class TradingConfig:
                 "COINTRADING_STRATEGY_NOTIFY_INTERVAL_MINUTES",
                 cls.strategy_notify_interval_minutes,
             ),
+            strategy_lifecycle_enabled=_get_bool(
+                "COINTRADING_STRATEGY_LIFECYCLE_ENABLED",
+                cls.strategy_lifecycle_enabled,
+            ),
+            strategy_order_notional=_get_float(
+                "COINTRADING_STRATEGY_ORDER_NOTIONAL",
+                cls.strategy_order_notional,
+            ),
+            strategy_entry_timeout_seconds=_get_float(
+                "COINTRADING_STRATEGY_ENTRY_TIMEOUT_SECONDS",
+                cls.strategy_entry_timeout_seconds,
+            ),
+            trend_take_profit_bps=_get_float(
+                "COINTRADING_TREND_TAKE_PROFIT_BPS",
+                cls.trend_take_profit_bps,
+            ),
+            trend_stop_loss_bps=_get_float(
+                "COINTRADING_TREND_STOP_LOSS_BPS",
+                cls.trend_stop_loss_bps,
+            ),
+            trend_max_hold_seconds=_get_float(
+                "COINTRADING_TREND_MAX_HOLD_SECONDS",
+                cls.trend_max_hold_seconds,
+            ),
+            range_take_profit_bps=_get_float(
+                "COINTRADING_RANGE_TAKE_PROFIT_BPS",
+                cls.range_take_profit_bps,
+            ),
+            range_stop_loss_bps=_get_float(
+                "COINTRADING_RANGE_STOP_LOSS_BPS",
+                cls.range_stop_loss_bps,
+            ),
+            range_max_hold_seconds=_get_float(
+                "COINTRADING_RANGE_MAX_HOLD_SECONDS",
+                cls.range_max_hold_seconds,
+            ),
+            breakout_take_profit_bps=_get_float(
+                "COINTRADING_BREAKOUT_TAKE_PROFIT_BPS",
+                cls.breakout_take_profit_bps,
+            ),
+            breakout_stop_loss_bps=_get_float(
+                "COINTRADING_BREAKOUT_STOP_LOSS_BPS",
+                cls.breakout_stop_loss_bps,
+            ),
+            breakout_max_hold_seconds=_get_float(
+                "COINTRADING_BREAKOUT_MAX_HOLD_SECONDS",
+                cls.breakout_max_hold_seconds,
+            ),
             macro_regime_gate_enabled=_get_bool(
                 "COINTRADING_MACRO_REGIME_GATE_ENABLED",
                 cls.macro_regime_gate_enabled,
@@ -293,6 +354,10 @@ class TradingConfig:
             live_scalp_lifecycle_enabled=_get_bool(
                 "COINTRADING_LIVE_SCALP_LIFECYCLE_ENABLED",
                 cls.live_scalp_lifecycle_enabled,
+            ),
+            live_strategy_lifecycle_enabled=_get_bool(
+                "COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED",
+                cls.live_strategy_lifecycle_enabled,
             ),
             llm_enabled=_get_bool("COINTRADING_LLM_ENABLED", cls.llm_enabled),
             llm_provider=_get_str("COINTRADING_LLM_PROVIDER", cls.llm_provider),

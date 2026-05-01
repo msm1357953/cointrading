@@ -1,0 +1,9 @@
+[Unit]
+Description=Run macro strategy lifecycle state machine
+
+[Service]
+Type=oneshot
+User=msm1357953_gmail_com
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli strategy-engine-step

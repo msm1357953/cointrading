@@ -46,7 +46,7 @@ Telegram command service:
 ```bash
 sudo systemctl status cointrading-telegram --no-pager
 sudo journalctl -u cointrading-telegram -n 50 --no-pager
-systemctl list-timers 'cointrading-scalp*'
+systemctl list-timers 'cointrading-*'
 ```
 
 ## Notes
@@ -58,3 +58,4 @@ systemctl list-timers 'cointrading-scalp*'
 - Do not disable dry-run until Binance Futures API permission and testnet/paper behavior are verified.
 - Telegram polling is managed by `cointrading-telegram.service` on the VM.
 - Dry-run scalping signal collection is managed by `cointrading-scalp-collect.timer` and `cointrading-scalp-score.timer`.
+- Macro strategy lifecycle dry-run/paper cycles are managed by `cointrading-strategy-engine.timer`.

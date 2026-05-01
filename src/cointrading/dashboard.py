@@ -136,6 +136,7 @@ def _snapshot(
         "signal_rows": _signal_rows_html(rows[-limit:]),
         "order_rows": _order_rows_html(store.recent_orders(limit=limit)),
         "cycle_rows": _cycle_rows_html(store.recent_scalp_cycles(limit=limit)),
+        "strategy_cycle_rows": _strategy_cycle_rows_html(store.recent_strategy_cycles(limit=limit)),
         "strategy_rows": _strategy_rows_html(store.latest_strategy_evaluations(limit=limit)),
         "market_regime_rows": _market_regime_rows_html(
             store.latest_market_regimes(symbols=config.scalp_symbols, limit=limit)
@@ -175,6 +176,21 @@ def _cycle_rows_html(cycles) -> str:
     return "\n".join(
         "<tr>"
         f"<td>{escape(kst_from_ms(int(cycle['updated_ms'])))}</td>"
+        f"<td>{escape(cycle['symbol'])}</td>"
+        f"<td>{escape(cycle['side'])}</td>"
+        f"<td>{escape(cycle['status'])}</td>"
+        f"<td>{escape(cycle['reason'] or '')}</td>"
+        f"<td>{escape(_fmt_pnl(cycle['realized_pnl']))}</td>"
+        "</tr>"
+        for cycle in cycles
+    )
+
+
+def _strategy_cycle_rows_html(cycles) -> str:
+    return "\n".join(
+        "<tr>"
+        f"<td>{escape(kst_from_ms(int(cycle['updated_ms'])))}</td>"
+        f"<td>{escape(cycle['strategy'])}</td>"
         f"<td>{escape(cycle['symbol'])}</td>"
         f"<td>{escape(cycle['side'])}</td>"
         f"<td>{escape(cycle['status'])}</td>"
@@ -261,6 +277,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     signal_rows = snapshot["signal_rows"]
     order_rows = snapshot["order_rows"]
     cycle_rows = snapshot["cycle_rows"]
+    strategy_cycle_rows = snapshot.get("strategy_cycle_rows", "")
     strategy_rows = snapshot["strategy_rows"]
     market_regime_rows = snapshot["market_regime_rows"]
     performance_rows = snapshot["performance_rows"]
@@ -299,6 +316,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     <button data-tab="market">장세라우터</button>
     <button data-tab="strategies">전략후보</button>
     <button data-tab="cycles">상태머신</button>
+    <button data-tab="strategy-cycles">전략상태</button>
     <button data-tab="signals">신호</button>
     <button data-tab="orders">주문</button>
   </nav>
@@ -343,6 +361,13 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       <tbody id="cycle-rows">{cycle_rows}</tbody>
     </table>
   </section>
+  <section id="tab-strategy-cycles" class="tab-panel">
+    <h2>전략 상태머신</h2>
+    <table>
+      <thead><tr><th>갱신</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th><th>실현손익</th></tr></thead>
+      <tbody id="strategy-cycle-rows">{strategy_cycle_rows}</tbody>
+    </table>
+  </section>
   <section id="tab-signals" class="tab-panel">
     <h2>최근 신호</h2>
     <table>
@@ -377,6 +402,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("signal-rows").innerHTML = data.signal_rows;
       document.getElementById("order-rows").innerHTML = data.order_rows;
       document.getElementById("cycle-rows").innerHTML = data.cycle_rows;
+      document.getElementById("strategy-cycle-rows").innerHTML = data.strategy_cycle_rows;
       document.getElementById("strategy-rows").innerHTML = data.strategy_rows;
       document.getElementById("market-regime-rows").innerHTML = data.market_regime_rows;
       document.getElementById("performance-rows").innerHTML = data.performance_rows;

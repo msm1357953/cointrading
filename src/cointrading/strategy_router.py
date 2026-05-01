@@ -13,7 +13,7 @@ from cointrading.market_regime import (
     macro_regime_ko,
     trade_bias_ko,
 )
-from cointrading.models import SignalSide
+from cointrading.models import Kline, SignalSide
 from cointrading.risk_state import RuntimeRiskSnapshot, risk_mode_ko
 from cointrading.scalping import ScalpSignal
 from cointrading.storage import now_ms
@@ -41,14 +41,16 @@ def evaluate_strategy_setups(
     macro_row: Any | None,
     runtime_risk: RuntimeRiskSnapshot,
     macro_max_age_ms: int,
+    klines_15m: list[Kline] | None = None,
     current_ms: int | None = None,
 ) -> list[StrategySetup]:
     ts = current_ms or now_ms()
     macro = _macro_context(macro_row, macro_max_age_ms=macro_max_age_ms, current_ms=ts)
+    range_side, range_reason = _range_side_from_bands(klines_15m or [])
     return [
         _maker_scalp_setup(scalp_signal, macro, runtime_risk),
         _trend_setup(macro, runtime_risk),
-        _range_setup(macro, runtime_risk),
+        _range_setup(macro, runtime_risk, range_side=range_side, range_reason=range_reason),
         _breakout_setup(macro, runtime_risk),
     ]
 
@@ -71,7 +73,7 @@ def strategy_setups_text(
         )
     lines.append("전략별 판단")
     for setup in setups:
-        live = "live 가능" if setup.live_supported else "관찰/페이퍼"
+        live = "live 엔진 준비" if setup.live_supported else "관찰/페이퍼"
         lines.append(
             "- "
             f"{_strategy_ko(setup.strategy)} "
@@ -92,7 +94,7 @@ def strategy_setups_text(
     else:
         lines.append(
             "실전 엔진 결론: 지금 자동 주문 후보 없음. "
-            "비-스캘핑 후보는 아직 관찰/페이퍼 판단만 합니다."
+            "전략별 상태머신은 준비되어도 조건이 PASS일 때만 진입합니다."
         )
     return "\n".join(lines)
 
@@ -164,11 +166,11 @@ def _trend_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) -> St
     if macro["stale"]:
         return StrategySetup(
             "trend_follow",
-            "paper_macro",
+            "taker_trend",
             SETUP_BLOCK,
             "flat",
             "15m-4h",
-            False,
+            True,
             "장세 데이터가 없거나 오래되어 추세 판단을 보류합니다.",
         )
     regime = macro["macro_regime"]
@@ -176,75 +178,91 @@ def _trend_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) -> St
     if regime in {MACRO_BULL, MACRO_BEAR} and side in {"long", "short"}:
         return StrategySetup(
             "trend_follow",
-            "paper_macro",
-            SETUP_WATCH,
+            "taker_trend",
+            SETUP_PASS,
             side,
             "15m-4h",
-            False,
-            f"{macro_regime_ko(regime)} / {trade_bias_ko(side)}. thin book은 이 판단의 단독 차단 사유가 아닙니다.",
+            True,
+            f"{macro_regime_ko(regime)} / {trade_bias_ko(side)}. 추세 상태머신으로 관리합니다.",
         )
     if regime == MACRO_BREAKOUT and side in {"long", "short"}:
         return StrategySetup(
             "trend_follow",
-            "paper_macro",
-            SETUP_WATCH,
+            "taker_trend",
+            SETUP_PASS,
             side,
             "15m-4h",
-            False,
-            "변동성 돌파장은 추세 후보지만 소액 축소와 별도 돌파 엔진이 필요합니다.",
+            True,
+            "변동성 돌파장에서도 추세 후보를 축소 크기로 관리할 수 있습니다.",
         )
     if regime == MACRO_PANIC:
         return StrategySetup(
             "trend_follow",
-            "paper_macro",
+            "taker_trend",
             SETUP_BLOCK,
             "flat",
             "15m-4h",
-            False,
+            True,
             "패닉 변동성이라 추세 신규 진입도 막습니다.",
         )
     return StrategySetup(
         "trend_follow",
-        "paper_macro",
+        "taker_trend",
         SETUP_BLOCK,
         "flat",
         "15m-4h",
-        False,
+        True,
         f"{macro_regime_ko(regime)}라 추세 추종 우위가 약합니다.",
     )
 
 
-def _range_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) -> StrategySetup:
+def _range_setup(
+    macro: dict[str, Any],
+    runtime_risk: RuntimeRiskSnapshot,
+    *,
+    range_side: SignalSide,
+    range_reason: str,
+) -> StrategySetup:
     if not runtime_risk.allows_new_entries:
         return _macro_block("range_reversion", "5m-1h", runtime_risk)
     if macro["stale"]:
         return StrategySetup(
             "range_reversion",
-            "paper_macro",
+            "maker_range",
             SETUP_BLOCK,
             "flat",
             "5m-1h",
-            False,
+            True,
             "장세 데이터가 없거나 오래되어 레인지 판단을 보류합니다.",
         )
     regime = macro["macro_regime"]
     if regime == MACRO_RANGE:
+        if range_side in {"long", "short"}:
+            return StrategySetup(
+                "range_reversion",
+                "maker_range",
+                SETUP_PASS,
+                range_side,
+                "5m-1h",
+                True,
+                range_reason,
+            )
         return StrategySetup(
             "range_reversion",
-            "paper_macro",
+            "maker_range",
             SETUP_WATCH,
             "flat",
             "5m-1h",
-            False,
-            "횡보장 후보입니다. 상단/하단 밴드와 손절폭이 붙기 전에는 자동 주문하지 않습니다.",
+            True,
+            range_reason or "횡보장이지만 가격이 밴드 중앙부라 평균회귀 진입은 대기합니다.",
         )
     return StrategySetup(
         "range_reversion",
-        "paper_macro",
+        "maker_range",
         SETUP_BLOCK,
         "flat",
         "5m-1h",
-        False,
+        True,
         f"{macro_regime_ko(regime)}라 평균회귀 우위가 약합니다.",
     )
 
@@ -255,11 +273,11 @@ def _breakout_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) ->
     if macro["stale"]:
         return StrategySetup(
             "breakout_reduced",
-            "paper_macro",
+            "taker_breakout",
             SETUP_BLOCK,
             "flat",
             "5m-1h",
-            False,
+            True,
             "장세 데이터가 없거나 오래되어 돌파 판단을 보류합니다.",
         )
     regime = macro["macro_regime"]
@@ -267,20 +285,20 @@ def _breakout_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) ->
     if regime == MACRO_BREAKOUT and side in {"long", "short"}:
         return StrategySetup(
             "breakout_reduced",
-            "paper_macro",
-            SETUP_WATCH,
+            "taker_breakout",
+            SETUP_PASS,
             side,
             "5m-1h",
-            False,
-            "돌파 후보입니다. 테이커/하이브리드 엔진과 넓은 손절 검증 전에는 live 주문하지 않습니다.",
+            True,
+            "돌파 후보입니다. 축소 규모와 넓은 손절 상태머신으로 관리합니다.",
         )
     return StrategySetup(
         "breakout_reduced",
-        "paper_macro",
+        "taker_breakout",
         SETUP_BLOCK,
         "flat",
         "5m-1h",
-        False,
+        True,
         f"{macro_regime_ko(regime)}라 돌파장 조건이 아닙니다.",
     )
 
@@ -288,11 +306,11 @@ def _breakout_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) ->
 def _macro_block(strategy: str, horizon: str, runtime_risk: RuntimeRiskSnapshot) -> StrategySetup:
     return StrategySetup(
         strategy,
-        "paper_macro",
+        _execution_mode_for_strategy(strategy),
         SETUP_BLOCK,
         "flat",
         horizon,
-        False,
+        True,
         f"런타임 위험모드 {risk_mode_ko(runtime_risk.mode)}가 신규 진입을 막습니다.",
     )
 
@@ -332,6 +350,34 @@ def _scalp_allowed_by_macro_context(macro: dict[str, Any], side: str) -> tuple[b
     if regime == MACRO_BEAR and side == "long":
         return False, "macro router: bear regime blocks long scalps"
     return True, f"macro router allows {side} in {regime or 'unknown'}"
+
+
+def _range_side_from_bands(klines: list[Kline]) -> tuple[SignalSide, str]:
+    rows = klines[-24:]
+    if len(rows) < 12:
+        return "flat", "레인지 밴드를 계산할 15분봉 표본이 부족합니다."
+    highs = [row.high for row in rows]
+    lows = [row.low for row in rows]
+    upper = max(highs)
+    lower = min(lows)
+    last = rows[-1].close
+    width = upper - lower
+    if lower <= 0 or width <= 0:
+        return "flat", "레인지 폭이 너무 좁거나 가격 데이터가 이상합니다."
+    position = (last - lower) / width
+    if position <= 0.25:
+        return "long", f"레인지 하단권 position={position:.2f}; 중앙 복귀 롱 후보입니다."
+    if position >= 0.75:
+        return "short", f"레인지 상단권 position={position:.2f}; 중앙 복귀 숏 후보입니다."
+    return "flat", f"레인지 중앙부 position={position:.2f}; 평균회귀 진입 대기입니다."
+
+
+def _execution_mode_for_strategy(strategy: str) -> str:
+    return {
+        "trend_follow": "taker_trend",
+        "range_reversion": "maker_range",
+        "breakout_reduced": "taker_breakout",
+    }.get(strategy, "paper_macro")
 
 
 def _row_value(row: Any, key: str, default: Any = None) -> Any:

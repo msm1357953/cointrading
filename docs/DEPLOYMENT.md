@@ -8,7 +8,7 @@ The VM is the production-like runner:
 
 - project path: `~/cointrading`
 - static IP: `34.50.6.186`
-- systemd units: `cointrading-telegram.service`, `cointrading-scalp-collect.timer`, `cointrading-scalp-score.timer`
+- systemd units: `cointrading-telegram.service`, `cointrading-scalp-collect.timer`, `cointrading-scalp-score.timer`, `cointrading-scalp-engine.timer`, `cointrading-strategy-engine.timer`
 
 ## GitHub Actions Deploy
 
