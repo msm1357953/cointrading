@@ -15,10 +15,10 @@ from cointrading.models import Kline, SignalSide
 @dataclass(frozen=True)
 class ScalpConfig:
     max_spread_bps: float = 1.5
-    min_imbalance: float = 0.18
-    min_momentum_bps: float = 1.5
-    trend_momentum_bps: float = 6.0
-    min_edge_after_maker_bps: float = 1.0
+    min_imbalance: float = 0.25
+    min_momentum_bps: float = 4.0
+    trend_momentum_bps: float = 10.0
+    min_edge_after_maker_bps: float = 4.0
     max_realized_vol_bps: float = 35.0
     panic_realized_vol_bps: float = 60.0
     min_side_depth_notional: float = 50_000.0

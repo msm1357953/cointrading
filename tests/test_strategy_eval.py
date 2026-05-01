@@ -45,6 +45,16 @@ def _signal(symbol="BTCUSDC", side="long", regime="aligned_long", horizon=5.0):
 
 
 class StrategyEvaluationTests(unittest.TestCase):
+    def test_default_strategy_thresholds_are_payoff_positive(self) -> None:
+        config = TradingConfig()
+
+        self.assertGreater(config.scalp_take_profit_bps, config.scalp_stop_loss_bps)
+        self.assertGreater(config.strategy_min_expectancy_bps, 0.0)
+        self.assertLessEqual(config.strategy_max_loss_win_ratio, 1.5)
+        self.assertGreater(config.trend_take_profit_bps, config.trend_stop_loss_bps)
+        self.assertGreater(config.range_take_profit_bps, config.range_stop_loss_bps)
+        self.assertGreater(config.breakout_take_profit_bps, config.breakout_stop_loss_bps)
+
     def test_strategy_evaluation_blocks_negative_cycle_group(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")
