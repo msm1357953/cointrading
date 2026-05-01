@@ -8,6 +8,12 @@ from cointrading.live_guard import (
     consume_live_one_shot,
     validate_live_one_shot,
 )
+from cointrading.live_supervisor_notify import (
+    LiveSupervisorNotifyState,
+    actionable_supervisor_reports,
+    supervisor_candidate_notification_decision,
+    supervisor_candidate_notification_text,
+)
 from cointrading.market_context import collect_market_context
 from cointrading.market_regime import MarketRegimeSnapshot
 from cointrading.storage import TradingStore
@@ -188,6 +194,20 @@ class MarketContextSupervisorTests(unittest.TestCase):
             self.assertIn("dry-run이 켜져 있어 실전 주문은 잠겨 있습니다.", report.reasons)
             self.assertIn("원샷 live 허가가 꺼져 있습니다.", report.reasons)
             self.assertIsNotNone(report.best_candidate)
+
+            actionable = actionable_supervisor_reports([report])
+            self.assertEqual([item.symbol for item in actionable], ["BTCUSDC"])
+            should_send, reason, signature, reports = supervisor_candidate_notification_decision(
+                [report],
+                LiveSupervisorNotifyState(),
+            )
+            self.assertTrue(should_send)
+            self.assertEqual(reason, "진입 후보 감지")
+            self.assertIn("BTCUSDC", signature)
+            self.assertIn(
+                "주문상태: 실행 안 함",
+                supervisor_candidate_notification_text(reports, reason=reason, notional=25),
+            )
 
     def test_live_one_shot_guard_consumes_after_first_use(self) -> None:
         config = TradingConfig(

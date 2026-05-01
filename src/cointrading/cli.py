@@ -23,6 +23,13 @@ from cointrading.llm_report import (
     fallback_report_text,
     llm_report_due,
 )
+from cointrading.live_supervisor_notify import (
+    LiveSupervisorNotifyState,
+    apply_live_supervisor_notify_state,
+    default_live_supervisor_notify_state_path,
+    supervisor_candidate_notification_decision,
+    supervisor_candidate_notification_text,
+)
 from cointrading.market_context import collect_market_context, market_context_rows_text
 from cointrading.market_regime import evaluate_market_regime
 from cointrading.models import Kline
@@ -191,6 +198,17 @@ def main(argv: list[str] | None = None) -> None:
     live_supervisor_parser.add_argument("--notional", type=float, default=25.0)
     live_supervisor_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
+    live_supervisor_notify_parser = subparsers.add_parser("live-supervisor-notify")
+    live_supervisor_notify_parser.add_argument("--symbols", nargs="+")
+    live_supervisor_notify_parser.add_argument("--notional", type=float)
+    live_supervisor_notify_parser.add_argument("--db-path", type=Path, default=default_db_path())
+    live_supervisor_notify_parser.add_argument(
+        "--state-path",
+        type=Path,
+        default=default_live_supervisor_notify_state_path(),
+    )
+    live_supervisor_notify_parser.add_argument("--force", action="store_true")
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -277,6 +295,14 @@ def main(argv: list[str] | None = None) -> None:
         live_preflight(_active_scalp_symbols(args.symbols), args.notional, args.db_path)
     elif args.command == "live-supervisor":
         live_supervisor(_active_scalp_symbols(args.symbols), args.notional, args.db_path)
+    elif args.command == "live-supervisor-notify":
+        live_supervisor_notify(
+            _active_scalp_symbols(args.symbols),
+            args.notional,
+            args.db_path,
+            args.state_path,
+            args.force,
+        )
     elif args.command == "telegram-me":
         telegram_me()
     elif args.command == "telegram-send":
@@ -684,6 +710,47 @@ def live_supervisor(symbols: list[str], notional: float, db_path: Path) -> None:
             print(f"- {warning}")
         print("")
     print(supervisor_report_text(reports))
+
+
+def live_supervisor_notify(
+    symbols: list[str],
+    notional: float | None,
+    db_path: Path,
+    state_path: Path,
+    force: bool,
+) -> None:
+    config = TradingConfig.from_env()
+    notional = notional if notional is not None else config.live_one_shot_notional
+    client = BinanceUSDMClient(config=config)
+    store = TradingStore(db_path)
+    warnings = refresh_supervisor_inputs(client, store, symbols)
+    reports = supervise_symbols(
+        client,
+        store,
+        config,
+        symbols,
+        notional=notional,
+    )
+    state = LiveSupervisorNotifyState.load(state_path)
+    should_send, reason, signature, actionable = supervisor_candidate_notification_decision(
+        reports,
+        state,
+        force=force,
+    )
+    text = supervisor_candidate_notification_text(actionable, reason=reason, notional=notional)
+    if warnings:
+        text = "\n".join(["수집 경고", *[f"- {warning}" for warning in warnings], "", text])
+    print(text)
+    if not should_send:
+        print("live-supervisor-notify: skipped")
+        return
+    try:
+        TelegramClient(TelegramConfig.from_env()).send_message(_telegram_safe_text(text))
+    except Exception as exc:
+        print(f"live-supervisor-notify: failed - {exc}")
+        return
+    apply_live_supervisor_notify_state(state, signature=signature).save(state_path)
+    print("live-supervisor-notify: sent")
 
 
 def llm_report(

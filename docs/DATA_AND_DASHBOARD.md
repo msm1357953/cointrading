@@ -35,6 +35,7 @@ python -m cointrading.cli strategy-notify
 python -m cointrading.cli strategy-engine-step
 python -m cointrading.cli live-preflight --notional 25 --symbols ETHUSDC
 python -m cointrading.cli live-supervisor --notional 25 --symbols ETHUSDC
+python -m cointrading.cli live-supervisor-notify
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 ```
 
@@ -74,6 +75,8 @@ These rules decide whether a strategy is `PASS`, `WATCH`, or `BLOCK`. Only `PASS
 The VM runs this as `cointrading-market-regime.timer` every 5 minutes. When `COINTRADING_MACRO_REGIME_GATE_ENABLED=true`, new scalping cycles are blocked if the latest macro regime routes away from that direction. Missing or stale macro data is not treated as a hard block, so data collection can continue after restarts.
 
 `market-context-collect` runs every minute on the VM and records funding, premium, open interest, spread, top-book liquidity, order-book depth, and imbalance. `live-supervisor` refreshes both market context and macro regime before producing a final go/no-go report.
+
+`live-supervisor-notify` runs on the VM and sends a Telegram alert when a symbol has an approved, macro-aligned, paper-performance-positive candidate and only safety locks remain. It never places orders; it tells the operator to rerun `실전 80` before any manual one-shot enable.
 
 `live-preflight` now prints a strategy-by-strategy entry check. `thin_book` is treated as a maker-scalping block only, not as a blanket ban for every possible strategy. Macro trend, range, and breakout candidates are shown as observe/paper candidates until their own live state machines exist.
 

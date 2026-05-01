@@ -1,0 +1,11 @@
+[Unit]
+Description=Check live supervisor entry candidates every minute
+
+[Timer]
+OnBootSec=240
+OnUnitInactiveSec=60
+AccuracySec=15
+Unit=cointrading-live-supervisor-notify.service
+
+[Install]
+WantedBy=timers.target
