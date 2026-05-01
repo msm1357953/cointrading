@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import csv
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import time
 from typing import Any, Iterable
@@ -269,6 +270,9 @@ SCALP_LOG_FIELDS = [
 
 
 def default_scalp_log_path() -> Path:
+    configured = os.getenv("COINTRADING_SCALP_LOG_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
     return Path(__file__).resolve().parents[2] / "data" / "scalp_signals.csv"
 
 

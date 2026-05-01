@@ -104,8 +104,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
           test_db="$(mktemp /tmp/cointrading-test.XXXXXX.sqlite)"
-          COINTRADING_DB_PATH="$test_db" python -m unittest discover -s tests -v
+          test_log="$(mktemp /tmp/cointrading-test.XXXXXX.csv)"
+          COINTRADING_DB_PATH="$test_db" COINTRADING_SCALP_LOG_PATH="$test_log" \
+            python -m unittest discover -s tests -v
           rm -f "$test_db" "$test_db-shm" "$test_db-wal"
+          rm -f "$test_log"
 
           sudo cp deploy/cointrading-*.service deploy/cointrading-*.timer /etc/systemd/system/
           sudo systemctl daemon-reload
