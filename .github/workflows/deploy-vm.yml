@@ -99,7 +99,6 @@ jobs:
           sudo systemctl start cointrading-market-regime.service
           sudo systemctl start cointrading-strategy-evaluate.service
           sudo systemctl start cointrading-strategy-notify.service
-          sudo systemctl start cointrading-strategy-engine.service
           sudo systemctl restart cointrading-telegram.service
           sudo systemctl restart cointrading-dashboard.service
 
