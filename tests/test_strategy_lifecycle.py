@@ -193,6 +193,57 @@ class StrategyLifecycleTests(unittest.TestCase):
             self.assertEqual(client.new_order_intents, [])
             self.assertIsNone(store.active_strategy_cycle("trend_follow", "ETHUSDC"))
 
+    def test_strategy_entry_blocks_when_observed_paper_result_is_bad(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            client = FakeStrategyClient()
+            config = TradingConfig(
+                strategy_lifecycle_enabled=True,
+                runtime_risk_enabled=False,
+                strategy_early_block_samples=3,
+            )
+            store.insert_strategy_evaluations(
+                [
+                    {
+                        "source": "strategy_cycles",
+                        "execution_mode": "taker_trend",
+                        "symbol": "ETHUSDC",
+                        "regime": "trend_follow",
+                        "side": "long",
+                        "take_profit_bps": config.trend_take_profit_bps,
+                        "stop_loss_bps": config.trend_stop_loss_bps,
+                        "max_hold_seconds": int(config.trend_max_hold_seconds),
+                        "sample_count": 3,
+                        "win_count": 1,
+                        "loss_count": 2,
+                        "win_rate": 1 / 3,
+                        "avg_pnl_bps": -12.0,
+                        "sum_pnl_bps": -36.0,
+                        "avg_win_bps": 20.0,
+                        "avg_loss_bps": -28.0,
+                        "decision": "BLOCKED",
+                        "reason": "평균손익 -12.000bps < 0",
+                    }
+                ],
+                timestamp_ms=10_000,
+            )
+
+            result = start_strategy_cycle_from_setup(
+                client,
+                store,
+                _setup(),
+                config,
+                symbol="ETHUSDC",
+                bid=99.9,
+                ask=100.0,
+                timestamp_ms=11_000,
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertIn("observed paper veto", result.detail)
+            self.assertEqual(client.new_order_intents, [])
+            self.assertIsNone(store.active_strategy_cycle("trend_follow", "ETHUSDC"))
+
     def test_trend_strategy_paper_cycle_opens_and_closes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")

@@ -124,6 +124,9 @@ def evaluate_cycle_candidates(
             SELECT c.symbol,
                    COALESCE(s.regime, 'unknown') AS regime,
                    c.side,
+                   COALESCE(c.strategy_take_profit_bps, ?) AS take_profit_bps,
+                   COALESCE(c.strategy_stop_loss_bps, ?) AS stop_loss_bps,
+                   COALESCE(c.strategy_max_hold_seconds, ?) AS max_hold_seconds,
                    COUNT(*) AS sample_count,
                    SUM(CASE WHEN c.realized_pnl > 0 THEN 1 ELSE 0 END) AS win_count,
                    SUM(CASE WHEN c.realized_pnl <= 0 THEN 1 ELSE 0 END) AS loss_count,
@@ -145,9 +148,15 @@ def evaluate_cycle_candidates(
             LEFT JOIN signals s ON s.id = c.entry_signal_id
             WHERE c.realized_pnl IS NOT NULL
               AND c.status IN ('CLOSED', 'STOPPED')
-            GROUP BY c.symbol, regime, c.side
+            GROUP BY c.symbol, regime, c.side,
+                     take_profit_bps, stop_loss_bps, max_hold_seconds
             ORDER BY avg_pnl_bps DESC
-            """
+            """,
+            (
+                config.scalp_take_profit_bps,
+                config.scalp_stop_loss_bps,
+                int(config.scalp_max_hold_seconds),
+            ),
         ):
             rows.append(
                 _evaluation_row(
@@ -156,9 +165,9 @@ def evaluate_cycle_candidates(
                     symbol=row["symbol"],
                     regime=row["regime"],
                     side=row["side"],
-                    take_profit_bps=config.scalp_take_profit_bps,
-                    stop_loss_bps=config.scalp_stop_loss_bps,
-                    max_hold_seconds=int(config.scalp_max_hold_seconds),
+                    take_profit_bps=float(row["take_profit_bps"]),
+                    stop_loss_bps=float(row["stop_loss_bps"]),
+                    max_hold_seconds=int(row["max_hold_seconds"]),
                     sample_count=int(row["sample_count"] or 0),
                     win_count=int(row["win_count"] or 0),
                     loss_count=int(row["loss_count"] or 0),
@@ -250,7 +259,30 @@ def strategy_gate_decision(
     if signal.side not in {"long", "short"}:
         return StrategyGateDecision(False, "strategy gate: flat signal")
 
-    sources = ("cycles", "signal_grid")
+    observed_approved = store.latest_strategy_candidate(
+        symbol=signal.symbol,
+        regime=signal.regime,
+        side=signal.side,
+        execution_mode=config.strategy_execution_mode,
+        decision="APPROVED",
+        source="cycles",
+    )
+    if observed_approved is not None:
+        return _gate_decision_from_row(observed_approved, "strategy gate approved by observed paper cycles")
+
+    observed_blocked = store.latest_strategy_candidate(
+        symbol=signal.symbol,
+        regime=signal.regime,
+        side=signal.side,
+        execution_mode=config.strategy_execution_mode,
+        decision="BLOCKED",
+        source="cycles",
+    )
+    veto = observed_evaluation_veto(observed_blocked, config)
+    if veto is not None:
+        return veto
+
+    sources = ("signal_grid",)
     fallback: StrategyGateDecision | None = None
     for source in sources:
         row = store.latest_strategy_evaluation(
@@ -309,6 +341,27 @@ def strategy_gate_decision(
         False,
         "strategy gate: no evaluation for "
         f"{config.strategy_execution_mode} {signal.symbol} {signal.regime} {signal.side}",
+    )
+
+
+def observed_evaluation_veto(
+    row: sqlite3.Row | None,
+    config: TradingConfig,
+) -> StrategyGateDecision | None:
+    if row is None:
+        return None
+    if str(row["decision"]) != "BLOCKED":
+        return None
+    sample_count = int(row["sample_count"] or 0)
+    if sample_count < config.strategy_early_block_samples:
+        return None
+    return StrategyGateDecision(
+        False,
+        "observed paper veto: "
+        f"{row['source']} {row['symbol']} {row['regime']} {row['side']} "
+        f"n={sample_count} avg={float(row['avg_pnl_bps']):.3f}bps "
+        f"win={float(row['win_rate']):.1%}: {row['reason']}",
+        int(row["id"]),
     )
 
 

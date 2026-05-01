@@ -184,8 +184,8 @@ def _snapshot(
         "strategy_rows": _strategy_rows_html(strategy_rows) or _empty_table_row(15, "전략 평가 결과 없음"),
         "market_regime_rows": _market_regime_rows_html(market_regime_rows) or _empty_table_row(10, "장세 라우터 기록 없음"),
         "market_context_rows": _market_context_rows_html(market_context_rows) or _empty_table_row(8, "시장상황 기록 없음"),
-        "performance_rows": _performance_rows_html(scalp_performance) or _empty_table_row(8, "스캘핑 종료 표본 없음"),
-        "strategy_performance_rows": _strategy_performance_rows_html(strategy_performance) or _empty_table_row(9, "전략 종료 표본 없음"),
+        "performance_rows": _performance_rows_html(scalp_performance) or _empty_table_row(12, "스캘핑 종료 표본 없음"),
+        "strategy_performance_rows": _strategy_performance_rows_html(strategy_performance) or _empty_table_row(13, "전략 종료 표본 없음"),
         "exit_reason_rows": _exit_reason_rows_html(scalp_exit_reasons) or _empty_table_row(6, "스캘핑 종료 사유 없음"),
         "strategy_exit_reason_rows": _strategy_exit_reason_rows_html(strategy_exit_reasons) or _empty_table_row(6, "전략 종료 사유 없음"),
     }
@@ -477,6 +477,10 @@ def _performance_rows_html(rows) -> str:
         f"<td>{row['wins']}</td>"
         f"<td>{row['losses']}</td>"
         f"<td>{escape(_fmt_pct(_ratio(row['wins'], row['count'])))}</td>"
+        f"<td>{escape(_fmt_pnl(row['avg_win_pnl']))}</td>"
+        f"<td>{escape(_fmt_pnl(row['avg_loss_pnl']))}</td>"
+        f"<td>{escape(_payoff_ratio(row['avg_win_pnl'], row['avg_loss_pnl']))}</td>"
+        f"<td>{escape(_breakeven_win_rate(row['avg_win_pnl'], row['avg_loss_pnl']))}</td>"
         f"<td>{escape(_fmt_pnl(row['avg_pnl']))}</td>"
         f"<td>{escape(_fmt_pnl(row['sum_pnl']))}</td>"
         "</tr>"
@@ -494,6 +498,10 @@ def _strategy_performance_rows_html(rows) -> str:
         f"<td>{row['wins']}</td>"
         f"<td>{row['losses']}</td>"
         f"<td>{escape(_fmt_pct(_ratio(row['wins'], row['count'])))}</td>"
+        f"<td>{escape(_fmt_pnl(row['avg_win_pnl']))}</td>"
+        f"<td>{escape(_fmt_pnl(row['avg_loss_pnl']))}</td>"
+        f"<td>{escape(_payoff_ratio(row['avg_win_pnl'], row['avg_loss_pnl']))}</td>"
+        f"<td>{escape(_breakeven_win_rate(row['avg_win_pnl'], row['avg_loss_pnl']))}</td>"
         f"<td>{escape(_fmt_pnl(row['avg_pnl']))}</td>"
         f"<td>{escape(_fmt_pnl(row['sum_pnl']))}</td>"
         "</tr>"
@@ -561,8 +569,8 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     strategy_rows = snapshot["strategy_rows"] or _empty_table_row(15, "전략 평가 결과 없음")
     market_regime_rows = snapshot["market_regime_rows"] or _empty_table_row(10, "장세 라우터 기록 없음")
     market_context_rows = snapshot.get("market_context_rows", "") or _empty_table_row(8, "시장상황 기록 없음")
-    performance_rows = snapshot["performance_rows"] or _empty_table_row(8, "스캘핑 종료 표본 없음")
-    strategy_performance_rows = snapshot.get("strategy_performance_rows", "") or _empty_table_row(9, "전략 종료 표본 없음")
+    performance_rows = snapshot["performance_rows"] or _empty_table_row(12, "스캘핑 종료 표본 없음")
+    strategy_performance_rows = snapshot.get("strategy_performance_rows", "") or _empty_table_row(13, "전략 종료 표본 없음")
     exit_reason_rows = snapshot["exit_reason_rows"] or _empty_table_row(6, "스캘핑 종료 사유 없음")
     strategy_exit_reason_rows = snapshot.get("strategy_exit_reason_rows", "") or _empty_table_row(6, "전략 종료 사유 없음")
     return f"""<!doctype html>
@@ -772,14 +780,14 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       <h3>스캘핑 성과</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>심볼</th><th>방향</th><th>종료</th><th>익절</th><th>손실</th><th>익절률</th><th>평균손익</th><th>합계손익</th></tr></thead>
+          <thead><tr><th>심볼</th><th>방향</th><th>종료</th><th>익절</th><th>손실</th><th>익절률</th><th>평균익</th><th>평균손</th><th>손익비</th><th>필요승률</th><th>평균손익</th><th>합계손익</th></tr></thead>
           <tbody id="performance-rows">{performance_rows}</tbody>
         </table>
       </div>
       <h3>전략 성과</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>전략</th><th>심볼</th><th>방향</th><th>종료</th><th>익절</th><th>손실</th><th>익절률</th><th>평균손익</th><th>합계손익</th></tr></thead>
+          <thead><tr><th>전략</th><th>심볼</th><th>방향</th><th>종료</th><th>익절</th><th>손실</th><th>익절률</th><th>평균익</th><th>평균손</th><th>손익비</th><th>필요승률</th><th>평균손익</th><th>합계손익</th></tr></thead>
           <tbody id="strategy-performance-rows">{strategy_performance_rows}</tbody>
         </table>
       </div>
@@ -1034,6 +1042,26 @@ def _ratio(numerator, denominator) -> float:
     if denominator_value <= 0:
         return 0.0
     return float(numerator or 0) / denominator_value
+
+
+def _payoff_ratio(avg_win, avg_loss) -> str:
+    if avg_win is None or avg_loss is None:
+        return ""
+    win = float(avg_win)
+    loss = float(avg_loss)
+    if win <= 0 or loss >= 0:
+        return ""
+    return f"{win / abs(loss):.2f}"
+
+
+def _breakeven_win_rate(avg_win, avg_loss) -> str:
+    if avg_win is None or avg_loss is None:
+        return ""
+    win = float(avg_win)
+    loss = abs(float(avg_loss))
+    if win <= 0 or loss <= 0:
+        return ""
+    return _fmt_pct(loss / (win + loss))
 
 
 def _fmt_kst(value: str | int | None) -> str:

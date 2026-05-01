@@ -28,6 +28,7 @@ from cointrading.scalp_lifecycle import (
     _target_filled,
 )
 from cointrading.storage import TradingStore, now_ms
+from cointrading.strategy_eval import observed_evaluation_veto
 from cointrading.strategy_router import SETUP_PASS, StrategySetup
 
 
@@ -115,6 +116,20 @@ def start_strategy_cycle_from_setup(
     plan = strategy_plan_from_setup(setup, config, symbol=symbol, bid=bid, ask=ask)
     if plan is None:
         return StrategyLifecycleResult(setup.strategy, symbol, "blocked", "no strategy plan")
+
+    observed_row = store.latest_strategy_evaluation(
+        symbol=symbol,
+        regime=setup.strategy,
+        side=setup.side,
+        take_profit_bps=plan.take_profit_bps,
+        stop_loss_bps=plan.stop_loss_bps,
+        max_hold_seconds=plan.max_hold_seconds,
+        execution_mode=plan.execution_mode,
+        source="strategy_cycles",
+    )
+    veto = observed_evaluation_veto(observed_row, config)
+    if veto is not None:
+        return _blocked_order_attempt(store, setup, symbol, veto.reason, config, ts)
 
     risk_decision = RiskManager(config).validate_new_notional(
         config.initial_equity,

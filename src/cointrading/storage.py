@@ -1008,6 +1008,8 @@ class TradingStore:
                     SELECT symbol, side, COUNT(*) AS count,
                            SUM(CASE WHEN status='CLOSED' THEN 1 ELSE 0 END) AS wins,
                            SUM(CASE WHEN status='STOPPED' THEN 1 ELSE 0 END) AS losses,
+                           AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END) AS avg_win_pnl,
+                           AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END) AS avg_loss_pnl,
                            AVG(realized_pnl) AS avg_pnl,
                            SUM(COALESCE(realized_pnl, 0)) AS sum_pnl
                     FROM scalp_cycles
@@ -1191,6 +1193,8 @@ class TradingStore:
                     SELECT strategy, symbol, side, COUNT(*) AS count,
                            SUM(CASE WHEN status='CLOSED' THEN 1 ELSE 0 END) AS wins,
                            SUM(CASE WHEN status='STOPPED' THEN 1 ELSE 0 END) AS losses,
+                           AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END) AS avg_win_pnl,
+                           AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END) AS avg_loss_pnl,
                            AVG(realized_pnl) AS avg_pnl,
                            SUM(COALESCE(realized_pnl, 0)) AS sum_pnl
                     FROM strategy_cycles

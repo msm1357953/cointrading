@@ -195,6 +195,65 @@ class StrategyEvaluationTests(unittest.TestCase):
             self.assertEqual(allowed.stop_loss_bps, 4.0)
             self.assertEqual(allowed.max_hold_seconds, 300)
 
+    def test_strategy_gate_vetoes_signal_candidate_when_observed_cycles_are_bad(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            config = TradingConfig(
+                strategy_gate_enabled=True,
+                strategy_early_block_samples=8,
+            )
+            signal = _signal(symbol="XRPUSDC", side="short", regime="aligned_short")
+            store.insert_strategy_evaluations(
+                [
+                    {
+                        "source": "cycles",
+                        "execution_mode": MAKER_POST_ONLY,
+                        "symbol": "XRPUSDC",
+                        "regime": "aligned_short",
+                        "side": "short",
+                        "take_profit_bps": 20.0,
+                        "stop_loss_bps": 4.0,
+                        "max_hold_seconds": 300,
+                        "sample_count": 8,
+                        "win_count": 2,
+                        "loss_count": 6,
+                        "win_rate": 2 / 8,
+                        "avg_pnl_bps": -3.5,
+                        "sum_pnl_bps": -28.0,
+                        "avg_win_bps": 2.0,
+                        "avg_loss_bps": -5.333,
+                        "decision": "BLOCKED",
+                        "reason": "평균손익 -3.500bps < 0",
+                    },
+                    {
+                        "source": "signal_grid",
+                        "execution_mode": MAKER_POST_ONLY,
+                        "symbol": "XRPUSDC",
+                        "regime": "aligned_short",
+                        "side": "short",
+                        "take_profit_bps": 20.0,
+                        "stop_loss_bps": 4.0,
+                        "max_hold_seconds": 300,
+                        "sample_count": 50,
+                        "win_count": 30,
+                        "loss_count": 20,
+                        "win_rate": 30 / 50,
+                        "avg_pnl_bps": 2.5,
+                        "sum_pnl_bps": 125.0,
+                        "avg_win_bps": 8.0,
+                        "avg_loss_bps": -4.0,
+                        "decision": "APPROVED",
+                        "reason": "test candidate",
+                    },
+                ],
+                timestamp_ms=10_000,
+            )
+
+            blocked = strategy_gate_decision(store, signal, config)
+
+            self.assertFalse(blocked.allowed)
+            self.assertIn("observed paper veto", blocked.reason)
+
     def test_signal_grid_can_approve_positive_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")

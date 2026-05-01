@@ -108,6 +108,8 @@ The signal grid compares `maker_post_only`, `taker_momentum`, and `hybrid_taker_
 
 New lifecycle entries are blocked when `COINTRADING_STRATEGY_GATE_ENABLED=true` and the matching execution mode/symbol/regime/side has no `APPROVED` evaluation. If the current fixed TP/SL/max-hold combination is not approved, the gate can select the best approved `signal_grid` candidate for that symbol/regime/side and pass its TP/SL/max-hold settings into the paper lifecycle. This keeps the bot collecting data while preventing weak combinations from continuing into new paper/live cycles.
 
+Actual paper outcomes are stronger than signal-grid estimates. Once observed `cycles` or `strategy_cycles` rows reach `COINTRADING_STRATEGY_EARLY_BLOCK_SAMPLES`, a `BLOCKED` observed-paper evaluation vetoes new entries even if the signal grid still has an approved candidate.
+
 Approval is based on positive net expectancy after fees/slippage, a minimum sample count, a low win-rate floor, and a break-even win-rate check derived from the observed average win/loss size. This avoids rejecting asymmetric payoff candidates just because their win rate is below 50%.
 
 `strategy-notify` sends a Telegram report when strategy decisions change or when the periodic interval elapses. The VM checks every 15 minutes and defaults to a 6-hour periodic report via `COINTRADING_STRATEGY_NOTIFY_INTERVAL_MINUTES=360`.
@@ -117,7 +119,7 @@ Approval is based on positive net expectancy after fees/slippage, a minimum samp
 The dashboard is a small HTTP server organized around the questions needed before live trading:
 
 - `개요`: live/dry-run guard flags, runtime risk mode, active paper cycles, total paper PnL, and approved candidate count.
-- `Paper`: combined scalping and macro-strategy paper cycles with entry/target/stop/exit reason/PnL, plus strategy-vs-scalp performance and exit reason summaries.
+- `Paper`: combined scalping and macro-strategy paper cycles with entry/target/stop/exit reason/PnL, plus strategy-vs-scalp performance, average win/loss, payoff ratio, break-even win rate, and exit reason summaries.
 - `전략`: latest strategy candidate evaluations with Korean labels for source, execution mode, regime, side, and decision.
 - `시장`: macro regime routing plus market context such as premium, funding, spread, depth, and imbalance.
 - `위험`, `신호`, `주문`, `원본요약`: detailed runtime risk text, raw signals, blocked/order attempts, and legacy summaries for debugging.

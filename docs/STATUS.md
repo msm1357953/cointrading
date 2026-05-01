@@ -64,6 +64,7 @@
 - 2026-05-01: Market-context collection and live supervision were added. The VM now stores mark/index premium, funding, open interest, spread, top-book/depth liquidity, and imbalance; `live-supervisor`/Telegram `실전` combines fresh market context, macro regime, strategy candidates, paper lifecycle performance, active locks, real Binance orders/positions, min-notional checks, runtime risk, live flags, and one-shot guards into a final go/no-go report.
 - 2026-05-01: Explicit rule strategies were added. `trend_follow` now requires 15m EMA/RSI confirmation, `range_reversion` uses 5m RSI plus Bollinger-band position, and `breakout_reduced` uses 5m breakout, RSI, and volume expansion. `strategy-evaluate` now also scores completed trend/range/breakout paper cycles.
 - 2026-05-01: Dashboard was reorganized around live-readiness questions. The first screen now shows live guard flags, runtime risk, active paper cycles, paper PnL, and approved candidates; the Paper tab combines scalping and macro strategy paper cycles with entry/target/stop/reason/PnL; market/strategy tables use Korean labels and explicit empty states.
+- 2026-05-01: Observed paper performance now vetoes new entries. If completed scalp or macro strategy paper cycles have enough samples and are `BLOCKED`, that real paper result overrides signal-grid approvals. Dashboard performance tables now show average win, average loss, payoff ratio, and break-even win rate.
 
 ## Next Work Packets
 
