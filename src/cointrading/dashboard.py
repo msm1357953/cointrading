@@ -10,9 +10,18 @@ from urllib.parse import parse_qs, urlparse
 
 from cointrading.config import TradingConfig
 from cointrading.market_regime import macro_regime_ko, trade_bias_ko
-from cointrading.risk_state import evaluate_runtime_risk
+from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
 from cointrading.scalping import scalp_report_rows_text
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms, now_ms
+from cointrading.strategy_notify import (
+    MODE_LABELS,
+    REGIME_LABELS,
+    REASON_LABELS,
+    SIDE_LABELS,
+    SOURCE_LABELS,
+    STATUS_LABELS,
+    STRATEGY_LABELS,
+)
 
 
 DEFAULT_DASHBOARD_ROW_LIMIT = 200
@@ -128,22 +137,239 @@ def _snapshot(
         symbol=symbol,
         symbols=config.scalp_symbols if not symbol else None,
     )
+    risk_state = evaluate_runtime_risk(store, config)
+    scalp_cycles = store.recent_scalp_cycles(limit=limit)
+    strategy_cycles = store.recent_strategy_cycles(limit=limit)
+    active_scalp_cycles = [row for row in scalp_cycles if _is_active_status(row["status"])]
+    active_strategy_cycles = [row for row in strategy_cycles if _is_active_status(row["status"])]
+    strategy_rows = store.latest_strategy_evaluations(limit=limit)
+    latest_strategy_batch = store.latest_strategy_batch()
+    market_regime_rows = store.latest_market_regimes(symbols=config.scalp_symbols, limit=limit)
+    market_context_rows = store.latest_market_contexts(symbols=config.scalp_symbols, limit=limit)
+    scalp_performance = store.scalp_cycle_performance()
+    strategy_performance = store.strategy_cycle_performance()
+    scalp_exit_reasons = store.scalp_cycle_exit_reasons()
+    strategy_exit_reasons = store.strategy_cycle_exit_reasons()
+    paper_rows = _paper_rows_html(scalp_cycles, strategy_cycles)
     return {
         "generated_at": kst_from_ms(now_ms()),
         "row_limit": str(limit),
-        "risk_state": evaluate_runtime_risk(store, config).to_text(),
-        "report": report,
-        "signal_rows": _signal_rows_html(rows[-limit:]),
-        "order_rows": _order_rows_html(store.recent_orders(limit=limit)),
-        "cycle_rows": _cycle_rows_html(store.recent_scalp_cycles(limit=limit)),
-        "strategy_cycle_rows": _strategy_cycle_rows_html(store.recent_strategy_cycles(limit=limit)),
-        "strategy_rows": _strategy_rows_html(store.latest_strategy_evaluations(limit=limit)),
-        "market_regime_rows": _market_regime_rows_html(
-            store.latest_market_regimes(symbols=config.scalp_symbols, limit=limit)
+        "mode_summary": _mode_summary_html(config),
+        "risk_state": risk_state.to_text(),
+        "overview": _overview_html(
+            config=config,
+            risk_state=risk_state,
+            active_scalp_cycles=active_scalp_cycles,
+            active_strategy_cycles=active_strategy_cycles,
+            scalp_performance=scalp_performance,
+            strategy_performance=strategy_performance,
+            latest_strategy_batch=latest_strategy_batch,
         ),
-        "performance_rows": _performance_rows_html(store.scalp_cycle_performance()),
-        "exit_reason_rows": _exit_reason_rows_html(store.scalp_cycle_exit_reasons()),
+        "active_paper_rows": _active_paper_rows_html(active_scalp_cycles, active_strategy_cycles),
+        "paper_rows": paper_rows,
+        "paper_summary": _paper_summary_html(
+            active_scalp_cycles=active_scalp_cycles,
+            active_strategy_cycles=active_strategy_cycles,
+            scalp_performance=scalp_performance,
+            strategy_performance=strategy_performance,
+            scalp_exit_reasons=scalp_exit_reasons,
+            strategy_exit_reasons=strategy_exit_reasons,
+        ),
+        "strategy_summary": _strategy_summary_html(latest_strategy_batch),
+        "report": report,
+        "signal_rows": _signal_rows_html(rows[-limit:]) or _empty_table_row(5, "최근 신호 없음"),
+        "order_rows": _order_rows_html(store.recent_orders(limit=limit)) or _empty_table_row(5, "최근 주문/차단 없음"),
+        "cycle_rows": _cycle_rows_html(scalp_cycles) or _empty_table_row(6, "스캘핑 상태머신 기록 없음"),
+        "strategy_cycle_rows": _strategy_cycle_rows_html(strategy_cycles) or _empty_table_row(7, "전략 상태머신 기록 없음"),
+        "strategy_rows": _strategy_rows_html(strategy_rows) or _empty_table_row(15, "전략 평가 결과 없음"),
+        "market_regime_rows": _market_regime_rows_html(market_regime_rows) or _empty_table_row(10, "장세 라우터 기록 없음"),
+        "market_context_rows": _market_context_rows_html(market_context_rows) or _empty_table_row(8, "시장상황 기록 없음"),
+        "performance_rows": _performance_rows_html(scalp_performance) or _empty_table_row(8, "스캘핑 종료 표본 없음"),
+        "strategy_performance_rows": _strategy_performance_rows_html(strategy_performance) or _empty_table_row(9, "전략 종료 표본 없음"),
+        "exit_reason_rows": _exit_reason_rows_html(scalp_exit_reasons) or _empty_table_row(6, "스캘핑 종료 사유 없음"),
+        "strategy_exit_reason_rows": _strategy_exit_reason_rows_html(strategy_exit_reasons) or _empty_table_row(6, "전략 종료 사유 없음"),
     }
+
+
+def _overview_html(
+    *,
+    config: TradingConfig,
+    risk_state,
+    active_scalp_cycles,
+    active_strategy_cycles,
+    scalp_performance,
+    strategy_performance,
+    latest_strategy_batch,
+) -> str:
+    active_count = len(active_scalp_cycles) + len(active_strategy_cycles)
+    scalp_sum = sum(float(row["sum_pnl"] or 0.0) for row in scalp_performance)
+    strategy_sum = sum(float(row["sum_pnl"] or 0.0) for row in strategy_performance)
+    approved = [row for row in latest_strategy_batch if str(row["decision"]) == "APPROVED"]
+    sample_low = [row for row in latest_strategy_batch if str(row["decision"]) == "SAMPLE_LOW"]
+    blocked = [row for row in latest_strategy_batch if str(row["decision"]) == "BLOCKED"]
+    live_locked = config.dry_run or not config.live_trading_enabled
+    rows = [
+        _metric_html("실전", "잠김" if live_locked else "가능 플래그 ON", "good" if live_locked else "warn"),
+        _metric_html("위험모드", _risk_mode_line(risk_state), "good" if risk_state.allows_new_entries else "block"),
+        _metric_html("진행 중 Paper", str(active_count), "warn" if active_count else "good"),
+        _metric_html("Paper 손익", f"{scalp_sum + strategy_sum:+.6f}", _pnl_tone(scalp_sum + strategy_sum)),
+        _metric_html("승인 후보", str(len(approved)), "good" if approved else "warn"),
+        _metric_html("표본부족/차단", f"{len(sample_low)} / {len(blocked)}", "warn" if sample_low else "muted"),
+    ]
+    return "\n".join(rows)
+
+
+def _mode_summary_html(config: TradingConfig) -> str:
+    items = [
+        ("dry-run", "ON" if config.dry_run else "OFF", "good" if config.dry_run else "warn"),
+        ("live", "ON" if config.live_trading_enabled else "OFF", "warn" if config.live_trading_enabled else "good"),
+        (
+            "scalp live",
+            "ON" if config.live_scalp_lifecycle_enabled else "OFF",
+            "warn" if config.live_scalp_lifecycle_enabled else "good",
+        ),
+        (
+            "strategy live",
+            "ON" if config.live_strategy_lifecycle_enabled else "OFF",
+            "warn" if config.live_strategy_lifecycle_enabled else "good",
+        ),
+        (
+            "one-shot",
+            "ON" if config.live_one_shot_enabled else "OFF",
+            "warn" if config.live_one_shot_enabled else "good",
+        ),
+    ]
+    return "\n".join(
+        f'<span class="chip {_tone_class(tone)}">{escape(label)} {escape(value)}</span>'
+        for label, value, tone in items
+    )
+
+
+def _metric_html(label: str, value: str, tone: str = "muted") -> str:
+    return (
+        f'<div class="metric {_tone_class(tone)}">'
+        f'<span class="metric-label">{escape(label)}</span>'
+        f'<strong>{escape(value)}</strong>'
+        "</div>"
+    )
+
+
+def _active_paper_rows_html(scalp_cycles, strategy_cycles) -> str:
+    rows = [
+        *_cycle_table_rows(scalp_cycles, cycle_type="스캘핑"),
+        *_cycle_table_rows(strategy_cycles, cycle_type="전략"),
+    ]
+    if not rows:
+        return '<tr><td colspan="12" class="empty">진행 중인 paper 사이클 없음</td></tr>'
+    ranked = sorted(rows, key=lambda item: item[0], reverse=True)
+    return "\n".join(row for _, row in ranked)
+
+
+def _paper_rows_html(scalp_cycles, strategy_cycles) -> str:
+    rows = [
+        *_cycle_table_rows(scalp_cycles, cycle_type="스캘핑"),
+        *_cycle_table_rows(strategy_cycles, cycle_type="전략"),
+    ]
+    if not rows:
+        return '<tr><td colspan="12" class="empty">paper 사이클 기록 없음</td></tr>'
+    ranked = sorted(rows, key=lambda item: item[0], reverse=True)
+    return "\n".join(row for _, row in ranked)
+
+
+def _cycle_table_rows(cycles, *, cycle_type: str) -> list[tuple[int, str]]:
+    output: list[tuple[int, str]] = []
+    for cycle in cycles:
+        updated_ms = int(cycle["updated_ms"])
+        strategy = cycle["strategy"] if cycle_type == "전략" else "maker_scalp"
+        entry_price = _fmt_price(cycle["entry_price"])
+        target_price = _fmt_price(cycle["target_price"])
+        stop_price = _fmt_price(cycle["stop_price"])
+        quantity = _fmt_qty(cycle["quantity"])
+        pnl = _fmt_pnl(cycle["realized_pnl"])
+        status = str(cycle["status"])
+        reason = str(cycle["reason"] or "")
+        row = (
+            f'<tr class="{_status_row_class(status)}">'
+            f"<td>{escape(kst_from_ms(updated_ms))}</td>"
+            f"<td>{escape(cycle_type)}</td>"
+            f"<td>{escape(_strategy_label(str(strategy)))}</td>"
+            f"<td>{escape(str(cycle['symbol']))}</td>"
+            f"<td>{escape(_side_label(str(cycle['side'])))}</td>"
+            f"<td>{_status_pill(status)}</td>"
+            f"<td>{escape(quantity)}</td>"
+            f"<td>{escape(entry_price)}</td>"
+            f"<td>{escape(target_price)}</td>"
+            f"<td>{escape(stop_price)}</td>"
+            f"<td>{escape(_reason_label(reason))}</td>"
+            f"<td>{escape(pnl)}</td>"
+            "</tr>"
+        )
+        output.append((updated_ms, row))
+    return output
+
+
+def _paper_summary_html(
+    *,
+    active_scalp_cycles,
+    active_strategy_cycles,
+    scalp_performance,
+    strategy_performance,
+    scalp_exit_reasons,
+    strategy_exit_reasons,
+) -> str:
+    active_count = len(active_scalp_cycles) + len(active_strategy_cycles)
+    scalp_sum = sum(float(row["sum_pnl"] or 0.0) for row in scalp_performance)
+    strategy_sum = sum(float(row["sum_pnl"] or 0.0) for row in strategy_performance)
+    scalp_closed = sum(int(row["count"] or 0) for row in scalp_performance)
+    strategy_closed = sum(int(row["count"] or 0) for row in strategy_performance)
+    worst_reasons = sorted(
+        [*scalp_exit_reasons, *strategy_exit_reasons],
+        key=lambda row: float(row["sum_pnl"] or 0.0),
+    )
+    reason_text = "없음"
+    if worst_reasons:
+        reason = worst_reasons[0]["reason"] or worst_reasons[0]["status"]
+        reason_text = f"{_reason_label(str(reason))} ({_fmt_pnl(worst_reasons[0]['sum_pnl'])})"
+    return "\n".join(
+        [
+            _metric_html("진행 중", str(active_count), "warn" if active_count else "good"),
+            _metric_html("종료 표본", f"{scalp_closed + strategy_closed}", "muted"),
+            _metric_html("스캘핑 합계", f"{scalp_sum:+.6f}", _pnl_tone(scalp_sum)),
+            _metric_html("전략 합계", f"{strategy_sum:+.6f}", _pnl_tone(strategy_sum)),
+            _metric_html("최악 종료사유", reason_text, "warn" if worst_reasons else "muted"),
+        ]
+    )
+
+
+def _strategy_summary_html(rows) -> str:
+    rows = list(rows)
+    if not rows:
+        return _metric_html("전략 평가", "없음", "warn")
+    approved = [row for row in rows if str(row["decision"]) == "APPROVED"]
+    sample_low = [row for row in rows if str(row["decision"]) == "SAMPLE_LOW"]
+    blocked = [row for row in rows if str(row["decision"]) == "BLOCKED"]
+    best = sorted(
+        approved,
+        key=lambda row: (-float(row["avg_pnl_bps"] or 0.0), -int(row["sample_count"] or 0)),
+    )
+    best_text = "없음"
+    tone = "warn"
+    if best:
+        row = best[0]
+        best_text = (
+            f"{row['symbol']} {_side_label(str(row['side']))} "
+            f"{_mode_label(str(row['execution_mode']))} "
+            f"{float(row['avg_pnl_bps']):+.3f}bps"
+        )
+        tone = "good"
+    return "\n".join(
+        [
+            _metric_html("승인", str(len(approved)), "good" if approved else "warn"),
+            _metric_html("표본부족", str(len(sample_low)), "warn" if sample_low else "muted"),
+            _metric_html("차단", str(len(blocked)), "block" if blocked else "muted"),
+            _metric_html("상위 후보", best_text, tone),
+        ]
+    )
 
 
 def _signal_rows_html(rows: list[dict[str, str]]) -> str:
@@ -151,8 +377,8 @@ def _signal_rows_html(rows: list[dict[str, str]]) -> str:
         "<tr>"
         f"<td>{escape(_fmt_kst(row.get('timestamp_ms')))}</td>"
         f"<td>{escape(row.get('symbol', ''))}</td>"
-        f"<td>{escape(row.get('side', ''))}</td>"
-        f"<td>{escape(row.get('regime', ''))}</td>"
+        f"<td>{escape(_side_label(row.get('side', '')))}</td>"
+        f"<td>{escape(_regime_label(row.get('regime', '')))}</td>"
         f"<td>{escape(row.get('horizon_5m_bps', ''))}</td>"
         "</tr>"
         for row in reversed(rows)
@@ -164,9 +390,9 @@ def _order_rows_html(orders) -> str:
         "<tr>"
         f"<td>{escape(kst_from_ms(int(order['timestamp_ms'])))}</td>"
         f"<td>{escape(order['symbol'])}</td>"
-        f"<td>{escape(order['side'])}</td>"
-        f"<td>{escape(order['status'])}</td>"
-        f"<td>{escape(order['reason'] or '')}</td>"
+        f"<td>{escape(_side_label(str(order['side'])))}</td>"
+        f"<td>{escape(_status_label(str(order['status'])))}</td>"
+        f"<td>{escape(_reason_label(str(order['reason'] or '')))}</td>"
         "</tr>"
         for order in orders
     )
@@ -177,9 +403,9 @@ def _cycle_rows_html(cycles) -> str:
         "<tr>"
         f"<td>{escape(kst_from_ms(int(cycle['updated_ms'])))}</td>"
         f"<td>{escape(cycle['symbol'])}</td>"
-        f"<td>{escape(cycle['side'])}</td>"
-        f"<td>{escape(cycle['status'])}</td>"
-        f"<td>{escape(cycle['reason'] or '')}</td>"
+        f"<td>{escape(_side_label(str(cycle['side'])))}</td>"
+        f"<td>{_status_pill(str(cycle['status']))}</td>"
+        f"<td>{escape(_reason_label(str(cycle['reason'] or '')))}</td>"
         f"<td>{escape(_fmt_pnl(cycle['realized_pnl']))}</td>"
         "</tr>"
         for cycle in cycles
@@ -190,11 +416,11 @@ def _strategy_cycle_rows_html(cycles) -> str:
     return "\n".join(
         "<tr>"
         f"<td>{escape(kst_from_ms(int(cycle['updated_ms'])))}</td>"
-        f"<td>{escape(cycle['strategy'])}</td>"
+        f"<td>{escape(_strategy_label(str(cycle['strategy'])))}</td>"
         f"<td>{escape(cycle['symbol'])}</td>"
-        f"<td>{escape(cycle['side'])}</td>"
-        f"<td>{escape(cycle['status'])}</td>"
-        f"<td>{escape(cycle['reason'] or '')}</td>"
+        f"<td>{escape(_side_label(str(cycle['side'])))}</td>"
+        f"<td>{_status_pill(str(cycle['status']))}</td>"
+        f"<td>{escape(_reason_label(str(cycle['reason'] or '')))}</td>"
         f"<td>{escape(_fmt_pnl(cycle['realized_pnl']))}</td>"
         "</tr>"
         for cycle in cycles
@@ -205,12 +431,12 @@ def _strategy_rows_html(rows) -> str:
     return "\n".join(
         "<tr>"
         f"<td>{escape(kst_from_ms(int(row['evaluated_ms'])))}</td>"
-        f"<td>{escape(row['decision'])}</td>"
-        f"<td>{escape(row['source'])}</td>"
-        f"<td>{escape(row['execution_mode'])}</td>"
+        f"<td>{_decision_pill(str(row['decision']))}</td>"
+        f"<td>{escape(_source_label(str(row['source'])))}</td>"
+        f"<td>{escape(_mode_label(str(row['execution_mode'])))}</td>"
         f"<td>{escape(row['symbol'])}</td>"
-        f"<td>{escape(row['regime'])}</td>"
-        f"<td>{escape(row['side'])}</td>"
+        f"<td>{escape(_regime_label(str(row['regime'])))}</td>"
+        f"<td>{escape(_side_label(str(row['side'])))}</td>"
         f"<td>{float(row['take_profit_bps']):.1f}</td>"
         f"<td>{float(row['stop_loss_bps']):.1f}</td>"
         f"<td>{int(row['max_hold_seconds'])}s</td>"
@@ -236,7 +462,7 @@ def _market_regime_rows_html(rows) -> str:
         f"<td>{float(row['realized_vol_bps']):.2f}</td>"
         f"<td>{float(row['atr_bps']):.2f}</td>"
         f"<td>{escape(_allowed_strategies(row['allowed_strategies_json']))}</td>"
-        f"<td>{escape(row['blocked_reason'] or '')}</td>"
+        f"<td>{escape(_reason_label(str(row['blocked_reason'] or '')))}</td>"
         "</tr>"
         for row in rows
     )
@@ -246,7 +472,24 @@ def _performance_rows_html(rows) -> str:
     return "\n".join(
         "<tr>"
         f"<td>{escape(row['symbol'])}</td>"
-        f"<td>{escape(row['side'])}</td>"
+        f"<td>{escape(_side_label(str(row['side'])))}</td>"
+        f"<td>{row['count']}</td>"
+        f"<td>{row['wins']}</td>"
+        f"<td>{row['losses']}</td>"
+        f"<td>{escape(_fmt_pct(_ratio(row['wins'], row['count'])))}</td>"
+        f"<td>{escape(_fmt_pnl(row['avg_pnl']))}</td>"
+        f"<td>{escape(_fmt_pnl(row['sum_pnl']))}</td>"
+        "</tr>"
+        for row in rows
+    )
+
+
+def _strategy_performance_rows_html(rows) -> str:
+    return "\n".join(
+        "<tr>"
+        f"<td>{escape(_strategy_label(str(row['strategy'])))}</td>"
+        f"<td>{escape(row['symbol'])}</td>"
+        f"<td>{escape(_side_label(str(row['side'])))}</td>"
         f"<td>{row['count']}</td>"
         f"<td>{row['wins']}</td>"
         f"<td>{row['losses']}</td>"
@@ -261,8 +504,9 @@ def _performance_rows_html(rows) -> str:
 def _exit_reason_rows_html(rows) -> str:
     return "\n".join(
         "<tr>"
-        f"<td>{escape(row['status'])}</td>"
-        f"<td>{escape(row['reason'] or '')}</td>"
+        "<td>스캘핑</td>"
+        f"<td>{escape(_status_label(str(row['status'])))}</td>"
+        f"<td>{escape(_reason_label(str(row['reason'] or '')))}</td>"
         f"<td>{row['count']}</td>"
         f"<td>{escape(_fmt_pnl(row['avg_pnl']))}</td>"
         f"<td>{escape(_fmt_pnl(row['sum_pnl']))}</td>"
@@ -271,17 +515,56 @@ def _exit_reason_rows_html(rows) -> str:
     )
 
 
+def _strategy_exit_reason_rows_html(rows) -> str:
+    return "\n".join(
+        "<tr>"
+        f"<td>{escape(_strategy_label(str(row['strategy'])))}</td>"
+        f"<td>{escape(_status_label(str(row['status'])))}</td>"
+        f"<td>{escape(_reason_label(str(row['reason'] or '')))}</td>"
+        f"<td>{row['count']}</td>"
+        f"<td>{escape(_fmt_pnl(row['avg_pnl']))}</td>"
+        f"<td>{escape(_fmt_pnl(row['sum_pnl']))}</td>"
+        "</tr>"
+        for row in rows
+    )
+
+
+def _market_context_rows_html(rows) -> str:
+    return "\n".join(
+        "<tr>"
+        f"<td>{escape(kst_from_ms(int(row['timestamp_ms'])))}</td>"
+        f"<td>{escape(row['symbol'])}</td>"
+        f"<td>{float(row['premium_bps']):.3f}</td>"
+        f"<td>{_funding_bps(row['funding_rate'])}</td>"
+        f"<td>{float(row['spread_bps']):.3f}</td>"
+        f"<td>{float(row['depth_bid_notional']) + float(row['depth_ask_notional']):.2f}</td>"
+        f"<td>{float(row['depth_imbalance']):+.3f}</td>"
+        f"<td>{_fmt_price(row['mark_price'])}</td>"
+        "</tr>"
+        for row in rows
+    )
+
+
 def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     row_limit = escape(snapshot.get("row_limit", str(DEFAULT_DASHBOARD_ROW_LIMIT)))
     risk_state = snapshot.get("risk_state", "런타임 위험모드\n아직 산출된 내용이 없습니다.")
-    signal_rows = snapshot["signal_rows"]
-    order_rows = snapshot["order_rows"]
-    cycle_rows = snapshot["cycle_rows"]
-    strategy_cycle_rows = snapshot.get("strategy_cycle_rows", "")
-    strategy_rows = snapshot["strategy_rows"]
-    market_regime_rows = snapshot["market_regime_rows"]
-    performance_rows = snapshot["performance_rows"]
-    exit_reason_rows = snapshot["exit_reason_rows"]
+    mode_summary = snapshot.get("mode_summary", "")
+    overview = snapshot.get("overview", "")
+    active_paper_rows = snapshot.get("active_paper_rows", "") or _empty_table_row(12, "진행 중인 paper 사이클 없음")
+    paper_rows = snapshot.get("paper_rows", "") or _empty_table_row(12, "paper 사이클 기록 없음")
+    paper_summary = snapshot.get("paper_summary", "")
+    strategy_summary = snapshot.get("strategy_summary", "")
+    signal_rows = snapshot["signal_rows"] or _empty_table_row(5, "최근 신호 없음")
+    order_rows = snapshot["order_rows"] or _empty_table_row(5, "최근 주문/차단 없음")
+    cycle_rows = snapshot["cycle_rows"] or _empty_table_row(6, "스캘핑 상태머신 기록 없음")
+    strategy_cycle_rows = snapshot.get("strategy_cycle_rows", "") or _empty_table_row(7, "전략 상태머신 기록 없음")
+    strategy_rows = snapshot["strategy_rows"] or _empty_table_row(15, "전략 평가 결과 없음")
+    market_regime_rows = snapshot["market_regime_rows"] or _empty_table_row(10, "장세 라우터 기록 없음")
+    market_context_rows = snapshot.get("market_context_rows", "") or _empty_table_row(8, "시장상황 기록 없음")
+    performance_rows = snapshot["performance_rows"] or _empty_table_row(8, "스캘핑 종료 표본 없음")
+    strategy_performance_rows = snapshot.get("strategy_performance_rows", "") or _empty_table_row(9, "전략 종료 표본 없음")
+    exit_reason_rows = snapshot["exit_reason_rows"] or _empty_table_row(6, "스캘핑 종료 사유 없음")
+    strategy_exit_reason_rows = snapshot.get("strategy_exit_reason_rows", "") or _empty_table_row(6, "전략 종료 사유 없음")
     return f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -289,99 +572,294 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cointrading Dashboard</title>
   <style>
-    body {{ font-family: system-ui, -apple-system, sans-serif; margin: 24px; background: #f7f8fa; color: #15171a; }}
-    header {{ display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }}
-    pre {{ white-space: pre-wrap; background: #111827; color: #e5e7eb; padding: 16px; border-radius: 6px; }}
-    table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 6px; overflow: hidden; }}
-    th, td {{ text-align: left; padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; }}
-    th {{ background: #eef2f7; }}
-    .muted {{ color: #5f6875; }}
-    .status {{ width: 8px; height: 8px; border-radius: 999px; background: #16a34a; display: inline-block; margin-right: 6px; }}
-    nav {{ display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0; }}
-    button {{ border: 1px solid #cfd6df; background: white; padding: 8px 12px; border-radius: 6px; cursor: pointer; }}
-    button.active {{ background: #111827; color: white; border-color: #111827; }}
+    :root {{
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --ink: #15171a;
+      --muted: #647080;
+      --line: #d9e0e8;
+      --head: #eef3f8;
+      --good-bg: #e8f7ef;
+      --good: #14783e;
+      --warn-bg: #fff4d7;
+      --warn: #8a5a00;
+      --block-bg: #fde8e8;
+      --block: #b42318;
+      --accent: #0f5f8c;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+    }}
+    .shell {{ padding: 24px 28px 36px; }}
+    header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 20px;
+      margin-bottom: 14px;
+    }}
+    h1 {{ margin: 0; font-size: 28px; line-height: 1.15; }}
+    h2 {{ margin: 0 0 12px; font-size: 20px; }}
+    h3 {{ margin: 24px 0 10px; font-size: 16px; }}
+    pre {{
+      white-space: pre-wrap;
+      background: #18212f;
+      color: #e8edf4;
+      padding: 16px;
+      border-radius: 6px;
+      overflow: auto;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+    }}
+    th, td {{
+      text-align: left;
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      vertical-align: top;
+    }}
+    th {{
+      background: var(--head);
+      font-weight: 700;
+      color: #263241;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }}
+    tr:last-child td {{ border-bottom: 0; }}
+    .table-wrap {{ overflow-x: auto; border-radius: 6px; }}
+    .muted {{ color: var(--muted); }}
+    .status-dot {{
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: #16a34a;
+      display: inline-block;
+      margin-right: 7px;
+    }}
+    .headline-meta {{ text-align: right; line-height: 1.7; }}
+    .mode-line {{ display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }}
+    nav {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 18px 0 22px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 10px;
+    }}
+    button {{
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 650;
+      color: #293545;
+    }}
+    button.active {{ background: #1d3345; color: #fff; border-color: #1d3345; }}
     .tab-panel {{ display: none; }}
     .tab-panel.active {{ display: block; }}
+    .metric-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      margin: 10px 0 18px;
+    }}
+    .metric {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 4px solid #8a97a8;
+      border-radius: 6px;
+      padding: 12px;
+      min-height: 74px;
+    }}
+    .metric strong {{ display: block; margin-top: 7px; font-size: 19px; line-height: 1.2; }}
+    .metric-label {{ color: var(--muted); font-size: 12px; font-weight: 700; }}
+    .tone-good {{ border-color: #bfe4cd; border-left-color: var(--good); background: var(--good-bg); }}
+    .tone-warn {{ border-color: #f2d88d; border-left-color: var(--warn); background: var(--warn-bg); }}
+    .tone-block {{ border-color: #f2b8b5; border-left-color: var(--block); background: var(--block-bg); }}
+    .tone-muted {{ border-left-color: #8a97a8; }}
+    .chip, .pill {{
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+      background: #fff;
+    }}
+    .chip.tone-good, .pill.tone-good {{ color: var(--good); background: var(--good-bg); border-color: #bfe4cd; }}
+    .chip.tone-warn, .pill.tone-warn {{ color: var(--warn); background: var(--warn-bg); border-color: #f2d88d; }}
+    .chip.tone-block, .pill.tone-block {{ color: var(--block); background: var(--block-bg); border-color: #f2b8b5; }}
+    .row-active td {{ background: #f0f8ff; }}
+    .row-stopped td {{ background: #fff8f1; }}
+    .empty {{ color: var(--muted); text-align: center; padding: 18px; }}
+    .split {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 0.42fr);
+      gap: 16px;
+      align-items: start;
+    }}
+    @media (max-width: 920px) {{
+      .shell {{ padding: 16px; }}
+      header {{ display: block; }}
+      .headline-meta {{ text-align: left; margin-top: 10px; }}
+      .mode-line {{ justify-content: flex-start; }}
+      .split {{ display: block; }}
+      th, td {{ font-size: 12px; padding: 8px; }}
+    }}
   </style>
 </head>
 <body>
-  <header>
-    <h1>Cointrading</h1>
-    <p class="muted"><span id="stream-status" class="status"></span>대상: {escape(", ".join(config.scalp_symbols))} · 최근 <span id="row-limit">{row_limit}</span>개 표시 · <span id="generated-at">{escape(snapshot["generated_at"])}</span></p>
-  </header>
-  <nav>
-    <button class="active" data-tab="summary">요약</button>
-    <button data-tab="risk">위험모드</button>
-    <button data-tab="performance">성과</button>
-    <button data-tab="market">장세라우터</button>
-    <button data-tab="strategies">전략후보</button>
-    <button data-tab="cycles">상태머신</button>
-    <button data-tab="strategy-cycles">전략상태</button>
-    <button data-tab="signals">신호</button>
-    <button data-tab="orders">주문</button>
-  </nav>
-  <section id="tab-summary" class="tab-panel active">
-    <h2>요약</h2>
-    <pre id="report">{escape(snapshot["report"])}</pre>
-  </section>
-  <section id="tab-risk" class="tab-panel">
-    <h2>위험모드</h2>
-    <pre id="risk-state">{escape(risk_state)}</pre>
-  </section>
-  <section id="tab-performance" class="tab-panel">
-    <h2>방향별 성과</h2>
-    <table>
-      <thead><tr><th>심볼</th><th>방향</th><th>종료</th><th>익절</th><th>손실</th><th>익절률</th><th>평균손익</th><th>합계손익</th></tr></thead>
-      <tbody id="performance-rows">{performance_rows}</tbody>
-    </table>
-    <h2>종료 사유</h2>
-    <table>
-      <thead><tr><th>상태</th><th>이유</th><th>개수</th><th>평균손익</th><th>합계손익</th></tr></thead>
-      <tbody id="exit-reason-rows">{exit_reason_rows}</tbody>
-    </table>
-  </section>
-  <section id="tab-market" class="tab-panel">
-    <h2>장세 라우터</h2>
-    <table>
-      <thead><tr><th>시각</th><th>심볼</th><th>큰 장세</th><th>편향</th><th>1h bps</th><th>4h bps</th><th>변동성</th><th>ATR</th><th>허용 전략</th><th>차단 이유</th></tr></thead>
-      <tbody id="market-regime-rows">{market_regime_rows}</tbody>
-    </table>
-  </section>
-  <section id="tab-strategies" class="tab-panel">
-    <h2>전략 후보</h2>
-    <table>
-      <thead><tr><th>평가</th><th>판정</th><th>출처</th><th>실행</th><th>심볼</th><th>장상태</th><th>방향</th><th>TP</th><th>SL</th><th>보유</th><th>표본</th><th>승률</th><th>평균bps</th><th>합계bps</th><th>이유</th></tr></thead>
-      <tbody id="strategy-rows">{strategy_rows}</tbody>
-    </table>
-  </section>
-  <section id="tab-cycles" class="tab-panel">
-    <h2>스캘핑 상태머신</h2>
-    <table>
-      <thead><tr><th>갱신</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th><th>실현손익</th></tr></thead>
-      <tbody id="cycle-rows">{cycle_rows}</tbody>
-    </table>
-  </section>
-  <section id="tab-strategy-cycles" class="tab-panel">
-    <h2>전략 상태머신</h2>
-    <table>
-      <thead><tr><th>갱신</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th><th>실현손익</th></tr></thead>
-      <tbody id="strategy-cycle-rows">{strategy_cycle_rows}</tbody>
-    </table>
-  </section>
-  <section id="tab-signals" class="tab-panel">
-    <h2>최근 신호</h2>
-    <table>
-      <thead><tr><th>시간</th><th>심볼</th><th>방향</th><th>장상태</th><th>5분 bps</th></tr></thead>
-      <tbody id="signal-rows">{signal_rows}</tbody>
-    </table>
-  </section>
-  <section id="tab-orders" class="tab-panel">
-    <h2>최근 주문/차단</h2>
-    <table>
-      <thead><tr><th>시간</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th></tr></thead>
-      <tbody id="order-rows">{order_rows}</tbody>
-    </table>
-  </section>
+  <div class="shell">
+    <header>
+      <div>
+        <h1>Cointrading</h1>
+        <p class="muted"><span id="stream-status" class="status-dot"></span>대상: {escape(", ".join(config.scalp_symbols))} · 최근 <span id="row-limit">{row_limit}</span>개 · <span id="generated-at">{escape(snapshot["generated_at"])}</span></p>
+      </div>
+      <div id="mode-summary" class="mode-line">{mode_summary}</div>
+    </header>
+    <nav>
+      <button class="active" data-tab="overview">개요</button>
+      <button data-tab="paper">Paper</button>
+      <button data-tab="strategies">전략</button>
+      <button data-tab="market">시장</button>
+      <button data-tab="risk">위험</button>
+      <button data-tab="signals">신호</button>
+      <button data-tab="orders">주문</button>
+      <button data-tab="raw">원본요약</button>
+    </nav>
+    <section id="tab-overview" class="tab-panel active">
+      <h2>개요</h2>
+      <div id="overview" class="metric-grid">{overview}</div>
+      <div class="split">
+        <div>
+          <h3>진행 중 Paper</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입</th><th>목표</th><th>손절</th><th>이유</th><th>손익</th></tr></thead>
+              <tbody id="active-paper-rows">{active_paper_rows}</tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <h3>전략 후보</h3>
+          <div id="strategy-summary" class="metric-grid">{strategy_summary}</div>
+        </div>
+      </div>
+    </section>
+    <section id="tab-paper" class="tab-panel">
+      <h2>Paper 사이클</h2>
+      <div id="paper-summary" class="metric-grid">{paper_summary}</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입</th><th>목표</th><th>손절</th><th>이유</th><th>손익</th></tr></thead>
+          <tbody id="paper-rows">{paper_rows}</tbody>
+        </table>
+      </div>
+      <h3>스캘핑 성과</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>심볼</th><th>방향</th><th>종료</th><th>익절</th><th>손실</th><th>익절률</th><th>평균손익</th><th>합계손익</th></tr></thead>
+          <tbody id="performance-rows">{performance_rows}</tbody>
+        </table>
+      </div>
+      <h3>전략 성과</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>전략</th><th>심볼</th><th>방향</th><th>종료</th><th>익절</th><th>손실</th><th>익절률</th><th>평균손익</th><th>합계손익</th></tr></thead>
+          <tbody id="strategy-performance-rows">{strategy_performance_rows}</tbody>
+        </table>
+      </div>
+      <h3>종료 사유</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>구분</th><th>상태</th><th>이유</th><th>개수</th><th>평균손익</th><th>합계손익</th></tr></thead>
+          <tbody id="exit-reason-rows">{exit_reason_rows}</tbody>
+          <tbody id="strategy-exit-reason-rows">{strategy_exit_reason_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section id="tab-strategies" class="tab-panel">
+      <h2>전략 후보</h2>
+      <div id="strategy-summary-tab" class="metric-grid">{strategy_summary}</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>평가</th><th>판정</th><th>출처</th><th>실행</th><th>심볼</th><th>장상태</th><th>방향</th><th>TP</th><th>SL</th><th>보유</th><th>표본</th><th>승률</th><th>평균bps</th><th>합계bps</th><th>이유</th></tr></thead>
+          <tbody id="strategy-rows">{strategy_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section id="tab-market" class="tab-panel">
+      <h2>시장</h2>
+      <h3>장세 라우터</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>시각</th><th>심볼</th><th>큰 장세</th><th>편향</th><th>1h bps</th><th>4h bps</th><th>변동성</th><th>ATR</th><th>허용 전략</th><th>차단 이유</th></tr></thead>
+          <tbody id="market-regime-rows">{market_regime_rows}</tbody>
+        </table>
+      </div>
+      <h3>시장상황</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>시각</th><th>심볼</th><th>프리미엄bps</th><th>펀딩bps</th><th>스프레드bps</th><th>호가깊이</th><th>불균형</th><th>mark</th></tr></thead>
+          <tbody id="market-context-rows">{market_context_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section id="tab-risk" class="tab-panel">
+      <h2>위험</h2>
+      <pre id="risk-state">{escape(risk_state)}</pre>
+    </section>
+    <section id="tab-signals" class="tab-panel">
+      <h2>최근 신호</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>시간</th><th>심볼</th><th>방향</th><th>장상태</th><th>5분 bps</th></tr></thead>
+          <tbody id="signal-rows">{signal_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section id="tab-orders" class="tab-panel">
+      <h2>최근 주문/차단</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>시간</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th></tr></thead>
+          <tbody id="order-rows">{order_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section id="tab-raw" class="tab-panel">
+      <h2>원본요약</h2>
+      <pre id="report">{escape(snapshot["report"])}</pre>
+      <h3>스캘핑 상태머신</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>갱신</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th><th>실현손익</th></tr></thead>
+          <tbody id="cycle-rows">{cycle_rows}</tbody>
+        </table>
+      </div>
+      <h3>전략 상태머신</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>갱신</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>이유</th><th>실현손익</th></tr></thead>
+          <tbody id="strategy-cycle-rows">{strategy_cycle_rows}</tbody>
+        </table>
+      </div>
+    </section>
+  </div>
   <script>
     document.querySelectorAll("button[data-tab]").forEach((button) => {{
       button.addEventListener("click", () => {{
@@ -397,6 +875,13 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       const data = JSON.parse(event.data);
       document.getElementById("generated-at").textContent = data.generated_at;
       document.getElementById("row-limit").textContent = data.row_limit;
+      document.getElementById("mode-summary").innerHTML = data.mode_summary;
+      document.getElementById("overview").innerHTML = data.overview;
+      document.getElementById("active-paper-rows").innerHTML = data.active_paper_rows;
+      document.getElementById("paper-rows").innerHTML = data.paper_rows;
+      document.getElementById("paper-summary").innerHTML = data.paper_summary;
+      document.getElementById("strategy-summary").innerHTML = data.strategy_summary;
+      document.getElementById("strategy-summary-tab").innerHTML = data.strategy_summary;
       document.getElementById("risk-state").textContent = data.risk_state;
       document.getElementById("report").textContent = data.report;
       document.getElementById("signal-rows").innerHTML = data.signal_rows;
@@ -405,8 +890,11 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("strategy-cycle-rows").innerHTML = data.strategy_cycle_rows;
       document.getElementById("strategy-rows").innerHTML = data.strategy_rows;
       document.getElementById("market-regime-rows").innerHTML = data.market_regime_rows;
+      document.getElementById("market-context-rows").innerHTML = data.market_context_rows;
       document.getElementById("performance-rows").innerHTML = data.performance_rows;
+      document.getElementById("strategy-performance-rows").innerHTML = data.strategy_performance_rows;
       document.getElementById("exit-reason-rows").innerHTML = data.exit_reason_rows;
+      document.getElementById("strategy-exit-reason-rows").innerHTML = data.strategy_exit_reason_rows;
       statusDot.style.background = "#16a34a";
     }};
     events.onerror = () => {{
@@ -417,10 +905,124 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
 </html>"""
 
 
+def _is_active_status(status: str) -> bool:
+    return str(status) in {"ENTRY_SUBMITTED", "OPEN", "EXIT_SUBMITTED"}
+
+
+def _empty_table_row(colspan: int, message: str) -> str:
+    return f'<tr><td colspan="{colspan}" class="empty">{escape(message)}</td></tr>'
+
+
+def _risk_mode_line(risk_state) -> str:
+    mode = str(getattr(risk_state, "mode", "UNKNOWN"))
+    return risk_mode_ko(mode)
+
+
+def _tone_class(tone: str) -> str:
+    return {
+        "good": "tone-good",
+        "warn": "tone-warn",
+        "block": "tone-block",
+        "muted": "tone-muted",
+    }.get(tone, "tone-muted")
+
+
+def _pnl_tone(value: float) -> str:
+    if value > 0:
+        return "good"
+    if value < 0:
+        return "block"
+    return "muted"
+
+
+def _status_pill(status: str) -> str:
+    tone = "muted"
+    if status == "CLOSED":
+        tone = "good"
+    elif status in {"ENTRY_SUBMITTED", "OPEN", "EXIT_SUBMITTED"}:
+        tone = "warn"
+    elif status in {"STOPPED", "CANCELLED"}:
+        tone = "block"
+    return f'<span class="pill {_tone_class(tone)}">{escape(_status_label(status))}</span>'
+
+
+def _decision_pill(decision: str) -> str:
+    tone = "muted"
+    if decision == "APPROVED":
+        tone = "good"
+    elif decision == "SAMPLE_LOW":
+        tone = "warn"
+    elif decision == "BLOCKED":
+        tone = "block"
+    return f'<span class="pill {_tone_class(tone)}">{escape(_decision_label(decision))}</span>'
+
+
+def _status_row_class(status: str) -> str:
+    if _is_active_status(status):
+        return "row-active"
+    if status in {"STOPPED", "CANCELLED"}:
+        return "row-stopped"
+    return ""
+
+
+def _decision_label(decision: str) -> str:
+    return {
+        "APPROVED": "승인",
+        "BLOCKED": "차단",
+        "SAMPLE_LOW": "표본부족",
+    }.get(decision, decision)
+
+
+def _source_label(source: str) -> str:
+    return SOURCE_LABELS.get(source, source)
+
+
+def _mode_label(mode: str) -> str:
+    return MODE_LABELS.get(mode, mode)
+
+
+def _regime_label(regime: str) -> str:
+    return REGIME_LABELS.get(regime, regime)
+
+
+def _side_label(side: str) -> str:
+    return SIDE_LABELS.get(side, side)
+
+
+def _strategy_label(strategy: str) -> str:
+    return STRATEGY_LABELS.get(strategy, strategy)
+
+
+def _status_label(status: str) -> str:
+    return STATUS_LABELS.get(status, status)
+
+
+def _reason_label(reason: str) -> str:
+    return REASON_LABELS.get(reason, reason)
+
+
 def _fmt_pnl(value) -> str:
     if value is None:
         return ""
     return f"{float(value):.6f}"
+
+
+def _fmt_price(value) -> str:
+    if value is None:
+        return ""
+    return f"{float(value):.8f}".rstrip("0").rstrip(".")
+
+
+def _fmt_qty(value) -> str:
+    if value is None:
+        return ""
+    return f"{float(value):.8f}".rstrip("0").rstrip(".")
+
+
+def _funding_bps(value) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value) * 10_000.0:.3f}"
 
 
 def _fmt_pct(value: float) -> str:
@@ -445,4 +1047,4 @@ def _allowed_strategies(raw: str) -> str:
         values = json.loads(raw or "[]")
     except json.JSONDecodeError:
         return raw or ""
-    return ", ".join(str(item) for item in values)
+    return ", ".join(_strategy_label(str(item)) for item in values)

@@ -22,22 +22,33 @@ class DashboardTests(unittest.TestCase):
             {
                 "generated_at": "2026-04-30 18:00:00 KST",
                 "row_limit": "200",
+                "overview": "<div>overview</div>",
+                "paper_summary": "<div>paper</div>",
+                "strategy_summary": "<div>strategy</div>",
+                "active_paper_rows": "",
+                "paper_rows": "",
+                "mode_summary": "",
                 "report": "ok",
                 "signal_rows": "",
                 "order_rows": "",
                 "cycle_rows": "",
+                "strategy_cycle_rows": "",
                 "strategy_rows": "",
                 "market_regime_rows": "",
+                "market_context_rows": "",
                 "performance_rows": "",
+                "strategy_performance_rows": "",
                 "exit_reason_rows": "",
+                "strategy_exit_reason_rows": "",
             },
             TradingConfig(),
         )
         self.assertIn("new EventSource", html)
-        self.assertIn('data-tab="performance"', html)
+        self.assertIn('data-tab="paper"', html)
         self.assertIn('data-tab="market"', html)
         self.assertIn('data-tab="strategies"', html)
-        self.assertIn("최근 <span id=\"row-limit\">200</span>개 표시", html)
+        self.assertIn('id="active-paper-rows"', html)
+        self.assertIn("최근 <span id=\"row-limit\">200</span>개", html)
         self.assertNotIn("http-equiv=\"refresh\"", html)
 
     def test_dashboard_limit_defaults_and_bounds(self) -> None:

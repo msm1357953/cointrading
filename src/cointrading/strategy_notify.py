@@ -47,6 +47,16 @@ STRATEGY_LABELS = {
     "range_reversion": "레인지 평균회귀",
     "breakout_reduced": "축소 돌파",
     "maker_scalp": "메이커 스캘핑",
+    "observe_only": "관찰만",
+    "breakout_trend_reduced_size": "돌파 추세 소액",
+    "trend_long_15m_1h": "상승 추세 롱",
+    "pullback_long": "눌림목 롱",
+    "long_scalp_only": "롱 스캘핑만",
+    "trend_short_15m_1h": "하락 추세 숏",
+    "rally_short": "반등 숏",
+    "short_scalp_only": "숏 스캘핑만",
+    "range_mean_reversion": "레인지 평균회귀",
+    "strict_maker_scalp": "엄격 메이커 스캘핑",
 }
 STATUS_LABELS = {
     "ENTRY_SUBMITTED": "진입 대기",
@@ -56,6 +66,9 @@ STATUS_LABELS = {
     "STOPPED": "종료",
 }
 REASON_LABELS = {
+    "insufficient macro candles": "장세 판단용 캔들 부족",
+    "panic volatility; 신규 진입 금지": "패닉 변동성으로 신규 진입 금지",
+    "high volatility expansion; scalping disabled": "고변동성 확장으로 스캘핑 제외",
     "strategy exit waiting": "목표가/손절/시간제한 청산 대기",
     "entry waiting": "진입 체결 대기",
     "not filled yet": "아직 미체결",

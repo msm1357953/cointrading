@@ -114,7 +114,15 @@ Approval is based on positive net expectancy after fees/slippage, a minimum samp
 
 ## Dashboard
 
-The dashboard is a small HTTP server with tabs for summary, performance, macro regime routing, strategy candidates, scalp lifecycle state, macro strategy lifecycle state, signals, and orders. It uses a server-sent events stream to update the data in place without reloading the whole page.
+The dashboard is a small HTTP server organized around the questions needed before live trading:
+
+- `개요`: live/dry-run guard flags, runtime risk mode, active paper cycles, total paper PnL, and approved candidate count.
+- `Paper`: combined scalping and macro-strategy paper cycles with entry/target/stop/exit reason/PnL, plus strategy-vs-scalp performance and exit reason summaries.
+- `전략`: latest strategy candidate evaluations with Korean labels for source, execution mode, regime, side, and decision.
+- `시장`: macro regime routing plus market context such as premium, funding, spread, depth, and imbalance.
+- `위험`, `신호`, `주문`, `원본요약`: detailed runtime risk text, raw signals, blocked/order attempts, and legacy summaries for debugging.
+
+It uses a server-sent events stream to update the data in place without reloading the whole page. Empty tables show explicit empty-state rows so the page does not look broken when a dataset has not collected enough samples yet.
 Signal, strategy, lifecycle, and order tables show the latest 200 rows by default. Add `&limit=500` to the dashboard URL to inspect a longer window; the dashboard caps this at 1000 rows to keep mobile loading reasonable.
 
 Set `COINTRADING_DASHBOARD_AUTH_TOKEN` before exposing it outside the VM.
