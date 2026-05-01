@@ -174,7 +174,10 @@ class TelegramCommandProcessor:
         "스캘핑보고": "scalp_report",
         "스캘프보고": "scalp_report",
         "전략": "strategy",
+        "전략보고": "strategy",
+        "전략평가": "strategy",
         "전략후보": "strategy",
+        "후보평가": "strategy",
         "strategy": "strategy",
         "진입": "entry_check",
         "진입점검": "entry_check",
@@ -278,7 +281,7 @@ class TelegramCommandProcessor:
                 "보고 - 스캘핑 dry-run 결과와 장 상태별 성과 요약",
                 "보고 BTCUSDC - BTCUSDC만 결과 요약",
                 "보고 전체 - 예전 USDT 로그까지 포함",
-                "전략 - maker/taker/hybrid 전략 후보 요약",
+                "전략 - 초단기 신호 기반 후보평가, live 잠금, 전략 상태머신 요약",
                 "진입 ETHUSDC 25 - 전략별 진입 점검. 주문은 넣지 않음",
                 "주문 - 최근 dry-run 주문/차단 기록",
                 "포지션 - 스캘핑 상태머신 기록",
@@ -458,7 +461,13 @@ class TelegramCommandProcessor:
     def strategy_text(self) -> str:
         store = TradingStore(default_db_path())
         rows = store.latest_strategy_batch()
-        return strategy_notification_text(rows, reason="수동 조회", limit=8)
+        return strategy_notification_text(
+            rows,
+            reason="수동 조회",
+            limit=8,
+            config=self.trading_config,
+            active_strategy_cycles=store.active_strategy_cycles(),
+        )
 
     def entry_check_text(self, args: list[str]) -> str:
         symbol, notional = self._entry_check_args(args)

@@ -56,12 +56,15 @@ Copy the printed `chat_id` into `.env`.
 - `보고`: 전체 스캘핑 dry-run 채점 결과와 장 상태별 성과를 보여줍니다.
 - `보고 BTCUSDC`: 특정 심볼의 스캘핑 dry-run 채점 결과와 장 상태별 성과를 보여줍니다.
 - `보고 전체`: 예전 USDT 로그까지 포함한 전체 결과를 보여줍니다.
+- `전략`: 초단기 신호 로그 기반 전략 후보평가, live 잠금 상태, 진행 중인 전략 상태머신을 요약합니다.
 - `주문`: 최근 dry-run 주문 또는 차단 기록을 보여줍니다.
 - `포지션`: 최근 스캘핑/전략 상태머신 기록과 paper/live 손익을 보여줍니다.
 - `정지`: 신규 진입 정지 상태로 둡니다.
 - `재개`: 신규 진입 정지를 풉니다.
 
 Slash commands such as `/status`, `/account`, `/scalp BTCUSDC`, and `/scalp_report` are still accepted.
+
+Strategy notification messages are candidate evaluations, not trade confirmations. They group duplicated TP/SL/hold-time parameter variants so `APPROVED` counts do not look like separate live orders.
 
 No command places live orders. Future live-trading commands should require explicit two-step confirmation and should stay blocked while `COINTRADING_DRY_RUN=true`. Macro strategy live orders also require `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true`.
 

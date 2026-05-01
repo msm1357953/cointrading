@@ -1,5 +1,6 @@
 import unittest
 
+from cointrading.config import TradingConfig
 from cointrading.strategy_notify import (
     StrategyNotifyState,
     apply_strategy_notification_state,
@@ -8,8 +9,8 @@ from cointrading.strategy_notify import (
 )
 
 
-def _row(decision="BLOCKED", execution_mode="maker_post_only"):
-    return {
+def _row(decision="BLOCKED", execution_mode="maker_post_only", **overrides):
+    row = {
         "evaluated_ms": 1_000,
         "source": "signal_grid",
         "execution_mode": execution_mode,
@@ -25,6 +26,19 @@ def _row(decision="BLOCKED", execution_mode="maker_post_only"):
         "sum_pnl_bps": 36.0,
         "decision": decision,
         "reason": "test",
+    }
+    row.update(overrides)
+    return row
+
+
+def _cycle():
+    return {
+        "symbol": "BTCUSDC",
+        "strategy": "range_reversion",
+        "side": "long",
+        "status": "OPEN",
+        "reason": "entry filled",
+        "realized_pnl": None,
     }
 
 
@@ -90,8 +104,31 @@ class StrategyNotifyTests(unittest.TestCase):
     def test_notification_text_includes_execution_mode(self) -> None:
         text = strategy_notification_text([_row(execution_mode="taker_momentum")], reason="수동")
 
-        self.assertIn("taker_momentum", text)
+        self.assertIn("시장가/테이커 추세", text)
         self.assertIn("승인 0개", text)
+        self.assertIn("실제 주문/포지션 보고가 아닙니다", text)
+
+    def test_notification_text_groups_approved_parameter_variants(self) -> None:
+        text = strategy_notification_text(
+            [
+                _row(decision="APPROVED", take_profit_bps=20.0, max_hold_seconds=300),
+                _row(decision="APPROVED", take_profit_bps=16.0, max_hold_seconds=180),
+                _row(decision="APPROVED", symbol="XRPUSDC", side="short", regime="aligned_short"),
+            ],
+            reason="수동",
+            config=TradingConfig(
+                dry_run=True,
+                live_trading_enabled=False,
+                live_strategy_lifecycle_enabled=False,
+            ),
+            active_strategy_cycles=[_cycle()],
+        )
+
+        self.assertIn("안전상태: dry-run ON, live OFF, 전략 live OFF", text)
+        self.assertIn("BTCUSDC 롱 / 상승 정렬 / 지정가 메이커 / 파라미터 2개", text)
+        self.assertIn("XRPUSDC 숏 / 하락 정렬 / 지정가 메이커", text)
+        self.assertIn("현재 전략 상태머신", text)
+        self.assertIn("레인지 평균회귀 BTCUSDC 롱 OPEN", text)
 
 
 if __name__ == "__main__":

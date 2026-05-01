@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.models import Kline
@@ -256,7 +256,14 @@ class TelegramCommandTests(unittest.TestCase):
 
         self.assertEqual(reply, "strategy ok")
         store.latest_strategy_batch.assert_called_once_with()
-        text_fn.assert_called_once_with(["row"], reason="수동 조회", limit=8)
+        store.active_strategy_cycles.assert_called_once_with()
+        text_fn.assert_called_once_with(
+            ["row"],
+            reason="수동 조회",
+            limit=8,
+            config=ANY,
+            active_strategy_cycles=store.active_strategy_cycles.return_value,
+        )
 
     def test_entry_check_command_reports_strategy_setups_without_ordering(self) -> None:
         processor = TelegramCommandProcessor(

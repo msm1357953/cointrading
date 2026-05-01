@@ -570,7 +570,13 @@ def strategy_notify(
         else config.strategy_notify_interval_minutes,
         force=force,
     )
-    text = strategy_notification_text(rows, reason=reason, limit=limit)
+    text = strategy_notification_text(
+        rows,
+        reason=reason,
+        limit=limit,
+        config=config,
+        active_strategy_cycles=store.active_strategy_cycles(),
+    )
     print(text)
     if not should_send:
         print("notification: skipped")
