@@ -18,6 +18,9 @@ from cointrading.strategy_notify import MODE_LABELS, REGIME_LABELS, SIDE_LABELS
 DECISION_READY = "READY"
 DECISION_WAIT = "WAIT"
 DECISION_BLOCKED = "BLOCKED"
+SCALP_LIVE_EXECUTION_MODES = {"maker_post_only"}
+STRATEGY_LIVE_EXECUTION_MODES = {"taker_trend", "maker_range", "taker_breakout"}
+SUPPORTED_LIVE_EXECUTION_MODES = SCALP_LIVE_EXECUTION_MODES | STRATEGY_LIVE_EXECUTION_MODES
 
 
 def refresh_supervisor_inputs(
@@ -89,6 +92,7 @@ def supervise_symbols(
     notional: float,
     current_ms: int | None = None,
 ) -> list[SupervisorReport]:
+    symbol_list = [symbol.upper() for symbol in symbols]
     ts = current_ms or now_ms()
     risk = evaluate_runtime_risk(store, config, current_ms=ts)
     actual_orders, actual_positions, actual_warnings = _actual_exchange_symbols(client)
@@ -96,23 +100,34 @@ def supervise_symbols(
     candidates = _latest_candidates_by_symbol(store.latest_strategy_batch())
     strategy_perf = _performance_by_symbol_side(store.strategy_cycle_performance())
     scalp_perf = _performance_by_symbol_side(store.scalp_cycle_performance())
+    recent_limit = max(200, config.supervisor_recent_cycle_count * max(1, len(symbol_list)) * 8)
+    strategy_recent_perf = _recent_performance_by_symbol_side(
+        store.recent_strategy_cycles(limit=recent_limit),
+        config.supervisor_recent_cycle_count,
+    )
+    scalp_recent_perf = _recent_performance_by_symbol_side(
+        store.recent_scalp_cycles(limit=recent_limit),
+        config.supervisor_recent_cycle_count,
+    )
     reports = []
-    for symbol in symbols:
+    for symbol in symbol_list:
         reports.append(
             supervise_symbol(
                 client,
                 store,
                 config,
-                symbol.upper(),
+                symbol,
                 notional=notional,
                 runtime_risk=risk,
                 active_symbols=active_symbols,
                 actual_open_order_symbols=actual_orders,
                 actual_position_symbols=actual_positions,
                 actual_exchange_warnings=actual_warnings,
-                candidates=candidates.get(symbol.upper(), []),
+                candidates=candidates.get(symbol, []),
                 strategy_perf=strategy_perf,
                 scalp_perf=scalp_perf,
+                strategy_recent_perf=strategy_recent_perf,
+                scalp_recent_perf=scalp_recent_perf,
                 current_ms=ts,
             )
         )
@@ -134,6 +149,8 @@ def supervise_symbol(
     candidates: list,
     strategy_perf: dict[tuple[str, str], dict],
     scalp_perf: dict[tuple[str, str], dict],
+    strategy_recent_perf: dict[tuple[str, str], dict],
+    scalp_recent_perf: dict[tuple[str, str], dict],
     current_ms: int,
 ) -> SupervisorReport:
     reasons: list[str] = []
@@ -192,8 +209,11 @@ def supervise_symbol(
             warnings,
             symbol,
             str(best_candidate["side"]),
+            best_candidate,
             strategy_perf,
             scalp_perf,
+            strategy_recent_perf,
+            scalp_recent_perf,
             config,
         )
 
@@ -201,8 +221,7 @@ def supervise_symbol(
         reasons.append("dry-run이 켜져 있어 실전 주문은 잠겨 있습니다.")
     if not config.live_trading_enabled:
         reasons.append("live trading 플래그가 꺼져 있습니다.")
-    if not config.live_strategy_lifecycle_enabled and not config.live_scalp_lifecycle_enabled:
-        reasons.append("live 상태머신 플래그가 꺼져 있습니다.")
+    _append_live_mode_reasons(reasons, config, best_candidate)
     if config.live_one_shot_required:
         _append_one_shot_reasons(reasons, config, symbol, notional, best_candidate)
 
@@ -253,27 +272,62 @@ def _append_performance_reasons(
     warnings: list[str],
     symbol: str,
     side: str,
+    best_candidate,
     strategy_perf: dict[tuple[str, str], dict],
     scalp_perf: dict[tuple[str, str], dict],
+    strategy_recent_perf: dict[tuple[str, str], dict],
+    scalp_recent_perf: dict[tuple[str, str], dict],
     config: TradingConfig,
 ) -> None:
     key = (symbol, side)
-    perf = strategy_perf.get(key) or scalp_perf.get(key)
+    perf = _candidate_perf(best_candidate, key, strategy_perf, scalp_perf)
     if perf is None:
         reasons.append("해당 심볼/방향의 상태머신 paper 성과가 없습니다.")
         return
     count = int(perf["count"])
     sum_pnl = float(perf["sum_pnl"])
+    avg_pnl = float(perf["avg_pnl"])
     if count < config.supervisor_min_cycle_count:
         reasons.append(
             f"paper 종료 표본 {count}개가 기준 {config.supervisor_min_cycle_count}개보다 적습니다."
         )
-    if sum_pnl < config.supervisor_min_cycle_sum_pnl:
+    if sum_pnl <= config.supervisor_min_cycle_sum_pnl:
         reasons.append(
-            f"paper 누적손익 {sum_pnl:.6f}이 기준 {config.supervisor_min_cycle_sum_pnl:.6f}보다 낮습니다."
+            f"paper 누적손익 {sum_pnl:.6f}이 기준 {config.supervisor_min_cycle_sum_pnl:.6f} 이하입니다."
         )
-    if float(perf["avg_pnl"]) <= 0:
-        warnings.append(f"paper 평균손익이 {float(perf['avg_pnl']):.6f}로 아직 약합니다.")
+    if avg_pnl <= 0:
+        reasons.append(f"paper 평균손익이 {avg_pnl:.6f}로 양수가 아닙니다.")
+    payoff_ratio = _payoff_ratio_value(perf)
+    if payoff_ratio is None:
+        reasons.append("paper 손익비를 산출할 만큼 익절/손절 표본이 모두 있지 않습니다.")
+    elif payoff_ratio < config.supervisor_min_payoff_ratio:
+        reasons.append(
+            f"paper 손익비 {payoff_ratio:.2f}가 기준 {config.supervisor_min_payoff_ratio:.2f}보다 낮습니다."
+        )
+    recent = _candidate_perf(best_candidate, key, strategy_recent_perf, scalp_recent_perf)
+    if recent is None:
+        reasons.append("최근 paper 성과 표본이 없습니다.")
+        return
+    recent_count = int(recent["count"])
+    recent_sum = float(recent["sum_pnl"])
+    recent_avg = float(recent["avg_pnl"])
+    if recent_count < config.supervisor_recent_cycle_count:
+        reasons.append(
+            f"최근 paper 표본 {recent_count}개가 기준 {config.supervisor_recent_cycle_count}개보다 적습니다."
+        )
+    if recent_sum <= config.supervisor_min_recent_cycle_sum_pnl:
+        reasons.append(
+            f"최근 paper 누적손익 {recent_sum:.6f}이 기준 "
+            f"{config.supervisor_min_recent_cycle_sum_pnl:.6f} 이하입니다."
+        )
+    if recent_avg <= 0:
+        reasons.append(f"최근 paper 평균손익이 {recent_avg:.6f}로 양수가 아닙니다.")
+    adverse_ratio = float(recent.get("adverse_exit_ratio", 0.0))
+    if adverse_ratio > config.supervisor_max_adverse_exit_ratio:
+        reasons.append(
+            f"최근 stop/max_hold 종료 비율 {adverse_ratio:.1%}가 기준 "
+            f"{config.supervisor_max_adverse_exit_ratio:.1%}보다 높습니다."
+        )
 
 
 def _append_one_shot_reasons(
@@ -296,6 +350,21 @@ def _append_one_shot_reasons(
         mode = str(best_candidate["execution_mode"])
         if config.live_one_shot_strategy != mode:
             reasons.append(f"원샷 허가 전략이 {config.live_one_shot_strategy}입니다.")
+
+
+def _append_live_mode_reasons(reasons: list[str], config: TradingConfig, best_candidate) -> None:
+    if best_candidate is None:
+        if not config.live_strategy_lifecycle_enabled and not config.live_scalp_lifecycle_enabled:
+            reasons.append("live 상태머신 플래그가 꺼져 있습니다.")
+        return
+    mode = str(best_candidate["execution_mode"])
+    if mode not in SUPPORTED_LIVE_EXECUTION_MODES:
+        reasons.append(f"지원되지 않는 live 실행방식입니다: {mode}")
+        return
+    if mode in SCALP_LIVE_EXECUTION_MODES and not config.live_scalp_lifecycle_enabled:
+        reasons.append("live 상태머신 플래그가 꺼져 있습니다. 스캘핑 live 상태머신 비활성.")
+    if mode in STRATEGY_LIVE_EXECUTION_MODES and not config.live_strategy_lifecycle_enabled:
+        reasons.append("live 상태머신 플래그가 꺼져 있습니다. 전략 live 상태머신 비활성.")
 
 
 def _best_macro_aligned_candidate(candidates: list, macro) -> object | None:
@@ -331,12 +400,78 @@ def _performance_by_symbol_side(rows: Iterable) -> dict[tuple[str, str], dict]:
         current = result.get(key)
         payload = {
             "count": int(row["count"]),
+            "wins": int(row["wins"] or 0),
+            "losses": int(row["losses"] or 0),
+            "avg_win_pnl": _optional_float(row["avg_win_pnl"]),
+            "avg_loss_pnl": _optional_float(row["avg_loss_pnl"]),
             "avg_pnl": float(row["avg_pnl"] or 0.0),
             "sum_pnl": float(row["sum_pnl"] or 0.0),
         }
         if current is None or payload["sum_pnl"] > current["sum_pnl"]:
             result[key] = payload
     return result
+
+
+def _recent_performance_by_symbol_side(rows: Iterable, window: int) -> dict[tuple[str, str], dict]:
+    grouped: dict[tuple[str, str], list] = {}
+    for row in rows:
+        if row["realized_pnl"] is None:
+            continue
+        key = (str(row["symbol"]).upper(), str(row["side"]))
+        values = grouped.setdefault(key, [])
+        if len(values) < window:
+            values.append(row)
+    return {key: _cycle_rows_performance(values) for key, values in grouped.items()}
+
+
+def _cycle_rows_performance(rows: list) -> dict:
+    pnl_values = [float(row["realized_pnl"]) for row in rows]
+    wins = [value for value in pnl_values if value > 0]
+    losses = [value for value in pnl_values if value <= 0]
+    adverse = [
+        row
+        for row in rows
+        if str(row["reason"] or "") in {"stop_loss", "max_hold_exit"}
+        or str(row["status"]) == "STOPPED"
+    ]
+    count = len(pnl_values)
+    return {
+        "count": count,
+        "wins": len(wins),
+        "losses": len(losses),
+        "avg_win_pnl": sum(wins) / len(wins) if wins else None,
+        "avg_loss_pnl": sum(losses) / len(losses) if losses else None,
+        "avg_pnl": sum(pnl_values) / count if count else 0.0,
+        "sum_pnl": sum(pnl_values),
+        "adverse_exit_ratio": len(adverse) / count if count else 0.0,
+    }
+
+
+def _candidate_perf(best_candidate, key: tuple[str, str], strategy_perf: dict, scalp_perf: dict):
+    mode = str(best_candidate["execution_mode"])
+    if mode in SCALP_LIVE_EXECUTION_MODES:
+        return scalp_perf.get(key)
+    if mode in STRATEGY_LIVE_EXECUTION_MODES:
+        return strategy_perf.get(key)
+    return None
+
+
+def _payoff_ratio_value(perf: dict) -> float | None:
+    avg_win = perf.get("avg_win_pnl")
+    avg_loss = perf.get("avg_loss_pnl")
+    if avg_win is None or avg_loss is None:
+        return None
+    avg_win = float(avg_win)
+    avg_loss = abs(float(avg_loss))
+    if avg_win <= 0 or avg_loss <= 0:
+        return None
+    return avg_win / avg_loss
+
+
+def _optional_float(value) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def _actual_exchange_symbols(client: BinanceUSDMClient) -> tuple[set[str], set[str], tuple[str, ...]]:

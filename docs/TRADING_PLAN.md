@@ -39,8 +39,11 @@ The first version avoids heavy dependencies so the skeleton can run immediately.
 
 Do not enable live trading until all items are true:
 
-- Testnet order placement is verified.
-- Backtest includes fees and slippage.
+- Signal-grid approval is backed by at least 20 closed paper lifecycle cycles on the same symbol and side.
+- All-time and recent paper PnL are positive.
+- Paper payoff ratio is at least 1.2, so average wins are meaningfully larger than average losses.
+- Recent stop-loss/max-hold exits are not dominating the sample.
+- Backtest or paper evaluation includes fees and slippage.
 - Daily loss and max drawdown stops are tested.
 - API key permissions are restricted.
 - Logs prove that duplicate orders are not created after failures.

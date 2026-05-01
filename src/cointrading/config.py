@@ -147,8 +147,12 @@ class TradingConfig:
     live_one_shot_notional: float = 25.0
     supervisor_min_samples: int = 100
     supervisor_min_avg_pnl_bps: float = 0.5
-    supervisor_min_cycle_count: int = 3
+    supervisor_min_cycle_count: int = 20
     supervisor_min_cycle_sum_pnl: float = 0.0
+    supervisor_min_payoff_ratio: float = 1.2
+    supervisor_recent_cycle_count: int = 20
+    supervisor_min_recent_cycle_sum_pnl: float = 0.0
+    supervisor_max_adverse_exit_ratio: float = 0.65
     supervisor_data_max_age_minutes: int = 10
     llm_enabled: bool = True
     llm_provider: str = "gemini"
@@ -404,6 +408,22 @@ class TradingConfig:
             supervisor_min_cycle_sum_pnl=_get_float(
                 "COINTRADING_SUPERVISOR_MIN_CYCLE_SUM_PNL",
                 cls.supervisor_min_cycle_sum_pnl,
+            ),
+            supervisor_min_payoff_ratio=_get_float(
+                "COINTRADING_SUPERVISOR_MIN_PAYOFF_RATIO",
+                cls.supervisor_min_payoff_ratio,
+            ),
+            supervisor_recent_cycle_count=_get_int(
+                "COINTRADING_SUPERVISOR_RECENT_CYCLE_COUNT",
+                cls.supervisor_recent_cycle_count,
+            ),
+            supervisor_min_recent_cycle_sum_pnl=_get_float(
+                "COINTRADING_SUPERVISOR_MIN_RECENT_CYCLE_SUM_PNL",
+                cls.supervisor_min_recent_cycle_sum_pnl,
+            ),
+            supervisor_max_adverse_exit_ratio=_get_float(
+                "COINTRADING_SUPERVISOR_MAX_ADVERSE_EXIT_RATIO",
+                cls.supervisor_max_adverse_exit_ratio,
             ),
             supervisor_data_max_age_minutes=_get_int(
                 "COINTRADING_SUPERVISOR_DATA_MAX_AGE_MINUTES",

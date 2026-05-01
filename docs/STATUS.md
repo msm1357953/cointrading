@@ -69,6 +69,7 @@
 - 2026-05-01: Dashboard active/Paper cycle tables now show current mark price beside entry price and estimate active-cycle unrealized PnL after entry plus market-exit fee assumptions. Overview and Paper summaries also show total active unrealized PnL.
 - 2026-05-01: Local and VM runtime envs were prepared for an 80 USDC one-shot candidate check so BTCUSDC can pass the current exchange minimum notional. `COINTRADING_MAX_SINGLE_ORDER_NOTIONAL`, `COINTRADING_POST_ONLY_ORDER_NOTIONAL`, `COINTRADING_STRATEGY_ORDER_NOTIONAL`, and `COINTRADING_LIVE_ONE_SHOT_NOTIONAL` are set to 80, while dry-run/live/one-shot live flags remain locked off.
 - 2026-05-01: Live-supervisor candidate Telegram alerts were added. The VM can run `live-supervisor-notify` every minute and sends a message only when an approved, macro-aligned, paper-positive candidate appears with no blockers except dry-run/live/one-shot safety locks. The alert does not place orders.
+- 2026-05-01: Live-supervisor paper gates were tightened before any real-money one-shot. A candidate now needs at least 20 closed paper cycles, positive all-time and recent paper PnL, a paper payoff ratio of at least 1.2, and a recent stop/max-hold exit ratio no higher than 65% before it can produce an actionable Telegram alert. Signal-grid approval alone is no longer enough, and research-only execution modes without matching live state machines are blocked.
 
 ## Next Work Packets
 

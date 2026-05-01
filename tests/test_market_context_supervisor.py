@@ -127,7 +127,7 @@ class MarketContextSupervisorTests(unittest.TestCase):
                 [
                     {
                         "source": "signal_grid",
-                        "execution_mode": "maker_post_only",
+                        "execution_mode": "taker_trend",
                         "symbol": "BTCUSDC",
                         "regime": "aligned_long",
                         "side": "long",
@@ -146,13 +146,16 @@ class MarketContextSupervisorTests(unittest.TestCase):
                 ],
                 timestamp_ms=1_000,
             )
-            for idx in range(3):
+            paper_pnls = [0.03] * 14 + [-0.01] * 6
+            for idx, realized_pnl in enumerate(paper_pnls):
+                status = "CLOSED" if realized_pnl > 0 else "STOPPED"
+                reason = "take_profit" if realized_pnl > 0 else "stop_loss"
                 cycle_id = store.insert_strategy_cycle(
                     strategy="trend_follow",
                     execution_mode="taker_trend",
                     symbol="BTCUSDC",
                     side="long",
-                    status="CLOSED",
+                    status=status,
                     quantity=0.1,
                     entry_price=100.0,
                     target_price=101.0,
@@ -169,8 +172,9 @@ class MarketContextSupervisorTests(unittest.TestCase):
                 )
                 store.update_strategy_cycle(
                     cycle_id,
-                    status="CLOSED",
-                    realized_pnl=0.01,
+                    status=status,
+                    reason=reason,
+                    realized_pnl=realized_pnl,
                     timestamp_ms=3_000 + idx,
                 )
             config = TradingConfig(
@@ -178,6 +182,9 @@ class MarketContextSupervisorTests(unittest.TestCase):
                 live_trading_enabled=False,
                 live_strategy_lifecycle_enabled=False,
                 supervisor_data_max_age_minutes=10,
+                supervisor_min_cycle_count=20,
+                supervisor_recent_cycle_count=20,
+                supervisor_min_payoff_ratio=1.2,
                 runtime_risk_enabled=False,
             )
 
@@ -208,6 +215,151 @@ class MarketContextSupervisorTests(unittest.TestCase):
                 "주문상태: 실행 안 함",
                 supervisor_candidate_notification_text(reports, reason=reason, notional=25),
             )
+
+    def test_supervisor_blocks_actionable_alert_when_recent_paper_is_weak(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            store.insert_market_regime(_macro("BTCUSDC"))
+            store.insert_market_context(
+                collect_market_context(
+                    FakeSupervisorClient(),
+                    "BTCUSDC",
+                    timestamp_ms=1_000,
+                )
+            )
+            store.insert_strategy_evaluations(
+                [
+                    {
+                        "source": "signal_grid",
+                        "execution_mode": "taker_trend",
+                        "symbol": "BTCUSDC",
+                        "regime": "aligned_long",
+                        "side": "long",
+                        "take_profit_bps": 20.0,
+                        "stop_loss_bps": 4.0,
+                        "max_hold_seconds": 300,
+                        "sample_count": 150,
+                        "win_count": 90,
+                        "loss_count": 60,
+                        "win_rate": 0.60,
+                        "avg_pnl_bps": 1.5,
+                        "sum_pnl_bps": 225.0,
+                        "decision": "APPROVED",
+                        "reason": "ok",
+                    }
+                ],
+                timestamp_ms=1_000,
+            )
+            paper_pnls = [0.01] * 8 + [-0.03] * 12
+            for idx, realized_pnl in enumerate(paper_pnls):
+                status = "CLOSED" if realized_pnl > 0 else "STOPPED"
+                reason = "take_profit" if realized_pnl > 0 else "stop_loss"
+                cycle_id = store.insert_strategy_cycle(
+                    strategy="trend_follow",
+                    execution_mode="taker_trend",
+                    symbol="BTCUSDC",
+                    side="long",
+                    status=status,
+                    quantity=0.1,
+                    entry_price=100.0,
+                    target_price=101.0,
+                    stop_price=99.0,
+                    entry_order_type="MARKET",
+                    take_profit_bps=100,
+                    stop_loss_bps=50,
+                    max_hold_seconds=3600,
+                    maker_one_way_bps=0.0,
+                    taker_one_way_bps=3.6,
+                    entry_deadline_ms=2_000 + idx,
+                    dry_run=True,
+                    timestamp_ms=2_000 + idx,
+                )
+                store.update_strategy_cycle(
+                    cycle_id,
+                    status=status,
+                    reason=reason,
+                    realized_pnl=realized_pnl,
+                    timestamp_ms=3_000 + idx,
+                )
+            config = TradingConfig(
+                dry_run=True,
+                live_trading_enabled=False,
+                live_strategy_lifecycle_enabled=False,
+                supervisor_data_max_age_minutes=10,
+                supervisor_min_cycle_count=20,
+                supervisor_recent_cycle_count=20,
+                supervisor_min_payoff_ratio=1.2,
+                runtime_risk_enabled=False,
+            )
+
+            report = supervise_symbols(
+                FakeSupervisorClient(),
+                store,
+                config,
+                ["BTCUSDC"],
+                notional=25,
+                current_ms=5_000,
+            )[0]
+
+            self.assertEqual(report.decision, DECISION_BLOCKED)
+            self.assertIn("paper 평균손익이 -0.014000로 양수가 아닙니다.", report.reasons)
+            self.assertIn("최근 paper 평균손익이 -0.014000로 양수가 아닙니다.", report.reasons)
+            self.assertEqual(actionable_supervisor_reports([report]), [])
+
+    def test_supervisor_blocks_unsupported_live_execution_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            store.insert_market_regime(_macro("BTCUSDC"))
+            store.insert_market_context(
+                collect_market_context(
+                    FakeSupervisorClient(),
+                    "BTCUSDC",
+                    timestamp_ms=1_000,
+                )
+            )
+            store.insert_strategy_evaluations(
+                [
+                    {
+                        "source": "signal_grid",
+                        "execution_mode": "taker_momentum",
+                        "symbol": "BTCUSDC",
+                        "regime": "aligned_long",
+                        "side": "long",
+                        "take_profit_bps": 20.0,
+                        "stop_loss_bps": 4.0,
+                        "max_hold_seconds": 300,
+                        "sample_count": 150,
+                        "win_count": 90,
+                        "loss_count": 60,
+                        "win_rate": 0.60,
+                        "avg_pnl_bps": 1.5,
+                        "sum_pnl_bps": 225.0,
+                        "decision": "APPROVED",
+                        "reason": "ok",
+                    }
+                ],
+                timestamp_ms=1_000,
+            )
+            config = TradingConfig(
+                dry_run=True,
+                live_trading_enabled=False,
+                live_scalp_lifecycle_enabled=True,
+                live_strategy_lifecycle_enabled=True,
+                supervisor_data_max_age_minutes=10,
+                runtime_risk_enabled=False,
+            )
+
+            report = supervise_symbols(
+                FakeSupervisorClient(),
+                store,
+                config,
+                ["BTCUSDC"],
+                notional=25,
+                current_ms=5_000,
+            )[0]
+
+            self.assertIn("지원되지 않는 live 실행방식입니다: taker_momentum", report.reasons)
+            self.assertEqual(actionable_supervisor_reports([report]), [])
 
     def test_live_one_shot_guard_consumes_after_first_use(self) -> None:
         config = TradingConfig(

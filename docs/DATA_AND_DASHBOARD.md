@@ -78,6 +78,8 @@ The VM runs this as `cointrading-market-regime.timer` every 5 minutes. When `COI
 
 `live-supervisor-notify` runs on the VM and sends a Telegram alert when a symbol has an approved, macro-aligned, paper-performance-positive candidate and only safety locks remain. It never places orders; it tells the operator to rerun `실전 80` before any manual one-shot enable.
 
+The alert gate is deliberately stricter than the strategy-candidate table. A candidate must have at least 20 closed paper lifecycle cycles, positive all-time and recent paper PnL, a paper payoff ratio of at least 1.2, and a recent stop/max-hold exit ratio no higher than 65%. This keeps `signal_grid` approvals from becoming live candidates until the real paper state machine has also shown survivable behavior. The live supervisor only treats `maker_post_only`, `taker_trend`, `maker_range`, and `taker_breakout` as supported live execution modes; experimental `taker_momentum` and hybrid signal-grid rows remain research-only until matching live state machines exist.
+
 `live-preflight` now prints a strategy-by-strategy entry check. `thin_book` is treated as a maker-scalping block only, not as a blanket ban for every possible strategy. Macro trend, range, and breakout candidates are shown as observe/paper candidates until their own live state machines exist.
 
 ## Macro Strategy Lifecycle
