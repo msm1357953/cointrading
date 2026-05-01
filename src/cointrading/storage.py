@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import sqlite3
 import time
@@ -35,6 +36,9 @@ SIGNAL_NUMERIC_FIELDS = {
 
 
 def default_db_path() -> Path:
+    configured = os.getenv("COINTRADING_DB_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
     return Path(__file__).resolve().parents[2] / "data" / "cointrading.sqlite"
 
 
