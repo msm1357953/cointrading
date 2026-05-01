@@ -20,6 +20,7 @@ MODE_LABELS = {
 }
 SOURCE_LABELS = {
     "signal_grid": "초단기 신호 로그",
+    "cycles": "상태머신 결과",
 }
 REGIME_LABELS = {
     "aligned_long": "상승 정렬",
@@ -151,7 +152,7 @@ def strategy_notification_text(
     active_strategy_cycles = list(active_strategy_cycles or [])
     if not rows:
         lines = [
-            "초단기 전략 후보 평가",
+            "전략 후보 평가(신호 로그 기반)",
             f"사유: {reason}",
             "평가 결과가 아직 없습니다.",
         ]
@@ -175,7 +176,7 @@ def strategy_notification_text(
     reason_counts = Counter(str(row["reason"]) for row in rows if row["decision"] != "APPROVED")
 
     lines = [
-        "초단기 전략 후보 평가",
+        "전략 후보 평가(신호 로그 기반)",
         f"사유: {reason}",
         f"평가시각: {kst_from_ms(evaluated_ms)}",
         "범위: 신호 로그 기반 후보평가입니다. 실제 주문/포지션 보고가 아닙니다.",
