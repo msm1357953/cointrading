@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Iterable
 
 from cointrading.config import TradingConfig
+from cointrading.execution_gate import evaluate_simple_strategy_gate, strategy_name_from_execution_mode
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.exchange_filters import SymbolFilters
 from cointrading.market_context import collect_market_context
@@ -216,6 +217,7 @@ def supervise_symbol(
             scalp_recent_perf,
             config,
         )
+        _append_simple_gate_reasons(reasons, store, config, symbol, best_candidate, current_ms)
 
     if config.dry_run:
         reasons.append("dry-run이 켜져 있어 실전 주문은 잠겨 있습니다.")
@@ -350,6 +352,29 @@ def _append_one_shot_reasons(
         mode = str(best_candidate["execution_mode"])
         if config.live_one_shot_strategy != mode:
             reasons.append(f"원샷 허가 실행방식이 {config.live_one_shot_strategy}입니다.")
+
+
+def _append_simple_gate_reasons(
+    reasons: list[str],
+    store: TradingStore,
+    config: TradingConfig,
+    symbol: str,
+    best_candidate,
+    current_ms: int,
+) -> None:
+    setup = {
+        "strategy": strategy_name_from_execution_mode(str(best_candidate["execution_mode"])),
+    }
+    decision = evaluate_simple_strategy_gate(
+        store,
+        config,
+        setup,
+        symbol=symbol,
+        dry_run=False,
+        timestamp_ms=current_ms,
+    )
+    if not decision.allowed:
+        reasons.append(decision.reason)
 
 
 def _append_live_mode_reasons(reasons: list[str], config: TradingConfig, best_candidate) -> None:

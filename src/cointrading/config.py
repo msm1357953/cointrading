@@ -77,6 +77,14 @@ def _get_csv_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return values or default
 
 
+def _get_csv_lower_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    values = tuple(item.strip().lower() for item in raw.split(",") if item.strip())
+    return values or default
+
+
 @dataclass(frozen=True)
 class TradingConfig:
     initial_equity: float = 1000.0
@@ -124,6 +132,12 @@ class TradingConfig:
     breakout_take_profit_bps: float = 120.0
     breakout_stop_loss_bps: float = 40.0
     breakout_max_hold_seconds: float = 7_200.0
+    simple_trade_gate_enabled: bool = True
+    simple_trade_gate_apply_to_dry_run: bool = False
+    simple_trade_gate_allowed_strategies: tuple[str, ...] = ("trend_follow",)
+    simple_trade_gate_cooldown_minutes: int = 60
+    simple_trade_gate_daily_entry_limit: int = 1
+    simple_trade_gate_max_consecutive_losses: int = 2
     macro_regime_gate_enabled: bool = True
     macro_regime_max_age_minutes: int = 30
     runtime_risk_enabled: bool = True
@@ -308,6 +322,30 @@ class TradingConfig:
             breakout_max_hold_seconds=_get_float(
                 "COINTRADING_BREAKOUT_MAX_HOLD_SECONDS",
                 cls.breakout_max_hold_seconds,
+            ),
+            simple_trade_gate_enabled=_get_bool(
+                "COINTRADING_SIMPLE_TRADE_GATE_ENABLED",
+                cls.simple_trade_gate_enabled,
+            ),
+            simple_trade_gate_apply_to_dry_run=_get_bool(
+                "COINTRADING_SIMPLE_TRADE_GATE_APPLY_TO_DRY_RUN",
+                cls.simple_trade_gate_apply_to_dry_run,
+            ),
+            simple_trade_gate_allowed_strategies=_get_csv_lower_tuple(
+                "COINTRADING_SIMPLE_TRADE_GATE_ALLOWED_STRATEGIES",
+                cls.simple_trade_gate_allowed_strategies,
+            ),
+            simple_trade_gate_cooldown_minutes=_get_int(
+                "COINTRADING_SIMPLE_TRADE_GATE_COOLDOWN_MINUTES",
+                cls.simple_trade_gate_cooldown_minutes,
+            ),
+            simple_trade_gate_daily_entry_limit=_get_int(
+                "COINTRADING_SIMPLE_TRADE_GATE_DAILY_ENTRY_LIMIT",
+                cls.simple_trade_gate_daily_entry_limit,
+            ),
+            simple_trade_gate_max_consecutive_losses=_get_int(
+                "COINTRADING_SIMPLE_TRADE_GATE_MAX_CONSECUTIVE_LOSSES",
+                cls.simple_trade_gate_max_consecutive_losses,
             ),
             macro_regime_gate_enabled=_get_bool(
                 "COINTRADING_MACRO_REGIME_GATE_ENABLED",

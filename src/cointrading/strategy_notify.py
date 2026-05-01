@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
+from cointrading.execution_gate import simple_strategy_gate_summary
 from cointrading.storage import kst_from_ms, now_ms
 
 if TYPE_CHECKING:
@@ -289,6 +290,7 @@ def _safety_lines(config: "TradingConfig | None") -> list[str]:
             f"전략 live {'ON' if config.live_strategy_lifecycle_enabled else 'OFF'}"
         ),
         f"실전주문: {live_text}",
+        simple_strategy_gate_summary(config),
     ]
 
 

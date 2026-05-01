@@ -322,6 +322,33 @@ class StrategyLifecycleTests(unittest.TestCase):
             self.assertEqual(result.action, "blocked")
             self.assertIn("live strategy lifecycle is disabled", result.detail)
 
+    def test_live_strategy_lifecycle_blocks_non_simple_gate_strategy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            client = FakeStrategyClient()
+            config = TradingConfig(
+                dry_run=False,
+                live_trading_enabled=True,
+                live_strategy_lifecycle_enabled=True,
+                live_one_shot_required=False,
+                runtime_risk_enabled=False,
+            )
+
+            result = start_strategy_cycle_from_setup(
+                client,
+                store,
+                _setup(strategy="range_reversion", side="long"),
+                config,
+                symbol="ETHUSDC",
+                bid=99.9,
+                ask=100.0,
+                timestamp_ms=1_000,
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertIn("허용 전략은 trend_follow뿐", result.detail)
+            self.assertEqual(client.new_order_intents, [])
+
     def test_live_strategy_entry_and_take_profit_reconcile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")

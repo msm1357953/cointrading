@@ -101,6 +101,17 @@ With default settings it runs in dry-run/paper mode only. The VM runs this as `c
 
 The one-shot guard is consumed after the first live lifecycle starts. This prevents a temporary live enable from accidentally becoming continuous trading.
 
+The first real-money phase also has a simple execution gate in front of live strategy entries:
+
+- `COINTRADING_SIMPLE_TRADE_GATE_ENABLED=true`
+- `COINTRADING_SIMPLE_TRADE_GATE_ALLOWED_STRATEGIES=trend_follow`
+- `COINTRADING_SIMPLE_TRADE_GATE_DAILY_ENTRY_LIMIT=1`
+- `COINTRADING_SIMPLE_TRADE_GATE_COOLDOWN_MINUTES=60`
+- `COINTRADING_SIMPLE_TRADE_GATE_MAX_CONSECUTIVE_LOSSES=2`
+- `COINTRADING_SIMPLE_TRADE_GATE_APPLY_TO_DRY_RUN=false`
+
+This means the bot may observe many strategies, but the first live phase can only attempt one trend-follow entry per KST day, waits 60 minutes before re-entering the same symbol, and stops after two consecutive live strategy losses. Paper collection is not throttled by this gate unless explicitly enabled.
+
 ## Strategy Gate
 
 `strategy-evaluate` writes three evaluation sources into SQLite:

@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import sqlite3
 
 from cointrading.config import TradingConfig
+from cointrading.execution_gate import evaluate_simple_strategy_gate
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.exchange_filters import SymbolFilters
 from cointrading.live_guard import consume_live_one_shot, validate_live_one_shot
@@ -111,6 +112,17 @@ def start_strategy_cycle_from_setup(
     if not runtime_risk.allows_new_entries:
         reason = f"runtime risk: {risk_mode_ko(runtime_risk.mode)} - {runtime_risk.reasons[0]}"
         return _blocked_order_attempt(store, setup, symbol, reason, config, ts)
+
+    gate = evaluate_simple_strategy_gate(
+        store,
+        config,
+        setup,
+        symbol=symbol,
+        dry_run=config.dry_run,
+        timestamp_ms=ts,
+    )
+    if not gate.allowed:
+        return _blocked_order_attempt(store, setup, symbol, gate.reason, config, ts)
 
     mid = (bid + ask) / 2.0
     plan = strategy_plan_from_setup(setup, config, symbol=symbol, bid=bid, ask=ask)

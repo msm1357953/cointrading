@@ -39,6 +39,7 @@ The first version avoids heavy dependencies so the skeleton can run immediately.
 
 Do not enable live trading until all items are true:
 
+- The first live phase uses one simple rule family only: `trend_follow`.
 - Signal-grid approval is backed by at least 20 closed paper lifecycle cycles on the same symbol and side.
 - All-time and recent paper PnL are positive.
 - Paper payoff ratio is at least 1.2, so average wins are meaningfully larger than average losses.
@@ -47,3 +48,6 @@ Do not enable live trading until all items are true:
 - Daily loss and max drawdown stops are tested.
 - API key permissions are restricted.
 - Logs prove that duplicate orders are not created after failures.
+- Same-symbol re-entry has a cooldown of at least 60 minutes.
+- KST-day live strategy entries are limited to one during the first phase.
+- Two consecutive live strategy losses halt new entries until reviewed.
