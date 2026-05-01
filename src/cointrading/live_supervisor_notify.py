@@ -98,9 +98,10 @@ def supervisor_candidate_notification_text(
 ) -> str:
     reports = list(actionable_reports)
     if not reports:
+        title = "실전 진입 후보 해제" if reason == "진입 후보 해제" else "실전 진입 후보 없음"
         return "\n".join(
             [
-                "실전 진입 후보 해제",
+                title,
                 f"사유: {reason}",
                 f"확인시각: {kst_from_ms(now_ms())}",
                 "현재 안전잠금만 남은 후보가 없습니다.",
