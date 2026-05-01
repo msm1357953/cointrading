@@ -66,6 +66,7 @@
 - 2026-05-01: Dashboard was reorganized around live-readiness questions. The first screen now shows live guard flags, runtime risk, active paper cycles, paper PnL, and approved candidates; the Paper tab combines scalping and macro strategy paper cycles with entry/target/stop/reason/PnL; market/strategy tables use Korean labels and explicit empty states.
 - 2026-05-01: Observed paper performance now vetoes new entries. If completed scalp or macro strategy paper cycles have enough samples and are `BLOCKED`, that real paper result overrides signal-grid approvals. Dashboard performance tables now show average win, average loss, payoff ratio, and break-even win rate.
 - 2026-05-01: Default paper strategy thresholds were tightened for payoff. Maker scalping now defaults to TP 16 bps / SL 4 bps / 300s max hold, requires 4 bps minimum edge, and uses stricter imbalance/momentum gates. Strategy evaluation now requires at least 100 samples, +0.5 bps expectancy, 42% win rate, and loss/win width <= 1.5. Macro defaults were moved to higher reward/lower stop settings: trend 90/30 bps, range 30/15 bps, breakout 120/40 bps.
+- 2026-05-01: Dashboard active/Paper cycle tables now show current mark price beside entry price and estimate active-cycle unrealized PnL after entry plus market-exit fee assumptions. Overview and Paper summaries also show total active unrealized PnL.
 
 ## Next Work Packets
 

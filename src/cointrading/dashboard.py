@@ -146,11 +146,17 @@ def _snapshot(
     latest_strategy_batch = store.latest_strategy_batch()
     market_regime_rows = store.latest_market_regimes(symbols=config.scalp_symbols, limit=limit)
     market_context_rows = store.latest_market_contexts(symbols=config.scalp_symbols, limit=limit)
+    price_by_symbol = _price_by_symbol(market_context_rows)
     scalp_performance = store.scalp_cycle_performance()
     strategy_performance = store.strategy_cycle_performance()
     scalp_exit_reasons = store.scalp_cycle_exit_reasons()
     strategy_exit_reasons = store.strategy_cycle_exit_reasons()
-    paper_rows = _paper_rows_html(scalp_cycles, strategy_cycles)
+    active_unrealized = _active_unrealized_total(
+        active_scalp_cycles,
+        active_strategy_cycles,
+        price_by_symbol,
+    )
+    paper_rows = _paper_rows_html(scalp_cycles, strategy_cycles, price_by_symbol)
     return {
         "generated_at": kst_from_ms(now_ms()),
         "row_limit": str(limit),
@@ -161,15 +167,21 @@ def _snapshot(
             risk_state=risk_state,
             active_scalp_cycles=active_scalp_cycles,
             active_strategy_cycles=active_strategy_cycles,
+            active_unrealized=active_unrealized,
             scalp_performance=scalp_performance,
             strategy_performance=strategy_performance,
             latest_strategy_batch=latest_strategy_batch,
         ),
-        "active_paper_rows": _active_paper_rows_html(active_scalp_cycles, active_strategy_cycles),
+        "active_paper_rows": _active_paper_rows_html(
+            active_scalp_cycles,
+            active_strategy_cycles,
+            price_by_symbol,
+        ),
         "paper_rows": paper_rows,
         "paper_summary": _paper_summary_html(
             active_scalp_cycles=active_scalp_cycles,
             active_strategy_cycles=active_strategy_cycles,
+            active_unrealized=active_unrealized,
             scalp_performance=scalp_performance,
             strategy_performance=strategy_performance,
             scalp_exit_reasons=scalp_exit_reasons,
@@ -197,6 +209,7 @@ def _overview_html(
     risk_state,
     active_scalp_cycles,
     active_strategy_cycles,
+    active_unrealized,
     scalp_performance,
     strategy_performance,
     latest_strategy_batch,
@@ -212,6 +225,7 @@ def _overview_html(
         _metric_html("실전", "잠김" if live_locked else "가능 플래그 ON", "good" if live_locked else "warn"),
         _metric_html("위험모드", _risk_mode_line(risk_state), "good" if risk_state.allows_new_entries else "block"),
         _metric_html("진행 중 Paper", str(active_count), "warn" if active_count else "good"),
+        _metric_html("미실현 손익", f"{active_unrealized:+.6f}", _pnl_tone(active_unrealized)),
         _metric_html("Paper 손익", f"{scalp_sum + strategy_sum:+.6f}", _pnl_tone(scalp_sum + strategy_sum)),
         _metric_html("승인 후보", str(len(approved)), "good" if approved else "warn"),
         _metric_html("표본부족/차단", f"{len(sample_low)} / {len(blocked)}", "warn" if sample_low else "muted"),
@@ -254,38 +268,47 @@ def _metric_html(label: str, value: str, tone: str = "muted") -> str:
     )
 
 
-def _active_paper_rows_html(scalp_cycles, strategy_cycles) -> str:
+def _active_paper_rows_html(scalp_cycles, strategy_cycles, price_by_symbol: dict[str, float]) -> str:
     rows = [
-        *_cycle_table_rows(scalp_cycles, cycle_type="스캘핑"),
-        *_cycle_table_rows(strategy_cycles, cycle_type="전략"),
+        *_cycle_table_rows(scalp_cycles, cycle_type="스캘핑", price_by_symbol=price_by_symbol),
+        *_cycle_table_rows(strategy_cycles, cycle_type="전략", price_by_symbol=price_by_symbol),
     ]
     if not rows:
-        return '<tr><td colspan="12" class="empty">진행 중인 paper 사이클 없음</td></tr>'
+        return '<tr><td colspan="14" class="empty">진행 중인 paper 사이클 없음</td></tr>'
     ranked = sorted(rows, key=lambda item: item[0], reverse=True)
     return "\n".join(row for _, row in ranked)
 
 
-def _paper_rows_html(scalp_cycles, strategy_cycles) -> str:
+def _paper_rows_html(scalp_cycles, strategy_cycles, price_by_symbol: dict[str, float]) -> str:
     rows = [
-        *_cycle_table_rows(scalp_cycles, cycle_type="스캘핑"),
-        *_cycle_table_rows(strategy_cycles, cycle_type="전략"),
+        *_cycle_table_rows(scalp_cycles, cycle_type="스캘핑", price_by_symbol=price_by_symbol),
+        *_cycle_table_rows(strategy_cycles, cycle_type="전략", price_by_symbol=price_by_symbol),
     ]
     if not rows:
-        return '<tr><td colspan="12" class="empty">paper 사이클 기록 없음</td></tr>'
+        return '<tr><td colspan="14" class="empty">paper 사이클 기록 없음</td></tr>'
     ranked = sorted(rows, key=lambda item: item[0], reverse=True)
     return "\n".join(row for _, row in ranked)
 
 
-def _cycle_table_rows(cycles, *, cycle_type: str) -> list[tuple[int, str]]:
+def _cycle_table_rows(
+    cycles,
+    *,
+    cycle_type: str,
+    price_by_symbol: dict[str, float],
+) -> list[tuple[int, str]]:
     output: list[tuple[int, str]] = []
     for cycle in cycles:
         updated_ms = int(cycle["updated_ms"])
-        strategy = cycle["strategy"] if cycle_type == "전략" else "maker_scalp"
+        strategy = _row_get(cycle, "strategy", "maker_scalp") if cycle_type == "전략" else "maker_scalp"
+        current_price = _current_price_for_cycle(cycle, price_by_symbol)
+        unrealized_pnl = _unrealized_pnl(cycle, current_price, cycle_type=cycle_type)
         entry_price = _fmt_price(cycle["entry_price"])
+        current_price_text = _fmt_price(current_price)
         target_price = _fmt_price(cycle["target_price"])
         stop_price = _fmt_price(cycle["stop_price"])
         quantity = _fmt_qty(cycle["quantity"])
-        pnl = _fmt_pnl(cycle["realized_pnl"])
+        unrealized_text = _fmt_signed_pnl(unrealized_pnl)
+        pnl = _fmt_signed_pnl(cycle["realized_pnl"])
         status = str(cycle["status"])
         reason = str(cycle["reason"] or "")
         row = (
@@ -298,20 +321,111 @@ def _cycle_table_rows(cycles, *, cycle_type: str) -> list[tuple[int, str]]:
             f"<td>{_status_pill(status)}</td>"
             f"<td>{escape(quantity)}</td>"
             f"<td>{escape(entry_price)}</td>"
+            f"<td>{escape(current_price_text)}</td>"
             f"<td>{escape(target_price)}</td>"
             f"<td>{escape(stop_price)}</td>"
+            f'<td class="{_pnl_cell_class(unrealized_pnl)}">{escape(unrealized_text)}</td>'
+            f'<td class="{_pnl_cell_class(cycle["realized_pnl"])}">{escape(pnl)}</td>'
             f"<td>{escape(_reason_label(reason))}</td>"
-            f"<td>{escape(pnl)}</td>"
             "</tr>"
         )
         output.append((updated_ms, row))
     return output
 
 
+def _price_by_symbol(rows) -> dict[str, float]:
+    prices: dict[str, float] = {}
+    for row in rows:
+        symbol = _row_get(row, "symbol")
+        mark_price = _row_get(row, "mark_price")
+        if not symbol or mark_price is None:
+            continue
+        prices[str(symbol).upper()] = float(mark_price)
+    return prices
+
+
+def _current_price_for_cycle(cycle, price_by_symbol: dict[str, float]) -> float | None:
+    symbol = str(_row_get(cycle, "symbol", "")).upper()
+    if symbol in price_by_symbol:
+        return price_by_symbol[symbol]
+    return _float_or_none(_row_get(cycle, "last_mid_price"))
+
+
+def _active_unrealized_total(
+    scalp_cycles,
+    strategy_cycles,
+    price_by_symbol: dict[str, float],
+) -> float:
+    values = [
+        *(
+            _unrealized_pnl(cycle, _current_price_for_cycle(cycle, price_by_symbol), cycle_type="스캘핑")
+            for cycle in scalp_cycles
+        ),
+        *(
+            _unrealized_pnl(cycle, _current_price_for_cycle(cycle, price_by_symbol), cycle_type="전략")
+            for cycle in strategy_cycles
+        ),
+    ]
+    return sum(value for value in values if value is not None)
+
+
+def _unrealized_pnl(cycle, current_price: float | None, *, cycle_type: str) -> float | None:
+    status = str(_row_get(cycle, "status", ""))
+    if status not in {"OPEN", "EXIT_SUBMITTED"}:
+        return None
+    entry_price = _float_or_none(_row_get(cycle, "entry_price"))
+    quantity = _float_or_none(_row_get(cycle, "quantity"))
+    if current_price is None or entry_price is None or quantity is None:
+        return None
+    side = str(_row_get(cycle, "side", "")).lower()
+    if side == "long":
+        gross = (current_price - entry_price) * quantity
+    elif side == "short":
+        gross = (entry_price - current_price) * quantity
+    else:
+        return None
+    entry_fee_bps = _entry_fee_bps(cycle, cycle_type=cycle_type)
+    exit_fee_bps = float(_row_get(cycle, "taker_one_way_bps", 0.0) or 0.0)
+    fees = _fee_amount(entry_price, quantity, entry_fee_bps) + _fee_amount(
+        current_price,
+        quantity,
+        exit_fee_bps,
+    )
+    return gross - fees
+
+
+def _entry_fee_bps(cycle, *, cycle_type: str) -> float:
+    if cycle_type == "전략":
+        entry_order_type = str(_row_get(cycle, "entry_order_type", "")).upper()
+        if entry_order_type == "MARKET":
+            return float(_row_get(cycle, "taker_one_way_bps", 0.0) or 0.0)
+    return float(_row_get(cycle, "maker_one_way_bps", 0.0) or 0.0)
+
+
+def _fee_amount(price: float, quantity: float, fee_bps: float) -> float:
+    return abs(price * quantity) * fee_bps / 10_000.0
+
+
+def _row_get(row, key: str, default=None):
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (IndexError, KeyError, TypeError):
+        return default
+
+
+def _float_or_none(value) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
 def _paper_summary_html(
     *,
     active_scalp_cycles,
     active_strategy_cycles,
+    active_unrealized,
     scalp_performance,
     strategy_performance,
     scalp_exit_reasons,
@@ -333,6 +447,7 @@ def _paper_summary_html(
     return "\n".join(
         [
             _metric_html("진행 중", str(active_count), "warn" if active_count else "good"),
+            _metric_html("미실현 손익", f"{active_unrealized:+.6f}", _pnl_tone(active_unrealized)),
             _metric_html("종료 표본", f"{scalp_closed + strategy_closed}", "muted"),
             _metric_html("스캘핑 합계", f"{scalp_sum:+.6f}", _pnl_tone(scalp_sum)),
             _metric_html("전략 합계", f"{strategy_sum:+.6f}", _pnl_tone(strategy_sum)),
@@ -558,8 +673,8 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     risk_state = snapshot.get("risk_state", "런타임 위험모드\n아직 산출된 내용이 없습니다.")
     mode_summary = snapshot.get("mode_summary", "")
     overview = snapshot.get("overview", "")
-    active_paper_rows = snapshot.get("active_paper_rows", "") or _empty_table_row(12, "진행 중인 paper 사이클 없음")
-    paper_rows = snapshot.get("paper_rows", "") or _empty_table_row(12, "paper 사이클 기록 없음")
+    active_paper_rows = snapshot.get("active_paper_rows", "") or _empty_table_row(14, "진행 중인 paper 사이클 없음")
+    paper_rows = snapshot.get("paper_rows", "") or _empty_table_row(14, "paper 사이클 기록 없음")
     paper_summary = snapshot.get("paper_summary", "")
     strategy_summary = snapshot.get("strategy_summary", "")
     signal_rows = snapshot["signal_rows"] or _empty_table_row(5, "최근 신호 없음")
@@ -713,6 +828,9 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     .chip.tone-block, .pill.tone-block {{ color: var(--block); background: var(--block-bg); border-color: #f2b8b5; }}
     .row-active td {{ background: #f0f8ff; }}
     .row-stopped td {{ background: #fff8f1; }}
+    .pnl-positive {{ color: var(--good); font-weight: 700; }}
+    .pnl-negative {{ color: var(--block); font-weight: 700; }}
+    .pnl-flat {{ color: var(--muted); }}
     .empty {{ color: var(--muted); text-align: center; padding: 18px; }}
     .split {{
       display: grid;
@@ -757,7 +875,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
           <h3>진행 중 Paper</h3>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입</th><th>목표</th><th>손절</th><th>이유</th><th>손익</th></tr></thead>
+              <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입가</th><th>현재가</th><th>목표가</th><th>손절가</th><th>미실현</th><th>실현손익</th><th>이유</th></tr></thead>
               <tbody id="active-paper-rows">{active_paper_rows}</tbody>
             </table>
           </div>
@@ -773,7 +891,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       <div id="paper-summary" class="metric-grid">{paper_summary}</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입</th><th>목표</th><th>손절</th><th>이유</th><th>손익</th></tr></thead>
+          <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입가</th><th>현재가</th><th>목표가</th><th>손절가</th><th>미실현</th><th>실현손익</th><th>이유</th></tr></thead>
           <tbody id="paper-rows">{paper_rows}</tbody>
         </table>
       </div>
@@ -943,6 +1061,17 @@ def _pnl_tone(value: float) -> str:
     return "muted"
 
 
+def _pnl_cell_class(value) -> str:
+    value_float = _float_or_none(value)
+    if value_float is None:
+        return ""
+    if value_float > 0:
+        return "pnl-positive"
+    if value_float < 0:
+        return "pnl-negative"
+    return "pnl-flat"
+
+
 def _status_pill(status: str) -> str:
     tone = "muted"
     if status == "CLOSED":
@@ -1013,6 +1142,12 @@ def _fmt_pnl(value) -> str:
     if value is None:
         return ""
     return f"{float(value):.6f}"
+
+
+def _fmt_signed_pnl(value) -> str:
+    if value is None:
+        return ""
+    return f"{float(value):+.6f}"
 
 
 def _fmt_price(value) -> str:

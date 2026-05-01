@@ -1,7 +1,7 @@
 import unittest
 
 from cointrading.config import TradingConfig
-from cointrading.dashboard import _dashboard_limit, _is_authorized, _page
+from cointrading.dashboard import _cycle_table_rows, _dashboard_limit, _is_authorized, _page
 
 
 class DashboardTests(unittest.TestCase):
@@ -48,6 +48,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('data-tab="market"', html)
         self.assertIn('data-tab="strategies"', html)
         self.assertIn('id="active-paper-rows"', html)
+        self.assertIn("현재가", html)
+        self.assertIn("미실현", html)
+        self.assertIn("실현손익", html)
         self.assertIn("최근 <span id=\"row-limit\">200</span>개", html)
         self.assertNotIn("http-equiv=\"refresh\"", html)
 
@@ -56,6 +59,33 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(_dashboard_limit({"limit": ["500"]}), 500)
         self.assertEqual(_dashboard_limit({"limit": ["5000"]}), 1000)
         self.assertEqual(_dashboard_limit({"limit": ["bad"]}), 200)
+
+    def test_cycle_rows_show_current_price_and_unrealized_pnl(self) -> None:
+        rows = _cycle_table_rows(
+            [
+                {
+                    "updated_ms": 1_714_500_000_000,
+                    "symbol": "BTCUSDC",
+                    "side": "long",
+                    "status": "OPEN",
+                    "reason": "",
+                    "quantity": 1.0,
+                    "entry_price": 100.0,
+                    "target_price": 110.0,
+                    "stop_price": 95.0,
+                    "maker_one_way_bps": 0.0,
+                    "taker_one_way_bps": 0.0,
+                    "realized_pnl": None,
+                    "last_mid_price": 100.5,
+                }
+            ],
+            cycle_type="스캘핑",
+            price_by_symbol={"BTCUSDC": 101.0},
+        )
+
+        html = rows[0][1]
+        self.assertIn("<td>101</td>", html)
+        self.assertIn("+1.000000", html)
 
 
 if __name__ == "__main__":

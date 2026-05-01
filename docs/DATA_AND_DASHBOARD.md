@@ -121,7 +121,7 @@ Default paper exits now target positive payoff before frequency: maker scalping 
 The dashboard is a small HTTP server organized around the questions needed before live trading:
 
 - `개요`: live/dry-run guard flags, runtime risk mode, active paper cycles, total paper PnL, and approved candidate count.
-- `Paper`: combined scalping and macro-strategy paper cycles with entry/target/stop/exit reason/PnL, plus strategy-vs-scalp performance, average win/loss, payoff ratio, break-even win rate, and exit reason summaries.
+- `Paper`: combined scalping and macro-strategy paper cycles with entry price, current mark price, target/stop, active-cycle unrealized PnL, realized PnL, and exit reason, plus strategy-vs-scalp performance, average win/loss, payoff ratio, break-even win rate, and exit reason summaries.
 - `전략`: latest strategy candidate evaluations with Korean labels for source, execution mode, regime, side, and decision.
 - `시장`: macro regime routing plus market context such as premium, funding, spread, depth, and imbalance.
 - `위험`, `신호`, `주문`, `원본요약`: detailed runtime risk text, raw signals, blocked/order attempts, and legacy summaries for debugging.
