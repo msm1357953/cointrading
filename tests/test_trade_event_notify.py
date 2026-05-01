@@ -116,6 +116,24 @@ class TradeEventNotifyTests(unittest.TestCase):
             self.assertIn("현재 102", text)
             self.assertIn("미실현 +0.500000 USDC", text)
 
+    def test_startup_floor_keeps_old_backfill_suppressed_after_state_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            _insert_strategy_cycle(store, timestamp_ms=1_000)
+            state = TradeEventNotifyState(
+                initialized_ms=2_000_000,
+                notified_keys=("strategy:999:entry_submitted",),
+            )
+
+            events, _ = trade_event_notification_decision(
+                store,
+                state,
+                summary_interval_minutes=0,
+                timestamp_ms=2_100_000,
+            )
+
+            self.assertEqual(events, [])
+
 
 if __name__ == "__main__":
     unittest.main()

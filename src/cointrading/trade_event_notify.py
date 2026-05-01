@@ -84,7 +84,7 @@ def trade_event_notification_decision(
         if event_type is None:
             continue
         event_ms = _cycle_event_ms(row, event_type)
-        if not state.notified_keys and event_ms < startup_floor:
+        if event_ms < startup_floor:
             continue
         key = f"{source}:{int(_row_value(row, 'id', 0))}:{event_type}"
         if key in notified:
