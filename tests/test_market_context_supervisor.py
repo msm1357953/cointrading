@@ -211,9 +211,11 @@ class MarketContextSupervisorTests(unittest.TestCase):
             self.assertTrue(should_send)
             self.assertEqual(reason, "진입 후보 감지")
             self.assertIn("BTCUSDC", signature)
+            text = supervisor_candidate_notification_text(reports, reason=reason, notional=25)
+            self.assertIn("주문상태: 실행 안 함", text)
             self.assertIn(
-                "주문상태: 실행 안 함",
-                supervisor_candidate_notification_text(reports, reason=reason, notional=25),
+                "후보: 전략=추세 추종 주문=시장가 추세추종 조건=상승 정렬 방향=롱",
+                text,
             )
 
     def test_supervisor_blocks_actionable_alert_when_recent_paper_is_weak(self) -> None:

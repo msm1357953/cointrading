@@ -104,6 +104,9 @@ class StrategyNotifyTests(unittest.TestCase):
     def test_notification_text_includes_execution_mode(self) -> None:
         text = strategy_notification_text([_row(execution_mode="taker_momentum")], reason="수동")
 
+        self.assertIn("전략유형별", text)
+        self.assertIn("초단기 모멘텀", text)
+        self.assertIn("주문방식별", text)
         self.assertIn("시장가/테이커 추세", text)
         self.assertIn("승인 0개", text)
         self.assertIn("실제 주문/포지션 보고가 아닙니다", text)
@@ -125,8 +128,14 @@ class StrategyNotifyTests(unittest.TestCase):
         )
 
         self.assertIn("안전상태: dry-run ON, live OFF, 전략 live OFF", text)
-        self.assertIn("BTCUSDC 롱 / 상승 정렬 / 지정가 메이커 / 파라미터 2개", text)
-        self.assertIn("XRPUSDC 숏 / 하락 정렬 / 지정가 메이커", text)
+        self.assertIn(
+            "BTCUSDC 롱 / 전략=메이커 스캘핑 / 조건=상승 정렬 / 주문=지정가 메이커 / 파라미터 2개",
+            text,
+        )
+        self.assertIn(
+            "XRPUSDC 숏 / 전략=메이커 스캘핑 / 조건=하락 정렬 / 주문=지정가 메이커",
+            text,
+        )
         self.assertIn("현재 전략 상태머신", text)
         self.assertIn("레인지 평균회귀 BTCUSDC 롱 보유 중", text)
 

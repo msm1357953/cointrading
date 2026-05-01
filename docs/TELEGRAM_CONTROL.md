@@ -67,7 +67,7 @@ Copy the printed `chat_id` into `.env`.
 
 Slash commands such as `/status`, `/account`, `/scalp BTCUSDC`, and `/scalp_report` are still accepted.
 
-Strategy notification messages are candidate evaluations, not trade confirmations. They group duplicated TP/SL/hold-time parameter variants so `APPROVED` counts do not look like separate live orders.
+Strategy notification messages are candidate evaluations, not trade confirmations. They group duplicated TP/SL/hold-time parameter variants so `APPROVED` counts do not look like separate live orders. Telegram reports separate `전략유형` such as maker scalping, trend-follow, range-reversion, and breakout from `주문방식` such as post-only maker or market/taker.
 
 No Telegram command places live orders. Future live-trading commands should require explicit two-step confirmation and should stay blocked while `COINTRADING_DRY_RUN=true`. Macro strategy live orders also require `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true`. Live entries additionally require the one-shot guard unless `COINTRADING_LIVE_ONE_SHOT_REQUIRED=false`.
 

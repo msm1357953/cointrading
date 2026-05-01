@@ -21,6 +21,7 @@ from cointrading.strategy_notify import (
     SOURCE_LABELS,
     STATUS_LABELS,
     STRATEGY_LABELS,
+    strategy_family_label,
 )
 
 
@@ -193,7 +194,7 @@ def _snapshot(
         "order_rows": _order_rows_html(store.recent_orders(limit=limit)) or _empty_table_row(5, "최근 주문/차단 없음"),
         "cycle_rows": _cycle_rows_html(scalp_cycles) or _empty_table_row(6, "스캘핑 상태머신 기록 없음"),
         "strategy_cycle_rows": _strategy_cycle_rows_html(strategy_cycles) or _empty_table_row(7, "전략 상태머신 기록 없음"),
-        "strategy_rows": _strategy_rows_html(strategy_rows) or _empty_table_row(15, "전략 평가 결과 없음"),
+        "strategy_rows": _strategy_rows_html(strategy_rows) or _empty_table_row(16, "전략 평가 결과 없음"),
         "market_regime_rows": _market_regime_rows_html(market_regime_rows) or _empty_table_row(10, "장세 라우터 기록 없음"),
         "market_context_rows": _market_context_rows_html(market_context_rows) or _empty_table_row(8, "시장상황 기록 없음"),
         "performance_rows": _performance_rows_html(scalp_performance) or _empty_table_row(12, "스캘핑 종료 표본 없음"),
@@ -473,7 +474,7 @@ def _strategy_summary_html(rows) -> str:
         row = best[0]
         best_text = (
             f"{row['symbol']} {_side_label(str(row['side']))} "
-            f"{_mode_label(str(row['execution_mode']))} "
+            f"{strategy_family_label(row)} "
             f"{float(row['avg_pnl_bps']):+.3f}bps"
         )
         tone = "good"
@@ -548,6 +549,7 @@ def _strategy_rows_html(rows) -> str:
         f"<td>{escape(kst_from_ms(int(row['evaluated_ms'])))}</td>"
         f"<td>{_decision_pill(str(row['decision']))}</td>"
         f"<td>{escape(_source_label(str(row['source'])))}</td>"
+        f"<td>{escape(strategy_family_label(row))}</td>"
         f"<td>{escape(_mode_label(str(row['execution_mode'])))}</td>"
         f"<td>{escape(row['symbol'])}</td>"
         f"<td>{escape(_regime_label(str(row['regime'])))}</td>"
@@ -681,7 +683,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     order_rows = snapshot["order_rows"] or _empty_table_row(5, "최근 주문/차단 없음")
     cycle_rows = snapshot["cycle_rows"] or _empty_table_row(6, "스캘핑 상태머신 기록 없음")
     strategy_cycle_rows = snapshot.get("strategy_cycle_rows", "") or _empty_table_row(7, "전략 상태머신 기록 없음")
-    strategy_rows = snapshot["strategy_rows"] or _empty_table_row(15, "전략 평가 결과 없음")
+    strategy_rows = snapshot["strategy_rows"] or _empty_table_row(16, "전략 평가 결과 없음")
     market_regime_rows = snapshot["market_regime_rows"] or _empty_table_row(10, "장세 라우터 기록 없음")
     market_context_rows = snapshot.get("market_context_rows", "") or _empty_table_row(8, "시장상황 기록 없음")
     performance_rows = snapshot["performance_rows"] or _empty_table_row(12, "스캘핑 종료 표본 없음")
@@ -923,7 +925,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       <div id="strategy-summary-tab" class="metric-grid">{strategy_summary}</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>평가</th><th>판정</th><th>출처</th><th>실행</th><th>심볼</th><th>장상태</th><th>방향</th><th>TP</th><th>SL</th><th>보유</th><th>표본</th><th>승률</th><th>평균bps</th><th>합계bps</th><th>이유</th></tr></thead>
+          <thead><tr><th>평가</th><th>판정</th><th>출처</th><th>전략</th><th>주문방식</th><th>심볼</th><th>장상태</th><th>방향</th><th>TP</th><th>SL</th><th>보유</th><th>표본</th><th>승률</th><th>평균bps</th><th>합계bps</th><th>이유</th></tr></thead>
           <tbody id="strategy-rows">{strategy_rows}</tbody>
         </table>
       </div>

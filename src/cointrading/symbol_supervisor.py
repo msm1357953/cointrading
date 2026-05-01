@@ -12,7 +12,7 @@ from cointrading.market_regime import MACRO_BEAR, MACRO_BULL, macro_regime_ko, t
 from cointrading.market_regime import evaluate_market_regime
 from cointrading.risk_state import RuntimeRiskSnapshot, evaluate_runtime_risk, risk_mode_ko
 from cointrading.storage import TradingStore, kst_from_ms, now_ms
-from cointrading.strategy_notify import MODE_LABELS, REGIME_LABELS, SIDE_LABELS
+from cointrading.strategy_notify import MODE_LABELS, REGIME_LABELS, SIDE_LABELS, strategy_family_label
 
 
 DECISION_READY = "READY"
@@ -349,7 +349,7 @@ def _append_one_shot_reasons(
     if config.live_one_shot_strategy and best_candidate is not None:
         mode = str(best_candidate["execution_mode"])
         if config.live_one_shot_strategy != mode:
-            reasons.append(f"원샷 허가 전략이 {config.live_one_shot_strategy}입니다.")
+            reasons.append(f"원샷 허가 실행방식이 {config.live_one_shot_strategy}입니다.")
 
 
 def _append_live_mode_reasons(reasons: list[str], config: TradingConfig, best_candidate) -> None:
@@ -532,11 +532,12 @@ def _context_summary(row, current_ms: int, config: TradingConfig) -> str:
 def _candidate_line(row: dict | None) -> str:
     if row is None:
         return "없음"
+    strategy = strategy_family_label(row)
     mode = MODE_LABELS.get(str(row["execution_mode"]), str(row["execution_mode"]))
     regime = REGIME_LABELS.get(str(row["regime"]), str(row["regime"]))
     side = SIDE_LABELS.get(str(row["side"]), str(row["side"]))
     return (
-        f"{mode} {regime} {side} "
+        f"전략={strategy} 주문={mode} 조건={regime} 방향={side} "
         f"TP={float(row['take_profit_bps']):.1f} "
         f"SL={float(row['stop_loss_bps']):.1f} "
         f"H={int(row['max_hold_seconds'])}s "

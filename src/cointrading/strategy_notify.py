@@ -21,6 +21,14 @@ MODE_LABELS = {
     "maker_range": "지정가 평균회귀",
     "taker_breakout": "시장가 축소돌파",
 }
+STRATEGY_FAMILY_LABELS = {
+    "maker_post_only": "메이커 스캘핑",
+    "taker_momentum": "초단기 모멘텀",
+    "hybrid_taker_entry_maker_exit": "초단기 하이브리드",
+    "taker_trend": "추세 추종",
+    "maker_range": "레인지 평균회귀",
+    "taker_breakout": "축소 돌파",
+}
 SOURCE_LABELS = {
     "signal_grid": "초단기 신호 로그",
     "cycles": "상태머신 결과",
@@ -200,9 +208,11 @@ def strategy_notification_text(
     evaluated_ms = max(int(row["evaluated_ms"]) for row in rows)
     decision_counts = Counter(str(row["decision"]) for row in rows)
     mode_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    strategy_counts: dict[str, Counter[str]] = defaultdict(Counter)
     source_counts: Counter[str] = Counter()
     for row in rows:
         mode_counts[str(row["execution_mode"])][str(row["decision"])] += 1
+        strategy_counts[strategy_family_label(row)][str(row["decision"])] += 1
         source_counts[str(row["source"])] += 1
 
     approved = sorted(
@@ -219,7 +229,7 @@ def strategy_notification_text(
         "범위: 신호 로그와 paper 상태머신 결과 기반 후보평가입니다. 실제 주문/포지션 보고가 아닙니다.",
     ]
     lines.extend(_safety_lines(config))
-    lines.append(_summary_sentence(decision_counts, mode_counts))
+    lines.append(_summary_sentence(decision_counts, approved))
     lines.append(
         "집계: "
         f"승인 {decision_counts.get('APPROVED', 0)}개, "
@@ -232,7 +242,10 @@ def strategy_notification_text(
             f"{_source_label(source)} {count}개" for source, count in source_counts.most_common()
         )
     )
-    lines.append("실행방식별")
+    lines.append("전략유형별")
+    for strategy in sorted(strategy_counts):
+        lines.append(_strategy_summary_line(strategy, strategy_counts[strategy]))
+    lines.append("주문방식별")
     for mode in sorted(mode_counts):
         lines.append(_mode_summary_line(mode, mode_counts[mode]))
 
@@ -281,18 +294,23 @@ def _safety_lines(config: "TradingConfig | None") -> list[str]:
 
 def _summary_sentence(
     decision_counts: Counter[str],
-    mode_counts: dict[str, Counter[str]],
+    approved_rows: list,
 ) -> str:
     approved_count = decision_counts.get("APPROVED", 0)
-    approved_modes = [
-        mode for mode, counter in mode_counts.items() if counter.get("APPROVED", 0) > 0
-    ]
     if approved_count <= 0:
         return "결론: 지금 승인 후보는 없습니다. 관찰만 하는 구간입니다."
-    if approved_modes == ["maker_post_only"]:
-        return "결론: 승인 후보는 지정가 메이커뿐입니다. 테이커/하이브리드는 아직 차단입니다."
-    labels = ", ".join(_mode_label(mode) for mode in sorted(approved_modes))
-    return f"결론: 승인 후보가 {approved_count}개 있습니다. 허용 실행방식: {labels}."
+    strategies = ", ".join(sorted({strategy_family_label(row) for row in approved_rows}))
+    modes = ", ".join(sorted({_mode_label(str(row["execution_mode"])) for row in approved_rows}))
+    return f"결론: 승인 후보 {approved_count}개. 전략유형: {strategies}. 주문방식: {modes}."
+
+
+def _strategy_summary_line(strategy: str, counter: Counter[str]) -> str:
+    return (
+        f"- {strategy}: "
+        f"승인 {counter.get('APPROVED', 0)}, "
+        f"차단 {counter.get('BLOCKED', 0)}, "
+        f"표본부족 {counter.get('SAMPLE_LOW', 0)}"
+    )
 
 
 def _mode_summary_line(mode: str, counter: Counter[str]) -> str:
@@ -349,8 +367,10 @@ def _active_cycle_lines(cycles: list, *, limit: int) -> list[str]:
 def _row_line(row, *, variants: int = 1) -> str:
     variant_text = f" / 파라미터 {variants}개" if variants > 1 else ""
     return (
-        f"- {row['symbol']} {_side_label(row['side'])} / {_regime_label(row['regime'])} / "
-        f"{_mode_label(row['execution_mode'])}{variant_text}: "
+        f"- {row['symbol']} {_side_label(row['side'])} / "
+        f"전략={strategy_family_label(row)} / "
+        f"조건={_regime_label(row['regime'])} / "
+        f"주문={_mode_label(row['execution_mode'])}{variant_text}: "
         f"TP {float(row['take_profit_bps']):.1f}bps, "
         f"SL {float(row['stop_loss_bps']):.1f}bps, "
         f"보유 {int(row['max_hold_seconds'])}s, "
@@ -365,6 +385,15 @@ def _source_label(source: str) -> str:
 
 def _mode_label(mode: str) -> str:
     return MODE_LABELS.get(mode, mode)
+
+
+def strategy_family_label(row: Any) -> str:
+    source = str(_row_value(row, "source", ""))
+    mode = str(_row_value(row, "execution_mode", ""))
+    regime = str(_row_value(row, "regime", ""))
+    if source == "strategy_cycles" and regime in STRATEGY_LABELS:
+        return _strategy_label(regime)
+    return STRATEGY_FAMILY_LABELS.get(mode, _mode_label(mode))
 
 
 def _regime_label(regime: str) -> str:
@@ -392,3 +421,12 @@ def _short_reason(reason: str) -> str:
     if len(reason) <= 100:
         return reason
     return f"{reason[:97]}..."
+
+
+def _row_value(row: Any, key: str, default: Any = None) -> Any:
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return getattr(row, key, default)
