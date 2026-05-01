@@ -8,6 +8,7 @@ from cointrading.scalping import ScalpSignal
 from cointrading.storage import TradingStore
 from cointrading.strategy_eval import (
     MAKER_POST_ONLY,
+    TAKER_TREND,
     TAKER_MOMENTUM,
     evaluate_and_store_strategy,
     strategy_gate_decision,
@@ -73,6 +74,45 @@ class StrategyEvaluationTests(unittest.TestCase):
             self.assertEqual(cycle_rows[0]["execution_mode"], MAKER_POST_ONLY)
             self.assertIn("평균손익", cycle_rows[0]["reason"])
             self.assertGreater(store.summary_counts()["strategy_evaluations"], 0)
+
+    def test_strategy_evaluation_includes_macro_strategy_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            config = TradingConfig(strategy_min_samples=2, strategy_min_win_rate=0.50)
+            for index, pnl in enumerate([0.10, 0.12]):
+                cycle_id = store.insert_strategy_cycle(
+                    strategy="trend_follow",
+                    execution_mode=TAKER_TREND,
+                    symbol="ETHUSDC",
+                    side="long",
+                    status="CLOSED",
+                    quantity=0.25,
+                    entry_price=100.0,
+                    target_price=101.0,
+                    stop_price=99.5,
+                    entry_order_type="MARKET",
+                    take_profit_bps=80,
+                    stop_loss_bps=40,
+                    max_hold_seconds=14_400,
+                    maker_one_way_bps=0.0,
+                    taker_one_way_bps=3.6,
+                    entry_deadline_ms=2_000,
+                    dry_run=True,
+                    timestamp_ms=2_000 + index,
+                )
+                store.update_strategy_cycle(
+                    cycle_id,
+                    status="CLOSED",
+                    realized_pnl=pnl,
+                    timestamp_ms=3_000 + index,
+                )
+
+            rows = evaluate_and_store_strategy(store, config)
+            strategy_rows = [row for row in rows if row["source"] == "strategy_cycles"]
+
+            self.assertEqual(strategy_rows[0]["execution_mode"], TAKER_TREND)
+            self.assertEqual(strategy_rows[0]["regime"], "trend_follow")
+            self.assertEqual(strategy_rows[0]["decision"], "APPROVED")
 
     def test_strategy_gate_requires_approved_evaluation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

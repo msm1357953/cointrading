@@ -62,6 +62,7 @@
 - 2026-05-01: Telegram strategy notifications were made more decision-oriented. They now say that the report is a signal-log candidate evaluation rather than an order/position report, show live safety flags, group duplicate TP/SL/hold-time variants, and include active macro strategy state machines.
 - 2026-05-01: A global per-symbol lifecycle lock was added. Scalp and macro strategy engines now share the same active-symbol guard, so only one lifecycle can open/manage a given symbol at a time.
 - 2026-05-01: Market-context collection and live supervision were added. The VM now stores mark/index premium, funding, open interest, spread, top-book/depth liquidity, and imbalance; `live-supervisor`/Telegram `실전` combines fresh market context, macro regime, strategy candidates, paper lifecycle performance, active locks, real Binance orders/positions, min-notional checks, runtime risk, live flags, and one-shot guards into a final go/no-go report.
+- 2026-05-01: Explicit rule strategies were added. `trend_follow` now requires 15m EMA/RSI confirmation, `range_reversion` uses 5m RSI plus Bollinger-band position, and `breakout_reduced` uses 5m breakout, RSI, and volume expansion. `strategy-evaluate` now also scores completed trend/range/breakout paper cycles.
 
 ## Next Work Packets
 
@@ -69,8 +70,8 @@
 2. Run `live-preflight --notional <tiny size> --symbols <symbol>` on the VM immediately before any real-money test.
 3. Add a one-shot/manual live enable path that caps notional to the chosen tiny size and automatically disables live mode after the first closed cycle.
 4. Continue validating live exchange fill ingestion and open-order reconciliation on tiny one-shot tests.
-5. Let USDC dry-run scalping collection continue, then inspect Telegram `전략` and the dashboard strategy tab.
-6. Review maker/taker/hybrid candidates and only consider live escalation after `APPROVED` rows stay stable across larger sample sizes and their paper lifecycle outcomes are positive.
+5. Let USDC dry-run strategy collection continue, then inspect Telegram `진입 <symbol> 25`, `전략`, `실전 <symbol> 25`, and the dashboard strategy tabs.
+6. Review maker/taker/hybrid/rule-strategy candidates and only consider live escalation after `APPROVED` rows stay stable across larger sample sizes and their paper lifecycle outcomes are positive.
 7. Add a local ML feature dataset from signals, macro regimes, orders, fills, and strategy outcomes; keep Gemini as reporting/monitoring only.
 8. Add exact exchange info parsing for tick size and quantity step size before allowing live orders.
 9. Before any real-money test, run `live-preflight`, confirm Telegram `진입 <symbol> <notional>`, and keep either scalp or macro strategy live flags explicitly off unless doing a deliberate one-shot test.

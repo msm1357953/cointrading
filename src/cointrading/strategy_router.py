@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 from typing import Any, Iterable
 
+from cointrading.indicators import TechnicalSnapshot, build_technical_snapshot
 from cointrading.market_regime import (
     MACRO_BEAR,
     MACRO_BREAKOUT,
@@ -41,17 +42,21 @@ def evaluate_strategy_setups(
     macro_row: Any | None,
     runtime_risk: RuntimeRiskSnapshot,
     macro_max_age_ms: int,
+    klines_5m: list[Kline] | None = None,
     klines_15m: list[Kline] | None = None,
     current_ms: int | None = None,
 ) -> list[StrategySetup]:
     ts = current_ms or now_ms()
     macro = _macro_context(macro_row, macro_max_age_ms=macro_max_age_ms, current_ms=ts)
-    range_side, range_reason = _range_side_from_bands(klines_15m or [])
+    trend_snapshot = build_technical_snapshot(klines_15m or [], interval="15m")
+    tactical_klines = klines_5m or klines_15m or []
+    tactical_interval = "5m" if klines_5m else "15m"
+    tactical_snapshot = build_technical_snapshot(tactical_klines, interval=tactical_interval)
     return [
         _maker_scalp_setup(scalp_signal, macro, runtime_risk),
-        _trend_setup(macro, runtime_risk),
-        _range_setup(macro, runtime_risk, range_side=range_side, range_reason=range_reason),
-        _breakout_setup(macro, runtime_risk),
+        _trend_setup(macro, runtime_risk, trend_snapshot),
+        _range_setup(macro, runtime_risk, tactical_snapshot),
+        _breakout_setup(macro, runtime_risk, tactical_snapshot),
     ]
 
 
@@ -160,7 +165,11 @@ def _maker_scalp_setup(
     )
 
 
-def _trend_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) -> StrategySetup:
+def _trend_setup(
+    macro: dict[str, Any],
+    runtime_risk: RuntimeRiskSnapshot,
+    technical: TechnicalSnapshot,
+) -> StrategySetup:
     if not runtime_risk.allows_new_entries:
         return _macro_block("trend_follow", "15m-4h", runtime_risk)
     if macro["stale"]:
@@ -175,27 +184,27 @@ def _trend_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) -> St
         )
     regime = macro["macro_regime"]
     side = macro["trade_bias"]
-    if regime in {MACRO_BULL, MACRO_BEAR} and side in {"long", "short"}:
-        return StrategySetup(
-            "trend_follow",
-            "taker_trend",
-            SETUP_PASS,
-            side,
-            "15m-4h",
-            True,
-            f"{macro_regime_ko(regime)} / {trade_bias_ko(side)}. 추세 상태머신으로 관리합니다.",
-        )
-    if regime == MACRO_BREAKOUT and side in {"long", "short"}:
-        return StrategySetup(
-            "trend_follow",
-            "taker_trend",
-            SETUP_PASS,
-            side,
-            "15m-4h",
-            True,
-            "변동성 돌파장에서도 추세 후보를 축소 크기로 관리할 수 있습니다.",
-        )
-    if regime == MACRO_PANIC:
+    if regime not in {MACRO_BULL, MACRO_BEAR}:
+        if regime == MACRO_BREAKOUT:
+            return StrategySetup(
+                "trend_follow",
+                "taker_trend",
+                SETUP_WATCH,
+                "flat",
+                "15m-4h",
+                True,
+                "돌파장은 축소 돌파 전략에서 따로 판단합니다.",
+            )
+        if regime == MACRO_PANIC:
+            return StrategySetup(
+                "trend_follow",
+                "taker_trend",
+                SETUP_BLOCK,
+                "flat",
+                "15m-4h",
+                True,
+                "패닉 변동성이라 추세 신규 진입도 막습니다.",
+            )
         return StrategySetup(
             "trend_follow",
             "taker_trend",
@@ -203,7 +212,28 @@ def _trend_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) -> St
             "flat",
             "15m-4h",
             True,
-            "패닉 변동성이라 추세 신규 진입도 막습니다.",
+            f"{macro_regime_ko(regime)}라 추세 추종 우위가 약합니다.",
+        )
+    if not technical.enough:
+        return StrategySetup(
+            "trend_follow",
+            "taker_trend",
+            SETUP_WATCH,
+            "flat",
+            "15m-4h",
+            True,
+            "15분봉 RSI/EMA 표본이 부족해 추세 진입을 보류합니다.",
+        )
+    if regime in {MACRO_BULL, MACRO_BEAR} and side in {"long", "short"}:
+        allowed, reason = _trend_confirmed(side, technical)
+        return StrategySetup(
+            "trend_follow",
+            "taker_trend",
+            SETUP_PASS if allowed else SETUP_WATCH,
+            side if allowed else "flat",
+            "15m-4h",
+            True,
+            reason,
         )
     return StrategySetup(
         "trend_follow",
@@ -212,16 +242,14 @@ def _trend_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) -> St
         "flat",
         "15m-4h",
         True,
-        f"{macro_regime_ko(regime)}라 추세 추종 우위가 약합니다.",
+        "장세 편향이 중립이라 추세 진입을 보류합니다.",
     )
 
 
 def _range_setup(
     macro: dict[str, Any],
     runtime_risk: RuntimeRiskSnapshot,
-    *,
-    range_side: SignalSide,
-    range_reason: str,
+    technical: TechnicalSnapshot,
 ) -> StrategySetup:
     if not runtime_risk.allows_new_entries:
         return _macro_block("range_reversion", "5m-1h", runtime_risk)
@@ -237,6 +265,17 @@ def _range_setup(
         )
     regime = macro["macro_regime"]
     if regime == MACRO_RANGE:
+        if not technical.enough:
+            return StrategySetup(
+                "range_reversion",
+                "maker_range",
+                SETUP_WATCH,
+                "flat",
+                "5m-1h",
+                True,
+                "5분봉 RSI/볼린저 표본이 부족해 평균회귀 진입을 보류합니다.",
+            )
+        range_side, range_reason = _range_side_from_technical(technical)
         if range_side in {"long", "short"}:
             return StrategySetup(
                 "range_reversion",
@@ -267,7 +306,11 @@ def _range_setup(
     )
 
 
-def _breakout_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) -> StrategySetup:
+def _breakout_setup(
+    macro: dict[str, Any],
+    runtime_risk: RuntimeRiskSnapshot,
+    technical: TechnicalSnapshot,
+) -> StrategySetup:
     if not runtime_risk.allows_new_entries:
         return _macro_block("breakout_reduced", "5m-1h", runtime_risk)
     if macro["stale"]:
@@ -283,14 +326,25 @@ def _breakout_setup(macro: dict[str, Any], runtime_risk: RuntimeRiskSnapshot) ->
     regime = macro["macro_regime"]
     side = macro["trade_bias"]
     if regime == MACRO_BREAKOUT and side in {"long", "short"}:
+        if not technical.enough:
+            return StrategySetup(
+                "breakout_reduced",
+                "taker_breakout",
+                SETUP_WATCH,
+                "flat",
+                "5m-1h",
+                True,
+                "5분봉 RSI/ATR/돌파 표본이 부족해 돌파 진입을 보류합니다.",
+            )
+        allowed, reason = _breakout_confirmed(side, technical)
         return StrategySetup(
             "breakout_reduced",
             "taker_breakout",
-            SETUP_PASS,
-            side,
+            SETUP_PASS if allowed else SETUP_WATCH,
+            side if allowed else "flat",
             "5m-1h",
             True,
-            "돌파 후보입니다. 축소 규모와 넓은 손절 상태머신으로 관리합니다.",
+            reason,
         )
     return StrategySetup(
         "breakout_reduced",
@@ -370,6 +424,72 @@ def _range_side_from_bands(klines: list[Kline]) -> tuple[SignalSide, str]:
     if position >= 0.75:
         return "short", f"레인지 상단권 position={position:.2f}; 중앙 복귀 숏 후보입니다."
     return "flat", f"레인지 중앙부 position={position:.2f}; 평균회귀 진입 대기입니다."
+
+
+def _trend_confirmed(side: str, technical: TechnicalSnapshot) -> tuple[bool, str]:
+    rsi_value = technical.rsi14 or 50.0
+    if side == "long":
+        allowed = (
+            technical.ema_gap_bps >= 2.0
+            and technical.ema_slope_bps >= -5.0
+            and technical.ema_slow is not None
+            and technical.close >= technical.ema_slow
+            and 45.0 <= rsi_value <= 82.0
+        )
+        reason = (
+            f"추세 롱 규칙: EMA20>EMA60, 종가가 EMA60 위, RSI 45~82 필요. "
+            f"{technical.short_text()}"
+        )
+        return allowed, reason if allowed else f"추세 롱 대기: {reason}"
+    allowed = (
+        technical.ema_gap_bps <= -2.0
+        and technical.ema_slope_bps <= 5.0
+        and technical.ema_slow is not None
+        and technical.close <= technical.ema_slow
+        and 18.0 <= rsi_value <= 55.0
+    )
+    reason = (
+        f"추세 숏 규칙: EMA20<EMA60, 종가가 EMA60 아래, RSI 18~55 필요. "
+        f"{technical.short_text()}"
+    )
+    return allowed, reason if allowed else f"추세 숏 대기: {reason}"
+
+
+def _range_side_from_technical(technical: TechnicalSnapshot) -> tuple[SignalSide, str]:
+    rsi_value = technical.rsi14 or 50.0
+    position = technical.bollinger_position
+    if position is None:
+        return "flat", f"볼린저 위치 계산 불가. {technical.short_text()}"
+    if position <= 0.22 and rsi_value <= 42.0:
+        return (
+            "long",
+            "평균회귀 롱 규칙: 볼린저 하단권 + RSI 과매도. "
+            f"{technical.short_text()}",
+        )
+    if position >= 0.78 and rsi_value >= 58.0:
+        return (
+            "short",
+            "평균회귀 숏 규칙: 볼린저 상단권 + RSI 과매수. "
+            f"{technical.short_text()}",
+        )
+    return "flat", f"횡보장이지만 RSI/볼린저 위치가 진입권이 아닙니다. {technical.short_text()}"
+
+
+def _breakout_confirmed(side: str, technical: TechnicalSnapshot) -> tuple[bool, str]:
+    rsi_value = technical.rsi14 or 50.0
+    if side == "long":
+        allowed = technical.high_breakout and rsi_value >= 55.0 and technical.volume_ratio >= 1.10
+        reason = (
+            "축소 돌파 롱 규칙: 최근 20봉 고점 종가돌파 + RSI 55 이상 + 거래량 1.10배 이상. "
+            f"{technical.short_text()}"
+        )
+        return allowed, reason if allowed else f"돌파 롱 대기: {reason}"
+    allowed = technical.low_breakout and rsi_value <= 45.0 and technical.volume_ratio >= 1.10
+    reason = (
+        "축소 돌파 숏 규칙: 최근 20봉 저점 종가이탈 + RSI 45 이하 + 거래량 1.10배 이상. "
+        f"{technical.short_text()}"
+    )
+    return allowed, reason if allowed else f"돌파 숏 대기: {reason}"
 
 
 def _execution_mode_for_strategy(strategy: str) -> str:

@@ -43,8 +43,9 @@ Build rows from:
 
 - `signals`: microstructure features, side, micro regime, 1/3/5 minute forward returns
 - `market_regimes`: macro regime, trend, volatility, ATR, allowed strategy set
-- `strategy_evaluations`: strategy candidate labels
+- `strategy_evaluations`: signal-grid and paper lifecycle strategy candidate labels
 - `scalp_cycles`: paper lifecycle outcome and realized PnL
+- `strategy_cycles`: rule-strategy lifecycle outcome and realized PnL
 - `orders` and `fills`: execution intent, fill, fee, and slippage records
 
 Initial labels:

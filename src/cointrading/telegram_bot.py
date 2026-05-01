@@ -533,6 +533,7 @@ class TelegramCommandProcessor:
             bnb_fee_discount_enabled=bnb_fee_enabled,
             bnb_balance=bnb_balance,
         )
+        klines_5m = self.exchange_client.klines(symbol=symbol, interval="5m", limit=120)
         klines_15m = self.exchange_client.klines(symbol=symbol, interval="15m", limit=120)
         try:
             macro_row = evaluate_market_regime(
@@ -548,6 +549,7 @@ class TelegramCommandProcessor:
             macro_row=macro_row,
             runtime_risk=risk,
             macro_max_age_ms=self.trading_config.macro_regime_max_age_minutes * 60_000,
+            klines_5m=klines_5m,
             klines_15m=klines_15m,
         )
         lines: list[str] = []

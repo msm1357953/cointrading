@@ -1,6 +1,11 @@
 import unittest
 
-from cointrading.market_regime import MACRO_BULL, MACRO_PANIC, MarketRegimeSnapshot
+from cointrading.market_regime import (
+    MACRO_BREAKOUT,
+    MACRO_BULL,
+    MACRO_PANIC,
+    MarketRegimeSnapshot,
+)
 from cointrading.models import Kline
 from cointrading.risk_state import RISK_NORMAL, RuntimeRiskSnapshot
 from cointrading.scalping import ScalpSignal
@@ -71,11 +76,33 @@ def _signal(side: str = "flat", regime: str = "thin_book") -> ScalpSignal:
     )
 
 
+def _trend_klines(side: str = "long") -> list[Kline]:
+    rows = []
+    close = 100.0
+    up_pattern = [0.08, -0.03, 0.07, -0.04, 0.06]
+    down_pattern = [-0.08, 0.03, -0.07, 0.04, -0.06]
+    pattern = up_pattern if side == "long" else down_pattern
+    for index in range(120):
+        close += pattern[index % len(pattern)]
+        rows.append(
+            Kline(
+                open_time=index * 900_000,
+                open=close,
+                high=close + 0.20,
+                low=close - 0.20,
+                close=close,
+                volume=100.0,
+                close_time=((index + 1) * 900_000) - 1,
+            )
+        )
+    return rows
+
+
 def _range_klines(last: float) -> list[Kline]:
     rows = []
-    for index in range(24):
-        close = 100.0 + (index % 4)
-        if index == 23:
+    for index in range(80):
+        close = 100.0 + ((index % 6) - 3) * 0.35
+        if index == 79:
             close = last
         rows.append(
             Kline(
@@ -91,6 +118,37 @@ def _range_klines(last: float) -> list[Kline]:
     return rows
 
 
+def _breakout_klines(side: str = "long") -> list[Kline]:
+    rows = []
+    close = 100.0
+    for index in range(79):
+        close += 0.02 if side == "long" else -0.02
+        rows.append(
+            Kline(
+                open_time=index * 300_000,
+                open=close,
+                high=close + 0.30,
+                low=close - 0.30,
+                close=close,
+                volume=100.0,
+                close_time=((index + 1) * 300_000) - 1,
+            )
+        )
+    close = max(row.high for row in rows) + 0.20 if side == "long" else min(row.low for row in rows) - 0.20
+    rows.append(
+        Kline(
+            open_time=79 * 300_000,
+            open=rows[-1].close,
+            high=close + 0.10,
+            low=close - 0.10,
+            close=close,
+            volume=150.0,
+            close_time=(80 * 300_000) - 1,
+        )
+    )
+    return rows
+
+
 class StrategyRouterTests(unittest.TestCase):
     def test_thin_book_blocks_only_maker_scalp_not_macro_trend_watch(self) -> None:
         setups = evaluate_strategy_setups(
@@ -98,6 +156,7 @@ class StrategyRouterTests(unittest.TestCase):
             macro_row=_macro(MACRO_BULL, "long"),
             runtime_risk=_risk(),
             macro_max_age_ms=60_000,
+            klines_15m=_trend_klines("long"),
             current_ms=2_000,
         )
 
@@ -105,6 +164,7 @@ class StrategyRouterTests(unittest.TestCase):
         self.assertEqual(by_name["maker_scalp"].status, SETUP_BLOCK)
         self.assertEqual(by_name["trend_follow"].status, SETUP_PASS)
         self.assertIn("스캘핑만 차단", by_name["maker_scalp"].reason)
+        self.assertIn("EMA20>EMA60", by_name["trend_follow"].reason)
         self.assertTrue(by_name["trend_follow"].live_supported)
 
     def test_aligned_scalp_can_be_live_supported_pass(self) -> None:
@@ -158,6 +218,24 @@ class StrategyRouterTests(unittest.TestCase):
         self.assertEqual(lower.side, "long")
         self.assertEqual(middle.status, "WATCH")
         self.assertEqual(middle.side, "flat")
+
+    def test_breakout_requires_breakout_confirmation(self) -> None:
+        setups = evaluate_strategy_setups(
+            scalp_signal=_signal(),
+            macro_row=_macro(MACRO_BREAKOUT, "long"),
+            runtime_risk=_risk(),
+            macro_max_age_ms=60_000,
+            klines_5m=_breakout_klines("long"),
+            klines_15m=_trend_klines("long"),
+            current_ms=2_000,
+        )
+
+        breakout = {setup.strategy: setup for setup in setups}["breakout_reduced"]
+        trend = {setup.strategy: setup for setup in setups}["trend_follow"]
+        self.assertEqual(breakout.status, SETUP_PASS)
+        self.assertEqual(breakout.side, "long")
+        self.assertEqual(trend.status, "WATCH")
+        self.assertIn("최근 20봉 고점", breakout.reason)
 
 
 if __name__ == "__main__":

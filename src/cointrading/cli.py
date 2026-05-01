@@ -528,6 +528,7 @@ def strategy_engine_step(symbols: list[str], log_path: Path, db_path: Path) -> N
         signal = _scalp_signal(symbol, client=client, trading_config=config)
         append_scalp_signal(log_path, signal)
         store.insert_signal(signal)
+        klines_5m = client.klines(symbol=symbol, interval="5m", limit=120)
         klines_15m = client.klines(symbol=symbol, interval="15m", limit=120)
         try:
             macro_row = evaluate_market_regime(
@@ -544,6 +545,7 @@ def strategy_engine_step(symbols: list[str], log_path: Path, db_path: Path) -> N
             macro_row=macro_row,
             runtime_risk=risk,
             macro_max_age_ms=config.macro_regime_max_age_minutes * 60_000,
+            klines_5m=klines_5m,
             klines_15m=klines_15m,
         )
         candidates = [
@@ -888,6 +890,7 @@ def live_preflight(symbols: list[str], notional: float, db_path: Path) -> None:
             mid = (bid + ask) / 2.0
             filters = SymbolFilters.from_exchange_info(client.exchange_info(symbol), symbol)
             signal = _scalp_signal(symbol, client=client, trading_config=config)
+            klines_5m = client.klines(symbol=symbol, interval="5m", limit=120)
             klines_15m = client.klines(symbol=symbol, interval="15m", limit=120)
             try:
                 macro_row = evaluate_market_regime(
@@ -903,6 +906,7 @@ def live_preflight(symbols: list[str], notional: float, db_path: Path) -> None:
                 macro_row=macro_row,
                 runtime_risk=risk,
                 macro_max_age_ms=config.macro_regime_max_age_minutes * 60_000,
+                klines_5m=klines_5m,
                 klines_15m=klines_15m,
             )
             decision = build_post_only_intent(signal, config, notional=notional)

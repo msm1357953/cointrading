@@ -17,10 +17,14 @@ MODE_LABELS = {
     "maker_post_only": "지정가 메이커",
     "taker_momentum": "시장가/테이커 추세",
     "hybrid_taker_entry_maker_exit": "테이커 진입+메이커 청산",
+    "taker_trend": "시장가 추세추종",
+    "maker_range": "지정가 평균회귀",
+    "taker_breakout": "시장가 축소돌파",
 }
 SOURCE_LABELS = {
     "signal_grid": "초단기 신호 로그",
     "cycles": "상태머신 결과",
+    "strategy_cycles": "전략 상태머신 결과",
 }
 REGIME_LABELS = {
     "aligned_long": "상승 정렬",
@@ -29,6 +33,9 @@ REGIME_LABELS = {
     "thin_book": "호가 얇음",
     "panic_volatility": "급변동",
     "invalid_spread": "스프레드 이상",
+    "trend_follow": "추세추종 규칙",
+    "range_reversion": "평균회귀 규칙",
+    "breakout_reduced": "축소돌파 규칙",
 }
 SIDE_LABELS = {
     "long": "롱",
@@ -169,7 +176,7 @@ def strategy_notification_text(
     active_strategy_cycles = list(active_strategy_cycles or [])
     if not rows:
         lines = [
-            "전략 후보 평가(신호 로그 기반)",
+            "전략 후보 평가",
             f"사유: {reason}",
             "평가 결과가 아직 없습니다.",
         ]
@@ -193,10 +200,10 @@ def strategy_notification_text(
     reason_counts = Counter(str(row["reason"]) for row in rows if row["decision"] != "APPROVED")
 
     lines = [
-        "전략 후보 평가(신호 로그 기반)",
+        "전략 후보 평가",
         f"사유: {reason}",
         f"평가시각: {kst_from_ms(evaluated_ms)}",
-        "범위: 신호 로그 기반 후보평가입니다. 실제 주문/포지션 보고가 아닙니다.",
+        "범위: 신호 로그와 paper 상태머신 결과 기반 후보평가입니다. 실제 주문/포지션 보고가 아닙니다.",
     ]
     lines.extend(_safety_lines(config))
     lines.append(_summary_sentence(decision_counts, mode_counts))

@@ -51,6 +51,16 @@ The VM runs this as `cointrading-scalp-engine.timer` every 15 seconds. Live orde
 
 ## Strategy Gate
 
+## Rule Strategy Router
+
+`strategy-engine-step` now uses explicit indicator rules before it starts a non-scalping paper cycle:
+
+- `trend_follow`: 15m EMA20/EMA60 alignment, EMA slope, close-vs-EMA60, and RSI confirmation.
+- `range_reversion`: 5m Bollinger-band position plus RSI oversold/overbought confirmation in `macro_range`.
+- `breakout_reduced`: 5m 20-bar close breakout, RSI confirmation, and volume expansion in `macro_breakout`.
+
+These rules decide whether a strategy is `PASS`, `WATCH`, or `BLOCK`. Only `PASS` setups can start a paper/live strategy lifecycle, and the shared per-symbol lock still allows only one active lifecycle per symbol.
+
 ## Macro Regime Router
 
 `market-regime-collect` classifies each active symbol into a larger market regime using 15m and 1h candles:
@@ -88,9 +98,10 @@ The one-shot guard is consumed after the first live lifecycle starts. This preve
 
 ## Strategy Gate
 
-`strategy-evaluate` writes two evaluation sources into SQLite:
+`strategy-evaluate` writes three evaluation sources into SQLite:
 
 - `cycles`: actual post-only/paper lifecycle outcomes grouped by symbol, regime, and side.
+- `strategy_cycles`: actual trend/range/breakout paper lifecycle outcomes grouped by strategy, symbol, side, and TP/SL/hold settings.
 - `signal_grid`: a coarse TP/SL/max-hold grid using scored 1/3/5 minute signal returns.
 
 The signal grid compares `maker_post_only`, `taker_momentum`, and `hybrid_taker_entry_maker_exit`. Taker and hybrid rows subtract taker fees plus `COINTRADING_STRATEGY_TAKER_SLIPPAGE_BPS` so tiny targets do not look artificially profitable.

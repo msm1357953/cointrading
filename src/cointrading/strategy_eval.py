@@ -12,6 +12,9 @@ from cointrading.storage import TradingStore
 MAKER_POST_ONLY = "maker_post_only"
 TAKER_MOMENTUM = "taker_momentum"
 HYBRID_TAKER_ENTRY_MAKER_EXIT = "hybrid_taker_entry_maker_exit"
+TAKER_TREND = "taker_trend"
+MAKER_RANGE = "maker_range"
+TAKER_BREAKOUT = "taker_breakout"
 EVALUATION_EXECUTION_MODES = (
     MAKER_POST_ONLY,
     TAKER_MOMENTUM,
@@ -39,10 +42,74 @@ def evaluate_and_store_strategy(
 ) -> list[dict[str, Any]]:
     rows = [
         *evaluate_cycle_candidates(store, config),
+        *evaluate_strategy_cycle_candidates(store, config),
         *evaluate_signal_grid_candidates(store, config),
     ]
     if rows:
         store.insert_strategy_evaluations(rows)
+    return rows
+
+
+def evaluate_strategy_cycle_candidates(
+    store: TradingStore,
+    config: TradingConfig,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with store.connect() as connection:
+        for row in connection.execute(
+            """
+            SELECT strategy,
+                   execution_mode,
+                   symbol,
+                   side,
+                   take_profit_bps,
+                   stop_loss_bps,
+                   max_hold_seconds,
+                   COUNT(*) AS sample_count,
+                   SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) AS win_count,
+                   SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) AS loss_count,
+                   AVG((realized_pnl / NULLIF(ABS(quantity) * entry_price, 0)) * 10000.0)
+                       AS avg_pnl_bps,
+                   SUM((realized_pnl / NULLIF(ABS(quantity) * entry_price, 0)) * 10000.0)
+                       AS sum_pnl_bps,
+                   AVG(
+                       CASE WHEN realized_pnl > 0
+                       THEN (realized_pnl / NULLIF(ABS(quantity) * entry_price, 0)) * 10000.0
+                       END
+                   ) AS avg_win_bps,
+                   AVG(
+                       CASE WHEN realized_pnl <= 0
+                       THEN (realized_pnl / NULLIF(ABS(quantity) * entry_price, 0)) * 10000.0
+                       END
+                   ) AS avg_loss_bps
+            FROM strategy_cycles
+            WHERE realized_pnl IS NOT NULL
+              AND status IN ('CLOSED', 'STOPPED')
+            GROUP BY strategy, execution_mode, symbol, side,
+                     take_profit_bps, stop_loss_bps, max_hold_seconds
+            ORDER BY avg_pnl_bps DESC
+            """
+        ):
+            rows.append(
+                _evaluation_row(
+                    source="strategy_cycles",
+                    execution_mode=row["execution_mode"],
+                    symbol=row["symbol"],
+                    regime=row["strategy"],
+                    side=row["side"],
+                    take_profit_bps=float(row["take_profit_bps"]),
+                    stop_loss_bps=float(row["stop_loss_bps"]),
+                    max_hold_seconds=int(row["max_hold_seconds"]),
+                    sample_count=int(row["sample_count"] or 0),
+                    win_count=int(row["win_count"] or 0),
+                    loss_count=int(row["loss_count"] or 0),
+                    avg_pnl_bps=float(row["avg_pnl_bps"] or 0.0),
+                    sum_pnl_bps=float(row["sum_pnl_bps"] or 0.0),
+                    avg_win_bps=_optional_float(row["avg_win_bps"]),
+                    avg_loss_bps=_optional_float(row["avg_loss_bps"]),
+                    config=config,
+                )
+            )
     return rows
 
 
