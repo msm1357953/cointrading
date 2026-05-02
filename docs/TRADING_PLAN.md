@@ -56,3 +56,7 @@ Do not enable live trading until all items are true:
 - Same-symbol re-entry has a cooldown of at least 60 minutes.
 - KST-day live strategy entries are limited to one during the first phase.
 - Two consecutive live strategy losses halt new entries until reviewed.
+- The exact live exit profile must already be approved by observed `strategy_cycles` paper data.
+  Signal-grid approval alone is not enough for live trend/range/breakout orders.
+- Adaptive exits may use current ATR/trend to change TP/SL/hold, but stale macro data is ignored.
+  If the adaptive profile has no exact paper approval yet, live entry is blocked.

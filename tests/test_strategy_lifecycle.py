@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from cointrading.config import TradingConfig
+from cointrading.market_regime import MarketRegimeSnapshot
 from cointrading.strategy_lifecycle import (
     manage_strategy_cycle,
     strategy_plan_from_setup,
@@ -102,6 +103,11 @@ class FakeStrategyClient:
         return self.orders[int(order_id)]
 
 
+class FailingStrategyClient:
+    def new_order(self, intent):
+        raise AssertionError("dry-run order should not be submitted to the exchange client")
+
+
 def _setup(strategy="trend_follow", side="long") -> StrategySetup:
     return StrategySetup(
         strategy=strategy,
@@ -120,6 +126,80 @@ def _macro_row(*, atr_bps=40.0, trend_1h_bps=40.0, trend_4h_bps=60.0):
         "trend_1h_bps": trend_1h_bps,
         "trend_4h_bps": trend_4h_bps,
     }
+
+
+def _insert_macro(
+    store: TradingStore,
+    *,
+    symbol="ETHUSDC",
+    timestamp_ms=1_000,
+    atr_bps=40.0,
+    trend_1h_bps=40.0,
+    trend_4h_bps=60.0,
+) -> None:
+    store.insert_market_regime(
+        MarketRegimeSnapshot(
+            symbol=symbol,
+            macro_regime="macro_bull",
+            trade_bias="long",
+            allowed_strategies=("trend_long_15m_1h",),
+            blocked_reason="",
+            last_price=100.0,
+            trend_1h_bps=trend_1h_bps,
+            trend_4h_bps=trend_4h_bps,
+            realized_vol_bps=10.0,
+            atr_bps=atr_bps,
+            timestamp_ms=timestamp_ms,
+        )
+    )
+
+
+def _insert_strategy_evaluation(
+    store: TradingStore,
+    config: TradingConfig,
+    *,
+    symbol="ETHUSDC",
+    strategy="trend_follow",
+    side="long",
+    execution_mode="taker_trend",
+    take_profit_bps=None,
+    stop_loss_bps=None,
+    max_hold_seconds=None,
+    decision="APPROVED",
+    sample_count=30,
+    avg_pnl_bps=5.0,
+    timestamp_ms=10_000,
+) -> None:
+    tp = config.trend_take_profit_bps if take_profit_bps is None else take_profit_bps
+    sl = config.trend_stop_loss_bps if stop_loss_bps is None else stop_loss_bps
+    hold = int(config.trend_max_hold_seconds if max_hold_seconds is None else max_hold_seconds)
+    win_count = max(0, int(sample_count * 2 / 3))
+    loss_count = max(0, sample_count - win_count)
+    store.insert_strategy_evaluations(
+        [
+            {
+                "source": "strategy_cycles",
+                "execution_mode": execution_mode,
+                "symbol": symbol,
+                "regime": strategy,
+                "side": side,
+                "take_profit_bps": tp,
+                "stop_loss_bps": sl,
+                "max_hold_seconds": hold,
+                "sample_count": sample_count,
+                "win_count": win_count,
+                "loss_count": loss_count,
+                "win_rate": win_count / sample_count if sample_count else 0.0,
+                "avg_pnl_bps": avg_pnl_bps,
+                "sum_pnl_bps": avg_pnl_bps * sample_count,
+                "avg_win_bps": 12.0 if win_count else None,
+                "avg_loss_bps": -6.0 if loss_count else None,
+                "decision": decision,
+                "reason": "test evaluation",
+            }
+        ],
+        timestamp_ms=timestamp_ms,
+    )
 
 
 class StrategyLifecycleTests(unittest.TestCase):
@@ -314,6 +394,47 @@ class StrategyLifecycleTests(unittest.TestCase):
             self.assertEqual(client.new_order_intents, [])
             self.assertIsNone(store.active_strategy_cycle("trend_follow", "ETHUSDC"))
 
+    def test_adaptive_plan_is_blocked_by_broad_bad_observed_paper_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            client = FakeStrategyClient()
+            config = TradingConfig(
+                strategy_lifecycle_enabled=True,
+                runtime_risk_enabled=False,
+                strategy_early_block_samples=3,
+            )
+            _insert_macro(
+                store,
+                atr_bps=18.0,
+                trend_1h_bps=15.0,
+                trend_4h_bps=20.0,
+                timestamp_ms=1_000,
+            )
+            _insert_strategy_evaluation(
+                store,
+                config,
+                decision="BLOCKED",
+                sample_count=3,
+                avg_pnl_bps=-12.0,
+                timestamp_ms=2_000,
+            )
+
+            result = start_strategy_cycle_from_setup(
+                client,
+                store,
+                _setup(),
+                config,
+                symbol="ETHUSDC",
+                bid=99.9,
+                ask=100.0,
+                timestamp_ms=3_000,
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertIn("observed paper veto", result.detail)
+            self.assertEqual(client.new_order_intents, [])
+            self.assertIsNone(store.active_strategy_cycle("trend_follow", "ETHUSDC"))
+
     def test_trend_strategy_paper_cycle_opens_and_closes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")
@@ -368,6 +489,31 @@ class StrategyLifecycleTests(unittest.TestCase):
             self.assertEqual(store.summary_counts()["strategy_cycles"], 1)
             self.assertEqual(store.summary_counts()["fills"], 2)
 
+    def test_dry_run_strategy_entry_does_not_call_exchange_new_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            config = TradingConfig(
+                strategy_order_notional=25,
+                max_single_order_notional=25,
+                strategy_lifecycle_enabled=True,
+                runtime_risk_enabled=False,
+                strategy_gate_enabled=False,
+            )
+
+            start = start_strategy_cycle_from_setup(
+                FailingStrategyClient(),
+                store,
+                _setup(),
+                config,
+                symbol="ETHUSDC",
+                bid=99.9,
+                ask=100.0,
+                timestamp_ms=1_000,
+            )
+
+            self.assertEqual(start.action, "entry_submitted")
+            self.assertIsNotNone(store.active_strategy_cycle("trend_follow", "ETHUSDC"))
+
     def test_live_strategy_lifecycle_requires_explicit_switch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")
@@ -419,6 +565,35 @@ class StrategyLifecycleTests(unittest.TestCase):
             self.assertIn("허용 전략은 trend_follow뿐", result.detail)
             self.assertEqual(client.new_order_intents, [])
 
+    def test_live_strategy_entry_requires_exact_paper_approved_exit_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            client = FakeStrategyClient()
+            config = TradingConfig(
+                dry_run=False,
+                live_trading_enabled=True,
+                live_strategy_lifecycle_enabled=True,
+                live_one_shot_required=False,
+                runtime_risk_enabled=False,
+                strategy_order_notional=25,
+                max_single_order_notional=25,
+            )
+
+            result = start_strategy_cycle_from_setup(
+                client,
+                store,
+                _setup(),
+                config,
+                symbol="ETHUSDC",
+                bid=99.9,
+                ask=100.0,
+                timestamp_ms=1_000,
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertIn("live requires exact paper approval", result.detail)
+            self.assertEqual(client.new_order_intents, [])
+
     def test_live_strategy_entry_and_take_profit_reconcile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")
@@ -434,6 +609,7 @@ class StrategyLifecycleTests(unittest.TestCase):
                 trend_take_profit_bps=100,
                 trend_stop_loss_bps=50,
             )
+            _insert_strategy_evaluation(store, config)
 
             start_strategy_cycle_from_setup(
                 client,

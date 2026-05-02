@@ -342,6 +342,56 @@ class StorageExecutionTests(unittest.TestCase):
             self.assertEqual(counts["scalp_cycles"], 1)
             self.assertEqual(counts["fills"], 2)
 
+    def test_dry_run_scalp_lifecycle_does_not_call_exchange_new_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            signal = _signal(maker_cost=0)
+            signal_id = store.insert_signal(signal, timestamp_ms=1)
+            config = TradingConfig(
+                post_only_order_notional=25,
+                max_single_order_notional=50,
+                scalp_take_profit_bps=3,
+                scalp_stop_loss_bps=6,
+                runtime_risk_enabled=False,
+                macro_regime_gate_enabled=False,
+                strategy_gate_enabled=False,
+            )
+            start = start_cycle_from_signal(
+                FailingOrderClient(),
+                store,
+                signal,
+                config,
+                signal_id=signal_id,
+                timestamp_ms=1_000,
+            )
+            self.assertEqual(start.action, "entry_submitted")
+            cycle = store.active_scalp_cycle("BTCUSDC")
+            assert cycle is not None
+
+            filled = manage_cycle(
+                FailingOrderClient(),
+                store,
+                cycle,
+                config,
+                bid=99.98,
+                ask=99.99,
+                timestamp_ms=2_000,
+            )
+            self.assertEqual(filled.action, "entry_filled")
+            cycle = store.active_scalp_cycle("BTCUSDC")
+            assert cycle is not None
+
+            closed = manage_cycle(
+                FailingOrderClient(),
+                store,
+                cycle,
+                config,
+                bid=float(cycle["target_price"]) + 0.01,
+                ask=float(cycle["target_price"]) + 0.02,
+                timestamp_ms=3_000,
+            )
+            self.assertEqual(closed.action, "take_profit")
+
     def test_lifecycle_uses_approved_strategy_candidate_parameters(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")

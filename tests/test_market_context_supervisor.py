@@ -142,6 +142,26 @@ class MarketContextSupervisorTests(unittest.TestCase):
                         "sum_pnl_bps": 225.0,
                         "decision": "APPROVED",
                         "reason": "ok",
+                    },
+                    {
+                        "source": "strategy_cycles",
+                        "execution_mode": "taker_trend",
+                        "symbol": "BTCUSDC",
+                        "regime": "trend_follow",
+                        "side": "long",
+                        "take_profit_bps": 45.0,
+                        "stop_loss_bps": 18.0,
+                        "max_hold_seconds": 7200,
+                        "sample_count": 30,
+                        "win_count": 20,
+                        "loss_count": 10,
+                        "win_rate": 2 / 3,
+                        "avg_pnl_bps": 0.8,
+                        "sum_pnl_bps": 24.0,
+                        "avg_win_bps": 12.0,
+                        "avg_loss_bps": -6.0,
+                        "decision": "APPROVED",
+                        "reason": "actual exit profile ok",
                     }
                 ],
                 timestamp_ms=1_000,
@@ -217,6 +237,98 @@ class MarketContextSupervisorTests(unittest.TestCase):
                 "후보: 전략=추세 추종 주문=시장가 추세추종 조건=상승 정렬 방향=롱",
                 text,
             )
+            self.assertIn("실제 주문계획: trend_follow long MARKET TP=45.0 SL=18.0", text)
+
+    def test_supervisor_blocks_strategy_alert_without_exact_exit_profile_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            store.insert_market_regime(_macro("BTCUSDC"))
+            store.insert_market_context(
+                collect_market_context(
+                    FakeSupervisorClient(),
+                    "BTCUSDC",
+                    timestamp_ms=1_000,
+                )
+            )
+            store.insert_strategy_evaluations(
+                [
+                    {
+                        "source": "signal_grid",
+                        "execution_mode": "taker_trend",
+                        "symbol": "BTCUSDC",
+                        "regime": "aligned_long",
+                        "side": "long",
+                        "take_profit_bps": 20.0,
+                        "stop_loss_bps": 4.0,
+                        "max_hold_seconds": 300,
+                        "sample_count": 150,
+                        "win_count": 90,
+                        "loss_count": 60,
+                        "win_rate": 0.60,
+                        "avg_pnl_bps": 1.5,
+                        "sum_pnl_bps": 225.0,
+                        "decision": "APPROVED",
+                        "reason": "ok",
+                    }
+                ],
+                timestamp_ms=1_000,
+            )
+            paper_pnls = [0.03] * 14 + [-0.01] * 6
+            for idx, realized_pnl in enumerate(paper_pnls):
+                status = "CLOSED" if realized_pnl > 0 else "STOPPED"
+                reason = "take_profit" if realized_pnl > 0 else "stop_loss"
+                cycle_id = store.insert_strategy_cycle(
+                    strategy="trend_follow",
+                    execution_mode="taker_trend",
+                    symbol="BTCUSDC",
+                    side="long",
+                    status=status,
+                    quantity=0.1,
+                    entry_price=100.0,
+                    target_price=101.0,
+                    stop_price=99.0,
+                    entry_order_type="MARKET",
+                    take_profit_bps=100,
+                    stop_loss_bps=50,
+                    max_hold_seconds=3600,
+                    maker_one_way_bps=0.0,
+                    taker_one_way_bps=3.6,
+                    entry_deadline_ms=2_000 + idx,
+                    dry_run=True,
+                    timestamp_ms=2_000 + idx,
+                )
+                store.update_strategy_cycle(
+                    cycle_id,
+                    status=status,
+                    reason=reason,
+                    realized_pnl=realized_pnl,
+                    timestamp_ms=3_000 + idx,
+                )
+            config = TradingConfig(
+                dry_run=True,
+                live_trading_enabled=False,
+                live_strategy_lifecycle_enabled=False,
+                supervisor_data_max_age_minutes=10,
+                supervisor_min_cycle_count=20,
+                supervisor_recent_cycle_count=20,
+                supervisor_min_payoff_ratio=1.2,
+                runtime_risk_enabled=False,
+            )
+
+            report = supervise_symbols(
+                FakeSupervisorClient(),
+                store,
+                config,
+                ["BTCUSDC"],
+                notional=25,
+                current_ms=5_000,
+            )[0]
+
+            self.assertEqual(report.decision, DECISION_BLOCKED)
+            self.assertTrue(
+                any("실전 실제 exit profile이 paper에서 아직 승인되지 않았습니다" in reason for reason in report.reasons)
+            )
+            self.assertEqual(actionable_supervisor_reports([report]), [])
 
     def test_supervisor_blocks_actionable_alert_when_recent_paper_is_weak(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

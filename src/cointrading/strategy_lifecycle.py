@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import sqlite3
 
 from cointrading.config import TradingConfig
+from cointrading.execution import submit_order
 from cointrading.execution_gate import evaluate_simple_strategy_gate
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.exchange_filters import SymbolFilters
@@ -29,7 +30,7 @@ from cointrading.scalp_lifecycle import (
     _target_filled,
 )
 from cointrading.storage import TradingStore, now_ms
-from cointrading.strategy_eval import observed_evaluation_veto
+from cointrading.strategy_eval import StrategyGateDecision, observed_evaluation_veto
 from cointrading.strategy_router import SETUP_PASS, StrategySetup
 
 
@@ -127,30 +128,21 @@ def start_strategy_cycle_from_setup(
         return _blocked_order_attempt(store, setup, symbol, gate.reason, config, ts)
 
     mid = (bid + ask) / 2.0
+    macro_row = _fresh_market_regime_row(store, config, symbol, ts)
     plan = strategy_plan_from_setup(
         setup,
         config,
         symbol=symbol,
         bid=bid,
         ask=ask,
-        macro_row=store.latest_market_regime(symbol),
+        macro_row=macro_row,
     )
     if plan is None:
         return StrategyLifecycleResult(setup.strategy, symbol, "blocked", "no strategy plan")
 
-    observed_row = store.latest_strategy_evaluation(
-        symbol=symbol,
-        regime=setup.strategy,
-        side=setup.side,
-        take_profit_bps=plan.take_profit_bps,
-        stop_loss_bps=plan.stop_loss_bps,
-        max_hold_seconds=plan.max_hold_seconds,
-        execution_mode=plan.execution_mode,
-        source="strategy_cycles",
-    )
-    veto = observed_evaluation_veto(observed_row, config)
-    if veto is not None:
-        return _blocked_order_attempt(store, setup, symbol, veto.reason, config, ts)
+    plan_gate = _observed_strategy_plan_gate(store, config, setup, plan, dry_run=config.dry_run)
+    if plan_gate is not None and not plan_gate.allowed:
+        return _blocked_order_attempt(store, setup, symbol, plan_gate.reason, config, ts)
 
     risk_decision = RiskManager(config).validate_new_notional(
         config.initial_equity,
@@ -174,7 +166,7 @@ def start_strategy_cycle_from_setup(
             return _blocked_order_attempt(store, setup, symbol, guard.reason, config, ts)
 
     try:
-        response = client.new_order(normalized_intent)
+        response = submit_order(client, normalized_intent, config)
     except BinanceAPIError as exc:
         order_id = store.insert_order_attempt(
             normalized_intent,
@@ -336,6 +328,65 @@ def strategy_plan_from_setup(
         exit_profile=profile,
         exit_reason=profile_reason,
     )
+
+
+def _fresh_market_regime_row(
+    store: TradingStore,
+    config: TradingConfig,
+    symbol: str,
+    timestamp_ms: int,
+):
+    row = store.latest_market_regime(symbol)
+    if row is None:
+        return None
+    max_age_ms = int(config.macro_regime_max_age_minutes) * 60_000
+    if timestamp_ms - int(row["timestamp_ms"]) > max_age_ms:
+        return None
+    return row
+
+
+def _observed_strategy_plan_gate(
+    store: TradingStore,
+    config: TradingConfig,
+    setup: StrategySetup,
+    plan: StrategyPlan,
+    *,
+    dry_run: bool,
+) -> StrategyGateDecision | None:
+    exact = store.latest_strategy_evaluation(
+        symbol=plan.symbol,
+        regime=setup.strategy,
+        side=setup.side,
+        take_profit_bps=plan.take_profit_bps,
+        stop_loss_bps=plan.stop_loss_bps,
+        max_hold_seconds=plan.max_hold_seconds,
+        execution_mode=plan.execution_mode,
+        source="strategy_cycles",
+    )
+    exact_veto = observed_evaluation_veto(exact, config)
+    if exact_veto is not None:
+        return exact_veto
+    if exact is not None and str(exact["decision"]) == "APPROVED":
+        return None
+    if not dry_run:
+        return StrategyGateDecision(
+            False,
+            "live requires exact paper approval for actual exit profile "
+            f"{setup.strategy} {plan.symbol} {setup.side} "
+            f"TP={plan.take_profit_bps:.1f} SL={plan.stop_loss_bps:.1f} "
+            f"H={plan.max_hold_seconds}s profile={plan.exit_profile}",
+            int(exact["id"]) if exact is not None else None,
+        )
+
+    broad_blocked = store.latest_strategy_candidate(
+        symbol=plan.symbol,
+        regime=setup.strategy,
+        side=setup.side,
+        execution_mode=plan.execution_mode,
+        decision="BLOCKED",
+        source="strategy_cycles",
+    )
+    return observed_evaluation_veto(broad_blocked, config)
 
 
 def _adaptive_exit_profile(

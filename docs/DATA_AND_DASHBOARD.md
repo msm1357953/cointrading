@@ -126,6 +126,8 @@ New lifecycle entries are blocked when `COINTRADING_STRATEGY_GATE_ENABLED=true` 
 
 Actual paper outcomes are stronger than signal-grid estimates. Once observed `cycles` or `strategy_cycles` rows reach `COINTRADING_STRATEGY_EARLY_BLOCK_SAMPLES`, a `BLOCKED` observed-paper evaluation vetoes new entries even if the signal grid still has an approved candidate.
 
+Macro strategy live entries have an extra exact-profile guard. The bot computes the actual TP/SL/hold it would use at entry time, including adaptive exit changes from fresh macro data, and then requires that exact `strategy_cycles` row to be `APPROVED` before any live trend/range/breakout order can proceed. If the exact adaptive profile is still missing but broader observed paper data for the same strategy/symbol/side is `BLOCKED`, even dry-run collection is vetoed until reviewed.
+
 Approval is based on positive net expectancy after fees/slippage, a minimum sample count, a low win-rate floor, and a break-even win-rate check derived from the observed average win/loss size. Defaults are intentionally stricter than the first dry-run scaffold: 100 samples, at least +0.5 bps expectancy, at least 42% win rate, and loss/win width no worse than 1.5. This avoids approving marginal positive rows that cannot survive normal execution noise.
 
 Default paper exits now target positive payoff before frequency: maker scalping defaults to TP 16 bps / SL 4 bps / 300s max hold, while macro strategy defaults are trend 90/30 bps, range 30/15 bps, and breakout 120/40 bps.

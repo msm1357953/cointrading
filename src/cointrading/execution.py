@@ -26,6 +26,38 @@ class ExecutionResult:
     response: dict | None = None
 
 
+def dry_run_order_response(intent: OrderIntent) -> dict:
+    params: dict[str, object] = {
+        "symbol": intent.symbol,
+        "side": intent.side,
+        "type": intent.order_type,
+        "quantity": intent.quantity,
+    }
+    if intent.price is not None:
+        params["price"] = intent.price
+    if intent.time_in_force:
+        params["timeInForce"] = intent.time_in_force
+    if intent.reduce_only:
+        params["reduceOnly"] = True
+    if intent.client_order_id:
+        params["newClientOrderId"] = intent.client_order_id
+    return {
+        "dryRun": True,
+        "endpoint": "/fapi/v1/order",
+        "params": params,
+    }
+
+
+def submit_order(
+    client: BinanceUSDMClient,
+    intent: OrderIntent,
+    config: TradingConfig,
+) -> dict:
+    if config.dry_run:
+        return dry_run_order_response(intent)
+    return client.new_order(intent)
+
+
 def build_post_only_intent(
     signal: ScalpSignal,
     config: TradingConfig,
@@ -136,7 +168,7 @@ def place_post_only_maker(
         )
 
     try:
-        response = client.new_order(decision.intent)
+        response = submit_order(client, decision.intent, config)
     except BinanceAPIError as exc:
         order_id = store.insert_order_attempt(
             decision.intent,

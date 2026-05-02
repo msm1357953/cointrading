@@ -6,7 +6,7 @@ import sqlite3
 import time
 
 from cointrading.config import TradingConfig
-from cointrading.execution import build_post_only_intent, place_post_only_maker
+from cointrading.execution import build_post_only_intent, place_post_only_maker, submit_order
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.live_guard import consume_live_one_shot, validate_live_one_shot
 from cointrading.market_regime import scalp_allowed_by_macro
@@ -639,7 +639,7 @@ def _submit_take_profit(
         reduce_only=True,
         client_order_id=_client_order_id("tp", str(cycle["symbol"])),
     )
-    response = client.new_order(intent)
+    response = submit_order(client, intent, config)
     return store.insert_order_attempt(
         intent,
         status="DRY_RUN" if config.dry_run else str(response.get("status", "SUBMITTED")),
@@ -680,7 +680,7 @@ def _close_cycle(
             client_order_id=_client_order_id(reason, symbol),
         )
         try:
-            response = client.new_order(intent)
+            response = submit_order(client, intent, config)
         except BinanceAPIError as exc:
             store.update_scalp_cycle(
                 int(cycle["id"]),

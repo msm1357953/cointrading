@@ -13,7 +13,9 @@ from cointrading.market_regime import MACRO_BEAR, MACRO_BULL, macro_regime_ko, t
 from cointrading.market_regime import evaluate_market_regime
 from cointrading.risk_state import RuntimeRiskSnapshot, evaluate_runtime_risk, risk_mode_ko
 from cointrading.storage import TradingStore, kst_from_ms, now_ms
+from cointrading.strategy_lifecycle import strategy_plan_from_setup
 from cointrading.strategy_notify import MODE_LABELS, REGIME_LABELS, SIDE_LABELS, strategy_family_label
+from cointrading.strategy_router import SETUP_PASS, StrategySetup
 
 
 DECISION_READY = "READY"
@@ -61,6 +63,7 @@ class SupervisorReport:
     min_order_notional: float
     runtime_risk_mode: str
     active_locked: bool
+    actual_exit_profile: str
 
     def to_text(self) -> str:
         candidate = _candidate_line(self.best_candidate)
@@ -76,6 +79,7 @@ class SupervisorReport:
                 f"장세: {self.macro_summary}",
                 f"시장상황: {self.context_summary}",
                 f"후보: {candidate}",
+                f"실제 주문계획: {self.actual_exit_profile or '없음'}",
                 "차단/대기 이유:",
                 reasons,
                 "주의:",
@@ -218,6 +222,16 @@ def supervise_symbol(
             config,
         )
         _append_simple_gate_reasons(reasons, store, config, symbol, best_candidate, current_ms)
+    actual_exit_profile = _actual_strategy_exit_profile(
+        reasons,
+        client,
+        store,
+        config,
+        symbol,
+        best_candidate,
+        macro,
+        current_ms,
+    )
 
     if config.dry_run:
         reasons.append("dry-run이 켜져 있어 실전 주문은 잠겨 있습니다.")
@@ -245,6 +259,7 @@ def supervise_symbol(
         min_order_notional=min_order_notional,
         runtime_risk_mode=runtime_risk.mode,
         active_locked=symbol in active_symbols,
+        actual_exit_profile=actual_exit_profile,
     )
 
 
@@ -375,6 +390,86 @@ def _append_simple_gate_reasons(
     )
     if not decision.allowed:
         reasons.append(decision.reason)
+
+
+def _actual_strategy_exit_profile(
+    reasons: list[str],
+    client: BinanceUSDMClient,
+    store: TradingStore,
+    config: TradingConfig,
+    symbol: str,
+    best_candidate,
+    macro,
+    current_ms: int,
+) -> str:
+    if best_candidate is None:
+        return ""
+    mode = str(best_candidate["execution_mode"])
+    if mode not in STRATEGY_LIVE_EXECUTION_MODES:
+        return ""
+    prices = _book_bid_ask(client, symbol)
+    if prices is None:
+        reasons.append("현재 호가를 조회하지 못해 실제 전략 주문계획을 산출할 수 없습니다.")
+        return ""
+    bid, ask = prices
+    macro_for_plan = macro
+    if macro is not None and _is_stale(
+        int(macro["timestamp_ms"]),
+        current_ms,
+        config.macro_regime_max_age_minutes,
+    ):
+        macro_for_plan = None
+    setup = StrategySetup(
+        strategy=strategy_name_from_execution_mode(mode),
+        execution_mode=mode,
+        status=SETUP_PASS,
+        side=str(best_candidate["side"]),
+        horizon="supervisor",
+        live_supported=True,
+        reason="supervisor candidate",
+    )
+    plan = strategy_plan_from_setup(
+        setup,
+        config,
+        symbol=symbol,
+        bid=bid,
+        ask=ask,
+        macro_row=macro_for_plan,
+    )
+    if plan is None:
+        reasons.append("실제 전략 주문계획을 만들 수 없습니다.")
+        return ""
+    summary = (
+        f"{plan.strategy} {plan.side} {plan.entry_order_type} "
+        f"TP={plan.take_profit_bps:.1f} SL={plan.stop_loss_bps:.1f} "
+        f"H={plan.max_hold_seconds}s profile={plan.exit_profile}"
+    )
+    exact = store.latest_strategy_evaluation(
+        symbol=symbol,
+        regime=plan.strategy,
+        side=plan.side,
+        take_profit_bps=plan.take_profit_bps,
+        stop_loss_bps=plan.stop_loss_bps,
+        max_hold_seconds=plan.max_hold_seconds,
+        execution_mode=plan.execution_mode,
+        source="strategy_cycles",
+    )
+    if exact is None:
+        reasons.append(
+            "실전 실제 exit profile이 paper에서 아직 승인되지 않았습니다: "
+            f"{summary}"
+        )
+        return summary
+    if str(exact["decision"]) != "APPROVED":
+        reasons.append(
+            "실전 실제 exit profile이 paper 승인 상태가 아닙니다: "
+            f"{summary} / {exact['decision']} {exact['reason']}"
+        )
+        return summary
+    return (
+        f"{summary} / paper 승인 "
+        f"n={int(exact['sample_count'])} avg={float(exact['avg_pnl_bps']):+.3f}bps"
+    )
 
 
 def _append_live_mode_reasons(reasons: list[str], config: TradingConfig, best_candidate) -> None:
@@ -516,14 +611,27 @@ def _actual_exchange_symbols(client: BinanceUSDMClient) -> tuple[set[str], set[s
 
 def _min_order_notional(client: BinanceUSDMClient, symbol: str) -> float:
     try:
-        ticker = client.book_ticker(symbol)
-        bid = float(ticker["bidPrice"])
-        ask = float(ticker["askPrice"])
+        prices = _book_bid_ask(client, symbol)
+        if prices is None:
+            return float(Decimal("inf"))
+        bid, ask = prices
         mid = (bid + ask) / 2.0
         filters = SymbolFilters.from_exchange_info(client.exchange_info(symbol), symbol)
         return float(filters.min_order_notional_at(mid))
     except (BinanceAPIError, ValueError, KeyError):
         return float(Decimal("inf"))
+
+
+def _book_bid_ask(client: BinanceUSDMClient, symbol: str) -> tuple[float, float] | None:
+    try:
+        ticker = client.book_ticker(symbol)
+        bid = float(ticker["bidPrice"])
+        ask = float(ticker["askPrice"])
+    except (AttributeError, BinanceAPIError, KeyError, ValueError):
+        return None
+    if bid <= 0 or ask <= 0:
+        return None
+    return bid, ask
 
 
 def _macro_summary(row, current_ms: int, config: TradingConfig) -> str:
