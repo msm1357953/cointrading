@@ -44,14 +44,14 @@ python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 
 ## Scalp Lifecycle
 
-`scalp-engine-step` is the dry-run/paper state machine:
+`scalp-engine-step` is the legacy broad dry-run/paper state machine:
 
 - no active cycle: evaluate a fresh signal and submit a post-only entry intent.
 - entry waiting: paper-fill if the market crosses the passive entry, otherwise timeout or re-quote.
 - open cycle: immediately submit a post-only take-profit intent.
 - exit waiting: close on take-profit, stop out on risk, reprice after timeout, or force-exit after max hold.
 
-The VM runs this as `cointrading-scalp-engine.timer` every 15 seconds. Live order submission still remains blocked unless both live guards are explicitly changed.
+The VM installs `cointrading-scalp-engine.timer`, but it is disabled by default now. The earlier broad scalping paper cycles were mostly loss-making, so automatic entry attempts should not restart unless explicitly reviewing that experiment. Live order submission still remains blocked unless both live guards are explicitly changed.
 
 ## Strategy Gate
 
@@ -79,9 +79,9 @@ The VM runs this as `cointrading-market-regime.timer` every 5 minutes. When `COI
 
 `market-context-collect` runs every minute on the VM and records funding, premium, open interest, spread, top-book liquidity, order-book depth, and imbalance. `live-supervisor` refreshes both market context and macro regime before producing a final go/no-go report.
 
-`live-supervisor-notify` runs on the VM and sends a Telegram alert when a symbol has an approved, macro-aligned, paper-performance-positive candidate and only safety locks remain. It never places orders; it tells the operator to rerun `실전 80` before any manual one-shot enable.
+`live-supervisor-notify` runs on the VM and sends a Telegram alert only when a symbol has an approved, macro-aligned, paper-performance-positive candidate that also matches a fresh `READY` refined-entry candidate, with only safety locks remaining. It never places orders; it tells the operator to rerun `실전 80` before any manual one-shot enable.
 
-`refine-entry-check` is the current-market gate for second-stage refined strategies. It reads `data/strategy_refine_latest.json`, fetches recent live klines, compares the latest closed-bar features with each historical SURVIVED condition, writes `data/refined_entry_latest.json`, and never places orders. `refine-entry-notify` sends Telegram only when a current READY candidate appears or changes.
+`refine-entry-check` is the current-market gate for second-stage refined strategies. It reads `data/strategy_refine_latest.json`, fetches recent live klines, compares the latest closed-bar features with each historical SURVIVED condition, then promotes only candidates that also pass risk/reward quality gates: test count, average bps, full-sample average, profit factor, payoff ratio, TP/SL ratio, win-rate edge over breakeven, and positive walk-forward window ratio. It writes `data/refined_entry_latest.json` and never places orders. `refine-entry-notify` sends Telegram only when a current READY candidate appears or changes.
 
 The alert gate is deliberately stricter than the strategy-candidate table. A candidate must have at least 20 closed paper lifecycle cycles, positive all-time and recent paper PnL, a paper payoff ratio of at least 1.2, and a recent stop/max-hold exit ratio no higher than 65%. This keeps `signal_grid` approvals from becoming live candidates until the real paper state machine has also shown survivable behavior. The live supervisor only treats `maker_post_only`, `taker_trend`, `maker_range`, and `taker_breakout` as supported live execution modes; experimental `taker_momentum` and hybrid signal-grid rows remain research-only until matching live state machines exist.
 
@@ -102,7 +102,7 @@ The live path is guarded independently from scalping. It requires all of:
 - `COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true`
 - `COINTRADING_LIVE_ONE_SHOT_ENABLED=true` while `COINTRADING_LIVE_ONE_SHOT_REQUIRED=true`
 
-With default settings it runs in dry-run/paper mode only. The VM runs this as `cointrading-strategy-engine.timer` every minute.
+With default settings it can run in dry-run/paper mode only. The VM installs `cointrading-strategy-engine.timer`, but it is disabled by default now because broad paper strategy cycles were losing overall. Future automatic paper/live promotion should start from refined `READY` candidates, not from every broad router setup.
 
 The one-shot guard is consumed after the first live lifecycle starts. This prevents a temporary live enable from accidentally becoming continuous trading.
 

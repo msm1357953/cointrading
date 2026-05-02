@@ -224,7 +224,7 @@ def _snapshot(
         "strategy_rows": _strategy_rows_html(strategy_rows) or _empty_table_row(16, "전략 평가 결과 없음"),
         "meta_rows": _meta_rows_html(meta_report) or _empty_table_row(13, "메타전략 백테스트 결과 없음"),
         "meta_action_rows": _meta_action_rows_html(meta_report) or _empty_table_row(7, "메타전략 행동별 결과 없음"),
-        "refined_entry_rows": _refined_entry_rows_html(refined_entry_report) or _empty_table_row(16, "현재장 정제후보 결과 없음"),
+        "refined_entry_rows": _refined_entry_rows_html(refined_entry_report) or _empty_table_row(18, "현재장 정제후보 결과 없음"),
         "refine_rows": _mine_rows_html(refine_report) or _empty_table_row(12, "전략 정제 결과 없음"),
         "mine_rows": _mine_rows_html(mine_report) or _empty_table_row(12, "전략 발굴 결과 없음"),
         "probe_rows": _probe_rows_html(probe_report) or _empty_table_row(13, "리서치 프로브 결과 없음"),
@@ -742,6 +742,8 @@ def _refined_entry_rows_html(report: dict) -> str:
         f"<td>{escape(_fmt_pct(float(row.get('test_win_rate', 0.0) or 0.0)))}</td>"
         f"<td>{float(row.get('test_avg_pnl_bps', 0.0) or 0.0):+.2f}</td>"
         f"<td>{float(row.get('test_profit_factor', 0.0) or 0.0):.2f}</td>"
+        f"<td>{float(row.get('test_payoff_ratio', 0.0) or 0.0):.2f}</td>"
+        f"<td>{escape(_fmt_pct(float(row.get('win_rate_edge', 0.0) or 0.0)))}</td>"
         f"<td>{escape(str(row.get('reason', '')))}</td>"
         "</tr>"
         for row in rows
@@ -969,7 +971,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     strategy_rows = snapshot["strategy_rows"] or _empty_table_row(16, "전략 평가 결과 없음")
     meta_rows = snapshot.get("meta_rows", "") or _empty_table_row(13, "메타전략 백테스트 결과 없음")
     meta_action_rows = snapshot.get("meta_action_rows", "") or _empty_table_row(7, "메타전략 행동별 결과 없음")
-    refined_entry_rows = snapshot.get("refined_entry_rows", "") or _empty_table_row(16, "현재장 정제후보 결과 없음")
+    refined_entry_rows = snapshot.get("refined_entry_rows", "") or _empty_table_row(18, "현재장 정제후보 결과 없음")
     refine_rows = snapshot.get("refine_rows", "") or _empty_table_row(12, "전략 정제 결과 없음")
     mine_rows = snapshot.get("mine_rows", "") or _empty_table_row(12, "전략 발굴 결과 없음")
     market_regime_rows = snapshot["market_regime_rows"] or _empty_table_row(10, "장세 라우터 기록 없음")
@@ -1228,7 +1230,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       <p class="muted">2차 정제에서 살아남은 후보가 지금 닫힌 봉 feature에도 맞는지 보는 단계입니다. 여기서 진입후보가 떠도 실주문은 live-supervisor, preflight, live flag가 따로 통과해야 합니다.</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>판정</th><th>심볼</th><th>행동</th><th>방향</th><th>feature 시각</th><th>현재가</th><th>목표가</th><th>손절가</th><th>TP</th><th>SL</th><th>보유봉</th><th>테스트 n</th><th>승률</th><th>평균bps</th><th>PF</th><th>이유</th></tr></thead>
+          <thead><tr><th>판정</th><th>심볼</th><th>행동</th><th>방향</th><th>feature 시각</th><th>현재가</th><th>목표가</th><th>손절가</th><th>TP</th><th>SL</th><th>보유봉</th><th>테스트 n</th><th>승률</th><th>평균bps</th><th>PF</th><th>손익비</th><th>승률여유</th><th>이유</th></tr></thead>
           <tbody id="refined-entry-rows">{refined_entry_rows}</tbody>
         </table>
       </div>

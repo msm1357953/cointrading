@@ -45,9 +45,15 @@ class RefinedEntryCandidate:
     test_win_rate: float
     test_avg_pnl_bps: float
     test_profit_factor: float
+    test_payoff_ratio: float
     full_avg_pnl_bps: float
+    full_profit_factor: float
+    risk_reward_ratio: float
+    breakeven_win_rate: float
+    win_rate_edge: float
     positive_test_windows: int
     selected_windows: int
+    positive_test_window_ratio: float
     feature_summary: str
 
 
@@ -190,7 +196,8 @@ def refined_entry_text(
             f"현재={row.current_price:.8g} TP={row.take_profit_bps:.0f}/SL={row.stop_loss_bps:.0f}/"
             f"H={row.max_hold_bars}봉 "
             f"승률={row.test_win_rate:.1%} 평균={row.test_avg_pnl_bps:+.2f}bps "
-            f"PF={row.test_profit_factor:.2f} - {row.reason}"
+            f"PF={row.test_profit_factor:.2f} 손익비={row.test_payoff_ratio:.2f} "
+            f"승률여유={row.win_rate_edge:+.1%} - {row.reason}"
         )
     return "\n".join(lines)
 
@@ -260,18 +267,28 @@ def _candidate_from_result(
     config: TradingConfig,
 ) -> RefinedEntryCandidate:
     matches = mined_result_matches_feature(row, feature)
-    tradeable = (
-        matches
-        and row.test_summary.count >= max(20, config.supervisor_min_samples // 5)
-        and row.test_summary.avg_pnl_bps > 0.0
-        and row.test_summary.profit_factor >= 1.2
-        and row.full_summary.avg_pnl_bps > 0.0
+    risk_reward_ratio = _risk_reward_ratio(row.take_profit_bps, row.stop_loss_bps)
+    payoff_ratio = float(row.test_summary.payoff_ratio)
+    breakeven_win_rate = _breakeven_win_rate(payoff_ratio)
+    win_rate_edge = row.test_summary.win_rate - breakeven_win_rate
+    positive_window_ratio = _positive_window_ratio(row.positive_test_windows, row.selected_windows)
+    quality_reasons = _quality_block_reasons(
+        row,
+        config,
+        risk_reward_ratio=risk_reward_ratio,
+        breakeven_win_rate=breakeven_win_rate,
+        win_rate_edge=win_rate_edge,
+        positive_window_ratio=positive_window_ratio,
     )
-    decision = ENTRY_READY if tradeable else ENTRY_WAIT
-    reason = "현재 feature가 과거 생존 조건과 일치합니다." if matches else _mismatch_reason(row, feature)
-    if matches and not tradeable:
+    if quality_reasons:
         decision = ENTRY_BLOCKED
-        reason = "조건은 맞지만 표본/기대값/PF 안전 기준이 부족합니다."
+        reason = "과거 손익비/기대값 기준 미달: " + "; ".join(quality_reasons[:3])
+    elif matches:
+        decision = ENTRY_READY
+        reason = "현재 feature가 손익비 검증 생존 조건과 일치합니다."
+    else:
+        decision = ENTRY_WAIT
+        reason = _mismatch_reason(row, feature)
     target = _target_price(feature.close, row.side, row.take_profit_bps)
     stop = _stop_price(feature.close, row.side, row.stop_loss_bps)
     return RefinedEntryCandidate(
@@ -293,9 +310,15 @@ def _candidate_from_result(
         test_win_rate=row.test_summary.win_rate,
         test_avg_pnl_bps=row.test_summary.avg_pnl_bps,
         test_profit_factor=row.test_summary.profit_factor,
+        test_payoff_ratio=row.test_summary.payoff_ratio,
         full_avg_pnl_bps=row.full_summary.avg_pnl_bps,
+        full_profit_factor=row.full_summary.profit_factor,
+        risk_reward_ratio=risk_reward_ratio,
+        breakeven_win_rate=breakeven_win_rate,
+        win_rate_edge=win_rate_edge,
         positive_test_windows=row.positive_test_windows,
         selected_windows=row.selected_windows,
+        positive_test_window_ratio=positive_window_ratio,
         feature_summary=_feature_summary(feature),
     )
 
@@ -355,9 +378,15 @@ def _candidate_from_dict(row: dict[str, Any]) -> RefinedEntryCandidate:
         test_win_rate=float(row.get("test_win_rate", 0.0) or 0.0),
         test_avg_pnl_bps=float(row.get("test_avg_pnl_bps", 0.0) or 0.0),
         test_profit_factor=float(row.get("test_profit_factor", 0.0) or 0.0),
+        test_payoff_ratio=float(row.get("test_payoff_ratio", 0.0) or 0.0),
         full_avg_pnl_bps=float(row.get("full_avg_pnl_bps", 0.0) or 0.0),
+        full_profit_factor=float(row.get("full_profit_factor", 0.0) or 0.0),
+        risk_reward_ratio=float(row.get("risk_reward_ratio", 0.0) or 0.0),
+        breakeven_win_rate=float(row.get("breakeven_win_rate", 0.0) or 0.0),
+        win_rate_edge=float(row.get("win_rate_edge", 0.0) or 0.0),
         positive_test_windows=int(row.get("positive_test_windows", 0) or 0),
         selected_windows=int(row.get("selected_windows", 0) or 0),
+        positive_test_window_ratio=float(row.get("positive_test_window_ratio", 0.0) or 0.0),
         feature_summary=str(row.get("feature_summary", "")),
     )
 
@@ -368,3 +397,77 @@ def _decision_ko(decision: str) -> str:
         ENTRY_WAIT: "대기",
         ENTRY_BLOCKED: "차단",
     }.get(decision, decision)
+
+
+def _quality_block_reasons(
+    row: MinedStrategyResult,
+    config: TradingConfig,
+    *,
+    risk_reward_ratio: float,
+    breakeven_win_rate: float,
+    win_rate_edge: float,
+    positive_window_ratio: float,
+) -> list[str]:
+    reasons: list[str] = []
+    min_count = max(config.refined_entry_min_test_count, config.supervisor_min_samples // 5)
+    if row.test_summary.count < min_count:
+        reasons.append(f"테스트 표본 {row.test_summary.count} < {min_count}")
+    if row.test_summary.avg_pnl_bps < config.refined_entry_min_avg_pnl_bps:
+        reasons.append(
+            f"테스트 평균 {row.test_summary.avg_pnl_bps:+.2f}bps < "
+            f"{config.refined_entry_min_avg_pnl_bps:.2f}bps"
+        )
+    if row.full_summary.avg_pnl_bps < config.refined_entry_min_full_avg_pnl_bps:
+        reasons.append(
+            f"전체 평균 {row.full_summary.avg_pnl_bps:+.2f}bps < "
+            f"{config.refined_entry_min_full_avg_pnl_bps:.2f}bps"
+        )
+    if row.test_summary.profit_factor < config.refined_entry_min_profit_factor:
+        reasons.append(
+            f"테스트 PF {row.test_summary.profit_factor:.2f} < "
+            f"{config.refined_entry_min_profit_factor:.2f}"
+        )
+    if row.full_summary.profit_factor < config.refined_entry_min_full_profit_factor:
+        reasons.append(
+            f"전체 PF {row.full_summary.profit_factor:.2f} < "
+            f"{config.refined_entry_min_full_profit_factor:.2f}"
+        )
+    if row.test_summary.payoff_ratio < config.refined_entry_min_payoff_ratio:
+        reasons.append(
+            f"테스트 손익비 {row.test_summary.payoff_ratio:.2f} < "
+            f"{config.refined_entry_min_payoff_ratio:.2f}"
+        )
+    if risk_reward_ratio < config.refined_entry_min_risk_reward_ratio:
+        reasons.append(
+            f"목표/손절비 {risk_reward_ratio:.2f} < "
+            f"{config.refined_entry_min_risk_reward_ratio:.2f}"
+        )
+    if win_rate_edge < config.refined_entry_min_win_rate_edge:
+        reasons.append(
+            f"승률여유 {win_rate_edge:+.1%} < "
+            f"{config.refined_entry_min_win_rate_edge:.1%}"
+        )
+    if positive_window_ratio < config.refined_entry_min_positive_window_ratio:
+        reasons.append(
+            f"양수 테스트윈도우 {positive_window_ratio:.1%} < "
+            f"{config.refined_entry_min_positive_window_ratio:.1%}"
+        )
+    return reasons
+
+
+def _risk_reward_ratio(take_profit_bps: float, stop_loss_bps: float) -> float:
+    if stop_loss_bps <= 0:
+        return 0.0
+    return take_profit_bps / stop_loss_bps
+
+
+def _breakeven_win_rate(payoff_ratio: float) -> float:
+    if payoff_ratio <= 0:
+        return 1.0
+    return 1.0 / (1.0 + payoff_ratio)
+
+
+def _positive_window_ratio(positive_windows: int, selected_windows: int) -> float:
+    if selected_windows <= 0:
+        return 0.0
+    return positive_windows / selected_windows

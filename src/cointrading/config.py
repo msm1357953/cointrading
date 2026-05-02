@@ -160,6 +160,16 @@ class TradingConfig:
     live_one_shot_symbol: str = ""
     live_one_shot_strategy: str = ""
     live_one_shot_notional: float = 25.0
+    refined_entry_min_test_count: int = 20
+    refined_entry_min_avg_pnl_bps: float = 10.0
+    refined_entry_min_full_avg_pnl_bps: float = 5.0
+    refined_entry_min_profit_factor: float = 1.5
+    refined_entry_min_full_profit_factor: float = 1.1
+    refined_entry_min_payoff_ratio: float = 1.5
+    refined_entry_min_risk_reward_ratio: float = 2.0
+    refined_entry_min_win_rate_edge: float = 0.05
+    refined_entry_min_positive_window_ratio: float = 0.50
+    supervisor_require_refined_entry_ready: bool = True
     supervisor_min_samples: int = 100
     supervisor_min_avg_pnl_bps: float = 0.5
     supervisor_min_cycle_count: int = 20
@@ -435,6 +445,46 @@ class TradingConfig:
             live_one_shot_notional=_get_float(
                 "COINTRADING_LIVE_ONE_SHOT_NOTIONAL",
                 cls.live_one_shot_notional,
+            ),
+            refined_entry_min_test_count=_get_int(
+                "COINTRADING_REFINED_ENTRY_MIN_TEST_COUNT",
+                cls.refined_entry_min_test_count,
+            ),
+            refined_entry_min_avg_pnl_bps=_get_float(
+                "COINTRADING_REFINED_ENTRY_MIN_AVG_PNL_BPS",
+                cls.refined_entry_min_avg_pnl_bps,
+            ),
+            refined_entry_min_full_avg_pnl_bps=_get_float(
+                "COINTRADING_REFINED_ENTRY_MIN_FULL_AVG_PNL_BPS",
+                cls.refined_entry_min_full_avg_pnl_bps,
+            ),
+            refined_entry_min_profit_factor=_get_float(
+                "COINTRADING_REFINED_ENTRY_MIN_PROFIT_FACTOR",
+                cls.refined_entry_min_profit_factor,
+            ),
+            refined_entry_min_full_profit_factor=_get_float(
+                "COINTRADING_REFINED_ENTRY_MIN_FULL_PROFIT_FACTOR",
+                cls.refined_entry_min_full_profit_factor,
+            ),
+            refined_entry_min_payoff_ratio=_get_float(
+                "COINTRADING_REFINED_ENTRY_MIN_PAYOFF_RATIO",
+                cls.refined_entry_min_payoff_ratio,
+            ),
+            refined_entry_min_risk_reward_ratio=_get_float(
+                "COINTRADING_REFINED_ENTRY_MIN_RISK_REWARD_RATIO",
+                cls.refined_entry_min_risk_reward_ratio,
+            ),
+            refined_entry_min_win_rate_edge=_get_float(
+                "COINTRADING_REFINED_ENTRY_MIN_WIN_RATE_EDGE",
+                cls.refined_entry_min_win_rate_edge,
+            ),
+            refined_entry_min_positive_window_ratio=_get_float(
+                "COINTRADING_REFINED_ENTRY_MIN_POSITIVE_WINDOW_RATIO",
+                cls.refined_entry_min_positive_window_ratio,
+            ),
+            supervisor_require_refined_entry_ready=_get_bool(
+                "COINTRADING_SUPERVISOR_REQUIRE_REFINED_ENTRY_READY",
+                cls.supervisor_require_refined_entry_ready,
             ),
             supervisor_min_samples=_get_int(
                 "COINTRADING_SUPERVISOR_MIN_SAMPLES",

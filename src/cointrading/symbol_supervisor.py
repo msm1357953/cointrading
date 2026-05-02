@@ -11,6 +11,7 @@ from cointrading.exchange_filters import SymbolFilters
 from cointrading.market_context import collect_market_context
 from cointrading.market_regime import MACRO_BEAR, MACRO_BULL, macro_regime_ko, trade_bias_ko
 from cointrading.market_regime import evaluate_market_regime
+from cointrading.refined_entry_gate import default_refined_entry_report_path, load_refined_entry_report
 from cointrading.risk_state import RuntimeRiskSnapshot, evaluate_runtime_risk, risk_mode_ko
 from cointrading.storage import TradingStore, kst_from_ms, now_ms
 from cointrading.strategy_lifecycle import strategy_plan_from_setup
@@ -114,6 +115,7 @@ def supervise_symbols(
         store.recent_scalp_cycles(limit=recent_limit),
         config.supervisor_recent_cycle_count,
     )
+    refined_ready, refined_issue = _ready_refined_entries_by_symbol(config, current_ms=ts)
     reports = []
     for symbol in symbol_list:
         reports.append(
@@ -133,6 +135,8 @@ def supervise_symbols(
                 scalp_perf=scalp_perf,
                 strategy_recent_perf=strategy_recent_perf,
                 scalp_recent_perf=scalp_recent_perf,
+                refined_ready_entries=refined_ready,
+                refined_entry_issue=refined_issue,
                 current_ms=ts,
             )
         )
@@ -156,6 +160,8 @@ def supervise_symbol(
     scalp_perf: dict[tuple[str, str], dict],
     strategy_recent_perf: dict[tuple[str, str], dict],
     scalp_recent_perf: dict[tuple[str, str], dict],
+    refined_ready_entries: dict[str, list[dict]],
+    refined_entry_issue: str,
     current_ms: int,
 ) -> SupervisorReport:
     reasons: list[str] = []
@@ -209,6 +215,14 @@ def supervise_symbol(
                 f"후보 평균손익 {float(best_candidate['avg_pnl_bps']):.3f}bps가 기준 "
                 f"{config.supervisor_min_avg_pnl_bps:.3f}bps보다 낮습니다."
             )
+        _append_refined_entry_reasons(
+            reasons,
+            config,
+            symbol,
+            best_candidate,
+            refined_ready_entries,
+            refined_entry_issue,
+        )
         _append_performance_reasons(
             reasons,
             warnings,
@@ -345,6 +359,29 @@ def _append_performance_reasons(
             f"최근 stop/max_hold 종료 비율 {adverse_ratio:.1%}가 기준 "
             f"{config.supervisor_max_adverse_exit_ratio:.1%}보다 높습니다."
         )
+
+
+def _append_refined_entry_reasons(
+    reasons: list[str],
+    config: TradingConfig,
+    symbol: str,
+    best_candidate,
+    refined_ready_entries: dict[str, list[dict]],
+    refined_entry_issue: str,
+) -> None:
+    if not config.supervisor_require_refined_entry_ready:
+        return
+    if refined_entry_issue:
+        reasons.append(refined_entry_issue)
+        return
+    ready_rows = refined_ready_entries.get(symbol.upper(), [])
+    if not ready_rows:
+        reasons.append(
+            "현재장 정제 READY 후보가 없습니다. 예전 signal-grid 승인만으로는 실전 후보로 보지 않습니다."
+        )
+        return
+    if not any(_candidate_matches_refined_ready(best_candidate, row) for row in ready_rows):
+        reasons.append("실전 후보가 현재장 정제 READY 후보의 심볼/방향/전략유형과 일치하지 않습니다.")
 
 
 def _append_one_shot_reasons(
@@ -677,6 +714,45 @@ def _candidate_line(row: dict | None) -> str:
         f"n={int(row['sample_count'])} "
         f"avg={float(row['avg_pnl_bps']):+.3f}bps"
     )
+
+
+def _ready_refined_entries_by_symbol(
+    config: TradingConfig,
+    *,
+    current_ms: int,
+) -> tuple[dict[str, list[dict]], str]:
+    if not config.supervisor_require_refined_entry_ready:
+        return {}, ""
+    payload = load_refined_entry_report(default_refined_entry_report_path())
+    if payload is None:
+        return {}, "현재장 정제 후보 리포트가 없습니다. 먼저 refine-entry-check가 필요합니다."
+    generated_ms = int(payload.get("generated_ms", 0) or 0)
+    if generated_ms <= 0:
+        return {}, "현재장 정제 후보 리포트 생성시각이 없습니다."
+    if _is_stale(generated_ms, current_ms, config.supervisor_data_max_age_minutes):
+        return {}, "현재장 정제 후보 리포트가 오래되었습니다."
+    result: dict[str, list[dict]] = {}
+    for row in payload.get("candidates", []) or []:
+        if str(row.get("decision")) != "READY":
+            continue
+        result.setdefault(str(row.get("symbol", "")).upper(), []).append(row)
+    return result, ""
+
+
+def _candidate_matches_refined_ready(candidate, refined_row: dict) -> bool:
+    if str(candidate["side"]) != str(refined_row.get("side")):
+        return False
+    mode = str(candidate["execution_mode"])
+    action = str(refined_row.get("action", ""))
+    if "breakout" in action:
+        return mode == "taker_breakout"
+    if "trend" in action:
+        return mode == "taker_trend"
+    if "range" in action:
+        return mode == "maker_range"
+    if "scalp" in action:
+        return mode == "maker_post_only"
+    return False
 
 
 def _decision_ko(decision: str) -> str:

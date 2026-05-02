@@ -44,6 +44,8 @@ The first version avoids heavy dependencies so the skeleton can run immediately.
 
 Do not enable live trading until all items are true:
 
+- The current entry must come from a refined `READY` candidate, not from a broad signal-grid approval alone.
+- The refined candidate must clear payoff quality gates: enough test trades, positive test and full-sample average bps, test/full profit factor, payoff ratio, TP/SL ratio, win-rate edge above breakeven, and positive walk-forward windows.
 - The first live phase uses one simple rule family only: `trend_follow`.
 - Signal-grid approval is backed by at least 20 closed paper lifecycle cycles on the same symbol and side.
 - All-time and recent paper PnL are positive.

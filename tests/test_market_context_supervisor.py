@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cointrading.config import TradingConfig
 from cointrading.live_guard import (
@@ -205,6 +206,7 @@ class MarketContextSupervisorTests(unittest.TestCase):
                 supervisor_min_cycle_count=20,
                 supervisor_recent_cycle_count=20,
                 supervisor_min_payoff_ratio=1.2,
+                supervisor_require_refined_entry_ready=False,
                 runtime_risk_enabled=False,
             )
 
@@ -238,6 +240,65 @@ class MarketContextSupervisorTests(unittest.TestCase):
                 text,
             )
             self.assertIn("실제 주문계획: trend_follow long MARKET TP=45.0 SL=18.0", text)
+
+    def test_supervisor_requires_refined_ready_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            store.insert_market_regime(_macro("BTCUSDC"))
+            store.insert_market_context(
+                collect_market_context(
+                    FakeSupervisorClient(),
+                    "BTCUSDC",
+                    timestamp_ms=1_000,
+                )
+            )
+            store.insert_strategy_evaluations(
+                [
+                    {
+                        "source": "signal_grid",
+                        "execution_mode": "taker_trend",
+                        "symbol": "BTCUSDC",
+                        "regime": "aligned_long",
+                        "side": "long",
+                        "take_profit_bps": 20.0,
+                        "stop_loss_bps": 4.0,
+                        "max_hold_seconds": 300,
+                        "sample_count": 150,
+                        "win_count": 90,
+                        "loss_count": 60,
+                        "win_rate": 0.60,
+                        "avg_pnl_bps": 1.5,
+                        "sum_pnl_bps": 225.0,
+                        "decision": "APPROVED",
+                        "reason": "ok",
+                    }
+                ],
+                timestamp_ms=1_000,
+            )
+            config = TradingConfig(
+                dry_run=True,
+                live_trading_enabled=False,
+                live_strategy_lifecycle_enabled=False,
+                supervisor_data_max_age_minutes=10,
+                runtime_risk_enabled=False,
+            )
+
+            with patch("cointrading.symbol_supervisor.load_refined_entry_report", return_value=None):
+                report = supervise_symbols(
+                    FakeSupervisorClient(),
+                    store,
+                    config,
+                    ["BTCUSDC"],
+                    notional=25,
+                    current_ms=5_000,
+                )[0]
+
+        self.assertEqual(report.decision, DECISION_BLOCKED)
+        self.assertIn(
+            "현재장 정제 후보 리포트가 없습니다. 먼저 refine-entry-check가 필요합니다.",
+            report.reasons,
+        )
+        self.assertEqual(actionable_supervisor_reports([report]), [])
 
     def test_supervisor_blocks_strategy_alert_without_exact_exit_profile_approval(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
