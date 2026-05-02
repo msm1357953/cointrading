@@ -25,6 +25,7 @@ from cointrading.scalping import (
     scalp_report_rows_text,
 )
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms
+from cointrading.strategy_miner import strategy_mine_report_text
 from cointrading.strategy_notify import strategy_notification_text
 from cointrading.strategy_router import evaluate_strategy_setups, strategy_setups_text
 from cointrading.symbol_supervisor import (
@@ -194,6 +195,9 @@ class TelegramCommandProcessor:
         "메타전략": "research",
         "시장판단": "research",
         "상황판단": "research",
+        "발굴": "strategy_mine",
+        "전략발굴": "strategy_mine",
+        "마이닝": "strategy_mine",
         "리서치": "research",
         "연구": "research",
         "백테스트": "research",
@@ -279,6 +283,8 @@ class TelegramCommandProcessor:
             return self.strategy_text()
         if command == "research":
             return self.research_text()
+        if command == "strategy_mine":
+            return self.strategy_mine_text()
         if command == "probe":
             return self.probe_text()
         if command == "entry_check":
@@ -317,6 +323,7 @@ class TelegramCommandProcessor:
                 "보고 전체 - 예전 USDT 로그까지 포함",
                 "전략 - 신호 로그 기반 후보평가, live 잠금, 전략 상태머신 요약",
                 "메타 - 장기 데이터 기반 상황판단형 메타전략 결과. 주문은 넣지 않음",
+                "발굴 - 과거 데이터에서 walk-forward로 살아남은 전략 후보 확인",
                 "프로브 - 예전 개별 후보 백테스트 프로브 결과",
                 "진입 ETHUSDC 25 - 전략별 진입 점검. 주문은 넣지 않음",
                 "실전 ETHUSDC 25 - 실전 가능/불가 최종 감독 판정",
@@ -526,6 +533,9 @@ class TelegramCommandProcessor:
 
     def research_text(self) -> str:
         return meta_report_text(limit=8)
+
+    def strategy_mine_text(self) -> str:
+        return strategy_mine_report_text(limit=8)
 
     def probe_text(self) -> str:
         return vibe_probe_report_text(limit=8)

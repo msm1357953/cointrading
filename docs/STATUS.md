@@ -79,12 +79,13 @@
 - 2026-05-02: Vibe-Trading was tested as a research/backtest reference, not a live execution engine. A repeatable `vibe-probe` command was added to run a Vibe-style closed-bar probe over Binance public USDC futures candles for trend-following, range-reversion, and breakout strategies with taker fee/slippage, TP/SL/max-hold exits, payoff, profit factor, drawdown, and approval/block decisions.
 - 2026-05-02: The research probe is now automatic on the VM through `cointrading-vibe-probe-notify.timer`. It refreshes `data/vibe_probe_latest.json` every 30 minutes, sends Telegram on approved-candidate changes or 6-hour periodic summaries, adds Telegram `리서치`, and exposes a `리서치` dashboard tab. It never places orders.
 - 2026-05-02: Research was restructured around a single regime-adaptive meta policy. New `meta-backtest` downloads/caches long-range Binance public USD-M futures candles from `data.binance.vision`, classifies each closed bar into trend/range/breakout/panic/mixed, chooses only one action, simulates conservative taker fee/slippage exits, and writes `data/meta_strategy_latest.json`. Dashboard now has a `메타전략` tab, Telegram `메타`/`리서치` reads the meta report, and `cointrading-meta-backtest-notify.timer` was added for 6-hour research summaries. The default research interval is `1h` because full 15m multi-symbol history is too noisy and too heavy for the VM. The first 2025-01-01 through 2026-04-30 USDC run blocked all five symbols, which means the current meta policy is not live-ready.
+- 2026-05-02: A first strategy-mining pass was added. `strategy-mine` searches rule/exit-profile combinations over historical features, selects candidates only from a rolling training window, then scores the next unseen month. Dashboard `메타전략` now includes a strategy-mining table, and Telegram `발굴` reads `data/strategy_mine_latest.json`. The first 2025-01-01 through 2026-04-30 1h run found WATCH candidates but no SURVIVED candidate, so no strategy should be promoted to live yet.
 
 ## Next Work Packets
 
-1. Add walk-forward optimization for the meta policy: train thresholds on an older window, validate on the next window, and reject parameter sets that only work in-sample.
-2. Extend meta features beyond candles: historical funding, open-interest trend, BTC market stress, and optional external/news/vibe context should be recorded as explicit features instead of hidden LLM judgement.
-3. Keep live order flags off until the meta policy has positive out-of-sample expectancy and paper lifecycle results confirm it on current market data.
-4. Run `meta-backtest-notify --force` on the VM after deploy, then watch Telegram `메타` and dashboard `메타전략` before considering any tiny one-shot.
+1. Improve strategy mining with broader feature families: funding, open-interest change, BTC stress, session/time filters, and volatility compression/expansion.
+2. Add a second-stage optimizer for WATCH candidates only, then re-run strict walk-forward so parameter search does not leak future results.
+3. Keep live order flags off until at least one candidate is `SURVIVED` and paper lifecycle results confirm it on current market data.
+4. Run `strategy-mine` and `meta-backtest-notify --force` on the VM after deploy, then watch Telegram `발굴`/`메타` and dashboard `메타전략`.
 5. Run `live-preflight --notional <tiny size> --symbols <symbol>` on the VM immediately before any real-money test.
 6. Continue validating live exchange fill ingestion and open-order reconciliation on tiny one-shot tests only after research and paper evidence agree.

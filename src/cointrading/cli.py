@@ -71,6 +71,12 @@ from cointrading.scalping import (
     score_scalp_log,
 )
 from cointrading.storage import TradingStore, default_db_path
+from cointrading.strategy_miner import (
+    default_strategy_mine_report_path,
+    mine_history_for_strategies,
+    strategy_mine_text,
+    write_strategy_mine_report,
+)
 from cointrading.strategy_eval import evaluate_and_store_strategy, strategy_evaluation_text
 from cointrading.strategy_lifecycle import manage_strategy_cycle, start_strategy_cycle_from_setup
 from cointrading.strategy_notify import (
@@ -299,6 +305,18 @@ def main(argv: list[str] | None = None) -> None:
     meta_notify_parser.add_argument("--force", action="store_true")
     meta_notify_parser.add_argument("--no-send", action="store_true")
 
+    strategy_mine_parser = subparsers.add_parser("strategy-mine")
+    strategy_mine_parser.add_argument("--symbols", nargs="+")
+    strategy_mine_parser.add_argument("--interval", default="1h")
+    strategy_mine_parser.add_argument("--start", default="2025-01-01")
+    strategy_mine_parser.add_argument("--end")
+    strategy_mine_parser.add_argument("--history-dir", type=Path, default=default_history_dir())
+    strategy_mine_parser.add_argument("--notional", type=float)
+    strategy_mine_parser.add_argument("--train-months", type=int, default=6)
+    strategy_mine_parser.add_argument("--test-months", type=int, default=1)
+    strategy_mine_parser.add_argument("--top-limit", type=int, default=30)
+    strategy_mine_parser.add_argument("--output", type=Path, default=default_strategy_mine_report_path())
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -445,6 +463,19 @@ def main(argv: list[str] | None = None) -> None:
             args.periodic_minutes,
             args.force,
             args.no_send,
+        )
+    elif args.command == "strategy-mine":
+        strategy_mine(
+            _active_scalp_symbols(args.symbols),
+            args.interval,
+            args.start,
+            args.end,
+            args.history_dir,
+            args.notional,
+            args.train_months,
+            args.test_months,
+            args.top_limit,
+            args.output,
         )
     elif args.command == "telegram-me":
         telegram_me()
@@ -1118,6 +1149,62 @@ def meta_backtest_notify(
         return
     apply_meta_notification_state(state, signature=signature).save(state_path)
     print("meta-backtest-notify: sent")
+
+
+def strategy_mine(
+    symbols: list[str],
+    interval: str,
+    start: str,
+    end: str | None,
+    history_dir: Path,
+    notional: float | None,
+    train_months: int,
+    test_months: int,
+    top_limit: int,
+    output: Path,
+) -> None:
+    config = TradingConfig.from_env()
+    end_date = parse_yyyy_mm_dd(end) if end else default_history_end_date()
+    results = []
+    per_symbol_limit = max(top_limit, 1)
+    for symbol in symbols:
+        history = load_binance_vision_klines(
+            symbol=symbol,
+            interval=interval,
+            start_date=parse_yyyy_mm_dd(start),
+            end_date=end_date,
+            history_dir=history_dir,
+        )
+        results.extend(
+            mine_history_for_strategies(
+                history=history,
+                config=config,
+                notional=notional,
+                train_months=train_months,
+                test_months=test_months,
+                top_limit=per_symbol_limit,
+            )
+        )
+    ranked = sorted(
+        results,
+        key=lambda row: (
+            {"SURVIVED": 0, "WATCH": 1, "REJECTED": 2}.get(row.decision, 3),
+            -row.test_summary.avg_pnl_bps,
+            -row.test_summary.count,
+        ),
+    )[:top_limit]
+    write_strategy_mine_report(
+        output,
+        results=ranked,
+        symbols=symbols,
+        interval=interval,
+        start_date=str(parse_yyyy_mm_dd(start)),
+        end_date=str(end_date),
+        train_months=train_months,
+        test_months=test_months,
+    )
+    print(strategy_mine_text(ranked, limit=top_limit))
+    print(f"\nreport: {output}")
 
 
 def _run_meta_backtests(
