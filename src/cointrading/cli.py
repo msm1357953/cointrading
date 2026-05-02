@@ -73,9 +73,15 @@ from cointrading.scalping import (
 from cointrading.storage import TradingStore, default_db_path
 from cointrading.strategy_miner import (
     default_strategy_mine_report_path,
+    default_strategy_refine_report_path,
+    load_strategy_mine_report,
     mine_history_for_strategies,
+    refine_mined_candidates,
     strategy_mine_text,
+    strategy_refine_text,
+    strategy_results_from_report,
     write_strategy_mine_report,
+    write_strategy_refine_report,
 )
 from cointrading.strategy_eval import evaluate_and_store_strategy, strategy_evaluation_text
 from cointrading.strategy_lifecycle import manage_strategy_cycle, start_strategy_cycle_from_setup
@@ -317,6 +323,19 @@ def main(argv: list[str] | None = None) -> None:
     strategy_mine_parser.add_argument("--top-limit", type=int, default=30)
     strategy_mine_parser.add_argument("--output", type=Path, default=default_strategy_mine_report_path())
 
+    strategy_refine_parser = subparsers.add_parser("strategy-refine")
+    strategy_refine_parser.add_argument("--source", type=Path, default=default_strategy_mine_report_path())
+    strategy_refine_parser.add_argument("--symbols", nargs="+")
+    strategy_refine_parser.add_argument("--interval")
+    strategy_refine_parser.add_argument("--start")
+    strategy_refine_parser.add_argument("--end")
+    strategy_refine_parser.add_argument("--history-dir", type=Path, default=default_history_dir())
+    strategy_refine_parser.add_argument("--notional", type=float)
+    strategy_refine_parser.add_argument("--train-months", type=int, default=6)
+    strategy_refine_parser.add_argument("--test-months", type=int, default=1)
+    strategy_refine_parser.add_argument("--top-limit", type=int, default=30)
+    strategy_refine_parser.add_argument("--output", type=Path, default=default_strategy_refine_report_path())
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -467,6 +486,20 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "strategy-mine":
         strategy_mine(
             _active_scalp_symbols(args.symbols),
+            args.interval,
+            args.start,
+            args.end,
+            args.history_dir,
+            args.notional,
+            args.train_months,
+            args.test_months,
+            args.top_limit,
+            args.output,
+        )
+    elif args.command == "strategy-refine":
+        strategy_refine(
+            args.source,
+            args.symbols,
             args.interval,
             args.start,
             args.end,
@@ -1204,6 +1237,88 @@ def strategy_mine(
         test_months=test_months,
     )
     print(strategy_mine_text(ranked, limit=top_limit))
+    print(f"\nreport: {output}")
+
+
+def strategy_refine(
+    source: Path,
+    symbols: list[str] | None,
+    interval: str | None,
+    start: str | None,
+    end: str | None,
+    history_dir: Path,
+    notional: float | None,
+    train_months: int,
+    test_months: int,
+    top_limit: int,
+    output: Path,
+) -> None:
+    source_report = load_strategy_mine_report(source)
+    if source_report is None:
+        raise SystemExit(f"source report not found: {source}")
+    source_results = strategy_results_from_report(source_report)
+    candidates = [row for row in source_results if row.decision in {"SURVIVED", "WATCH"}]
+    if symbols:
+        symbol_filter = {symbol.upper() for symbol in symbols}
+        candidates = [row for row in candidates if row.symbol.upper() in symbol_filter]
+    if interval:
+        candidates = [row for row in candidates if row.interval == interval]
+    if not candidates:
+        write_strategy_refine_report(
+            output,
+            results=[],
+            symbols=symbols or [],
+            interval=interval or str(source_report.get("interval", "1h") or "1h"),
+            start_date=start or str(source_report.get("start_date", "")),
+            end_date=end or str(source_report.get("end_date", "")),
+            train_months=train_months,
+            test_months=test_months,
+            source_path=source,
+            source_count=0,
+        )
+        print(strategy_refine_text([], source_count=0, limit=top_limit))
+        print(f"\nreport: {output}")
+        return
+
+    selected_interval = interval or candidates[0].interval or str(source_report.get("interval", "1h") or "1h")
+    start_value = start or str(source_report.get("start_date", "2025-01-01") or "2025-01-01")
+    end_value = end or str(source_report.get("end_date", "") or "")
+    end_date = parse_yyyy_mm_dd(end_value) if end_value else default_history_end_date()
+    selected_candidates = [row for row in candidates if row.interval == selected_interval]
+    refine_symbols = sorted({row.symbol.upper() for row in selected_candidates})
+    config = TradingConfig.from_env()
+    histories = [
+        load_binance_vision_klines(
+            symbol=symbol,
+            interval=selected_interval,
+            start_date=parse_yyyy_mm_dd(start_value),
+            end_date=end_date,
+            history_dir=history_dir,
+        )
+        for symbol in refine_symbols
+    ]
+    ranked = refine_mined_candidates(
+        histories=histories,
+        source_results=selected_candidates,
+        config=config,
+        notional=notional,
+        train_months=train_months,
+        test_months=test_months,
+        top_limit=top_limit,
+    )
+    write_strategy_refine_report(
+        output,
+        results=ranked,
+        symbols=refine_symbols,
+        interval=selected_interval,
+        start_date=str(parse_yyyy_mm_dd(start_value)),
+        end_date=str(end_date),
+        train_months=train_months,
+        test_months=test_months,
+        source_path=source,
+        source_count=len(selected_candidates),
+    )
+    print(strategy_refine_text(ranked, source_count=len(selected_candidates), limit=top_limit))
     print(f"\nreport: {output}")
 
 

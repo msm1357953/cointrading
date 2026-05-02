@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -87,6 +87,10 @@ def default_strategy_mine_report_path() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "strategy_mine_latest.json"
 
 
+def default_strategy_refine_report_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "strategy_refine_latest.json"
+
+
 def mine_history_for_strategies(
     *,
     history: HistoricalKlineResult,
@@ -115,6 +119,48 @@ def mine_history_for_strategies(
     ]
     ranked = _dedupe_similar_results(sorted(results, key=_result_rank_key))
     return ranked[:top_limit]
+
+
+def refine_mined_candidates(
+    *,
+    histories: Iterable[HistoricalKlineResult],
+    source_results: list[MinedStrategyResult],
+    config: TradingConfig,
+    notional: float | None = None,
+    train_months: int = 6,
+    test_months: int = 1,
+    top_limit: int = 30,
+) -> list[MinedStrategyResult]:
+    by_symbol_interval: dict[tuple[str, str], list[MinedStrategyResult]] = {}
+    for row in source_results:
+        if row.decision not in {"SURVIVED", "WATCH"}:
+            continue
+        by_symbol_interval.setdefault((row.symbol.upper(), row.interval), []).append(row)
+    if not by_symbol_interval:
+        return []
+
+    order_notional = notional if notional is not None else config.strategy_order_notional
+    results: list[MinedStrategyResult] = []
+    for history in histories:
+        source_rows = by_symbol_interval.get((history.symbol.upper(), history.interval), [])
+        if not source_rows or len(history.klines) < 300:
+            continue
+        features = _feature_series(history.symbol, history.interval, history.klines)
+        windows = _walk_forward_windows(history.klines, train_months=train_months, test_months=test_months)
+        rules = _refined_candidate_rules(source_rows)
+        for rule in rules:
+            results.append(
+                _evaluate_candidate_walk_forward(
+                    history=history,
+                    features=features,
+                    rule=rule,
+                    config=config,
+                    notional=order_notional,
+                    windows=windows,
+                )
+            )
+    ranked = _dedupe_similar_results(sorted(results, key=_result_rank_key))
+    return _diversify_refined_results(ranked, top_limit=top_limit)
 
 
 def default_candidate_rules(interval: str, config: TradingConfig) -> list[CandidateRule]:
@@ -341,6 +387,35 @@ def write_strategy_mine_report(
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def write_strategy_refine_report(
+    path: Path,
+    *,
+    results: list[MinedStrategyResult],
+    symbols: Iterable[str],
+    interval: str,
+    start_date: str,
+    end_date: str,
+    train_months: int,
+    test_months: int,
+    source_path: Path | None,
+    source_count: int,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_ms": now_ms(),
+        "symbols": [symbol.upper() for symbol in symbols],
+        "interval": interval,
+        "start_date": start_date,
+        "end_date": end_date,
+        "train_months": train_months,
+        "test_months": test_months,
+        "source_path": str(source_path) if source_path is not None else "",
+        "source_count": source_count,
+        "results": [asdict(row) for row in results],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def load_strategy_mine_report(path: Path | None = None) -> dict[str, Any] | None:
     report_path = path or default_strategy_mine_report_path()
     if not report_path.exists():
@@ -348,12 +423,76 @@ def load_strategy_mine_report(path: Path | None = None) -> dict[str, Any] | None
     return json.loads(report_path.read_text(encoding="utf-8"))
 
 
+def load_strategy_refine_report(path: Path | None = None) -> dict[str, Any] | None:
+    report_path = path or default_strategy_refine_report_path()
+    if not report_path.exists():
+        return None
+    return json.loads(report_path.read_text(encoding="utf-8"))
+
+
+def strategy_results_from_report(payload: dict[str, Any]) -> list[MinedStrategyResult]:
+    return [_result_from_dict(row) for row in payload.get("results", []) or []]
+
+
 def strategy_mine_report_text(path: Path | None = None, *, limit: int = 10) -> str:
     payload = load_strategy_mine_report(path)
     if payload is None:
         return "전략 발굴 결과가 아직 없습니다. 먼저 strategy-mine을 실행해야 합니다."
-    results = [_result_from_dict(row) for row in payload.get("results", []) or []]
+    results = strategy_results_from_report(payload)
     return strategy_mine_text(results, generated_ms=int(payload.get("generated_ms", 0) or 0), limit=limit)
+
+
+def strategy_refine_report_text(path: Path | None = None, *, limit: int = 10) -> str:
+    payload = load_strategy_refine_report(path)
+    if payload is None:
+        return "전략 정제 결과가 아직 없습니다. 로컬에서 strategy-refine을 실행하고 JSON을 업로드해야 합니다."
+    results = strategy_results_from_report(payload)
+    return strategy_refine_text(
+        results,
+        generated_ms=int(payload.get("generated_ms", 0) or 0),
+        source_count=int(payload.get("source_count", 0) or 0),
+        limit=limit,
+    )
+
+
+def strategy_refine_text(
+    results: list[MinedStrategyResult],
+    *,
+    generated_ms: int | None = None,
+    source_count: int = 0,
+    limit: int = 10,
+) -> str:
+    lines = [
+        "전략 2차 정제 리포트",
+        "1차 WATCH 후보 주변의 TP/SL/보유시간/필터를 다시 walk-forward로 흔들어 본 결과입니다.",
+    ]
+    if generated_ms:
+        lines.append(f"생성시각: {kst_from_ms(generated_ms)}")
+    if source_count:
+        lines.append(f"정제 대상 1차 후보: {source_count}개")
+    if not results:
+        lines.append("결과 없음")
+        return "\n".join(lines)
+    survived = [row for row in results if row.decision == "SURVIVED"]
+    watch = [row for row in results if row.decision == "WATCH"]
+    rejected = [row for row in results if row.decision == "REJECTED"]
+    lines.append(f"요약: 생존 {len(survived)}개, 관찰 {len(watch)}개, 탈락 {len(rejected)}개")
+    lines.append("주의: SURVIVED는 과거 walk-forward 통과라는 뜻이고, 현재장/paper/preflight 통과 전에는 실주문 후보가 아닙니다.")
+    if not survived:
+        lines.append("실전 승격 후보는 아직 없습니다. WATCH는 paper 관찰까지만 의미가 있습니다.")
+    lines.append("")
+    for row in results[:limit]:
+        test = row.test_summary
+        full = row.full_summary
+        lines.append(
+            "- "
+            f"{row.decision} {row.symbol} {strategy_action_ko(row.action)} "
+            f"TP={row.take_profit_bps:.0f}/SL={row.stop_loss_bps:.0f}/H={row.max_hold_bars}봉 "
+            f"WF={row.positive_test_windows}/{row.selected_windows} "
+            f"테스트 n={test.count} 평균={test.avg_pnl_bps:+.2f}bps PF={test.profit_factor:.2f} "
+            f"전체 평균={full.avg_pnl_bps:+.2f}bps - {row.reason}"
+        )
+    return "\n".join(lines)
 
 
 def strategy_action_ko(action: str) -> str:
@@ -365,6 +504,167 @@ def strategy_action_ko(action: str) -> str:
         "range_long": "횡보 하단 롱",
         "range_short": "횡보 상단 숏",
     }.get(action, action)
+
+
+def _refined_candidate_rules(source_rows: list[MinedStrategyResult]) -> list[CandidateRule]:
+    rules: list[CandidateRule] = []
+    seen = set()
+    for row in source_rows:
+        conditions = _refined_conditions(row.condition, row.action, row.side)
+        tp_values = _neighbor_values(row.take_profit_bps, minimum=10.0, multipliers=(0.75, 1.0, 1.25, 1.5))
+        sl_values = _neighbor_values(row.stop_loss_bps, minimum=4.0, multipliers=(0.75, 1.0, 1.25))
+        hold_values = sorted(
+            {
+                max(2, int(round(row.max_hold_bars * multiplier)))
+                for multiplier in (0.5, 0.75, 1.0, 1.25, 1.5)
+            }
+        )
+        for condition_index, condition in enumerate(conditions):
+            for tp in tp_values:
+                for sl in sl_values:
+                    if sl >= tp:
+                        continue
+                    for hold in hold_values:
+                        key = (
+                            row.action,
+                            row.side,
+                            json.dumps(asdict(condition), sort_keys=True),
+                            round(tp, 3),
+                            round(sl, 3),
+                            hold,
+                        )
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        rules.append(
+                            CandidateRule(
+                                rule_id=(
+                                    f"refine_{row.rule_id}_c{condition_index}_"
+                                    f"tp{tp:.1f}_sl{sl:.1f}_h{hold}"
+                                ),
+                                action=row.action,
+                                side=row.side,
+                                condition=condition,
+                                take_profit_bps=tp,
+                                stop_loss_bps=sl,
+                                max_hold_bars=hold,
+                            )
+                        )
+    return rules
+
+
+def _neighbor_values(base: float, *, minimum: float, multipliers: tuple[float, ...]) -> list[float]:
+    values = {round(max(minimum, base * multiplier), 3) for multiplier in multipliers}
+    return sorted(values)
+
+
+def _refined_conditions(
+    condition: RuleCondition,
+    action: str,
+    side: SignalSide,
+) -> list[RuleCondition]:
+    variants = [condition]
+    if condition.min_volume_ratio is not None:
+        variants.extend(
+            [
+                replace(condition, min_volume_ratio=round(condition.min_volume_ratio + 0.2, 3)),
+                replace(condition, min_volume_ratio=round(condition.min_volume_ratio + 0.4, 3)),
+            ]
+        )
+    if condition.max_atr_bps is not None:
+        variants.extend(
+            [
+                replace(condition, max_atr_bps=round(condition.max_atr_bps * 0.85, 3)),
+                replace(condition, max_atr_bps=round(condition.max_atr_bps * 0.70, 3)),
+            ]
+        )
+    if action.startswith(("trend", "breakout")):
+        variants.extend(_trend_breakout_condition_variants(condition, side))
+    elif action.startswith("range"):
+        variants.extend(_range_condition_variants(condition, side))
+
+    seen = set()
+    output: list[RuleCondition] = []
+    for variant in variants:
+        key = json.dumps(asdict(variant), sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(variant)
+    return output
+
+
+def _trend_breakout_condition_variants(condition: RuleCondition, side: SignalSide) -> list[RuleCondition]:
+    variants: list[RuleCondition] = []
+    if side == "long":
+        if condition.min_trend_4h_bps is not None:
+            variants.append(replace(condition, min_trend_4h_bps=condition.min_trend_4h_bps + 10.0))
+            variants.append(replace(condition, min_trend_4h_bps=condition.min_trend_4h_bps + 25.0))
+        if condition.min_trend_24h_bps is not None:
+            variants.append(replace(condition, min_trend_24h_bps=condition.min_trend_24h_bps + 20.0))
+            variants.append(replace(condition, min_trend_24h_bps=condition.min_trend_24h_bps + 40.0))
+        if condition.min_ema_gap_bps is not None:
+            variants.append(replace(condition, min_ema_gap_bps=condition.min_ema_gap_bps + 5.0))
+        if condition.min_ema_slope_bps is not None:
+            variants.append(replace(condition, min_ema_slope_bps=condition.min_ema_slope_bps + 1.0))
+        if condition.min_bollinger_position is not None:
+            variants.append(
+                replace(
+                    condition,
+                    min_bollinger_position=min(0.98, condition.min_bollinger_position + 0.05),
+                )
+            )
+        return variants
+
+    if condition.max_trend_4h_bps is not None:
+        variants.append(replace(condition, max_trend_4h_bps=condition.max_trend_4h_bps - 10.0))
+        variants.append(replace(condition, max_trend_4h_bps=condition.max_trend_4h_bps - 25.0))
+    if condition.max_trend_24h_bps is not None:
+        variants.append(replace(condition, max_trend_24h_bps=condition.max_trend_24h_bps - 20.0))
+        variants.append(replace(condition, max_trend_24h_bps=condition.max_trend_24h_bps - 40.0))
+    if condition.max_ema_gap_bps is not None:
+        variants.append(replace(condition, max_ema_gap_bps=condition.max_ema_gap_bps - 5.0))
+    if condition.max_ema_slope_bps is not None:
+        variants.append(replace(condition, max_ema_slope_bps=condition.max_ema_slope_bps - 1.0))
+    if condition.max_bollinger_position is not None:
+        variants.append(
+            replace(
+                condition,
+                max_bollinger_position=max(0.02, condition.max_bollinger_position - 0.05),
+            )
+        )
+    return variants
+
+
+def _range_condition_variants(condition: RuleCondition, side: SignalSide) -> list[RuleCondition]:
+    variants: list[RuleCondition] = []
+    if condition.min_ema_gap_bps is not None and condition.max_ema_gap_bps is not None:
+        bound = max(abs(condition.min_ema_gap_bps), abs(condition.max_ema_gap_bps)) * 0.75
+        variants.append(replace(condition, min_ema_gap_bps=-bound, max_ema_gap_bps=bound))
+    if condition.min_trend_4h_bps is not None and condition.max_trend_4h_bps is not None:
+        bound = max(abs(condition.min_trend_4h_bps), abs(condition.max_trend_4h_bps)) * 0.75
+        variants.append(replace(condition, min_trend_4h_bps=-bound, max_trend_4h_bps=bound))
+    if side == "long":
+        if condition.max_rsi14 is not None:
+            variants.append(replace(condition, max_rsi14=max(5.0, condition.max_rsi14 - 5.0)))
+        if condition.max_bollinger_position is not None:
+            variants.append(
+                replace(
+                    condition,
+                    max_bollinger_position=max(0.02, condition.max_bollinger_position - 0.05),
+                )
+            )
+    else:
+        if condition.min_rsi14 is not None:
+            variants.append(replace(condition, min_rsi14=min(95.0, condition.min_rsi14 + 5.0)))
+        if condition.min_bollinger_position is not None:
+            variants.append(
+                replace(
+                    condition,
+                    min_bollinger_position=min(0.98, condition.min_bollinger_position + 0.05),
+                )
+            )
+    return variants
 
 
 def _evaluate_candidate_walk_forward(
@@ -775,6 +1075,26 @@ def _dedupe_similar_results(results: list[MinedStrategyResult]) -> list[MinedStr
         seen.add(key)
         output.append(row)
     return output
+
+
+def _diversify_refined_results(
+    results: list[MinedStrategyResult],
+    *,
+    top_limit: int,
+) -> list[MinedStrategyResult]:
+    if top_limit <= 0:
+        return []
+    per_family_limit = max(3, min(8, round(top_limit / 4)))
+    counts: dict[tuple[str, str, SignalSide], int] = {}
+    selected: list[MinedStrategyResult] = []
+    for row in results:
+        key = (row.symbol, row.action, row.side)
+        if counts.get(key, 0) < per_family_limit:
+            selected.append(row)
+            counts[key] = counts.get(key, 0) + 1
+        if len(selected) >= top_limit:
+            return selected
+    return selected
 
 
 def _target_price(entry_price: float, side: str, bps: float) -> float:

@@ -26,6 +26,7 @@ class DashboardTests(unittest.TestCase):
                 "paper_summary": "<div>paper</div>",
                 "strategy_summary": "<div>strategy</div>",
                 "probe_summary": "<div>probe</div>",
+                "refine_summary": "<div>refine</div>",
                 "active_paper_rows": "",
                 "paper_rows": "",
                 "mode_summary": "",
@@ -35,6 +36,7 @@ class DashboardTests(unittest.TestCase):
                 "cycle_rows": "",
                 "strategy_cycle_rows": "",
                 "strategy_rows": "",
+                "refine_rows": "",
                 "probe_rows": "",
                 "market_regime_rows": "",
                 "market_context_rows": "",
@@ -51,6 +53,7 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('data-tab="market"', html)
         self.assertIn('data-tab="strategies"', html)
         self.assertIn('id="active-paper-rows"', html)
+        self.assertIn('id="refine-rows"', html)
         self.assertIn("현재가", html)
         self.assertIn("미실현", html)
         self.assertIn("실현손익", html)

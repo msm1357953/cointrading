@@ -51,6 +51,8 @@ python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 python -m cointrading.cli fee-status
 python -m cointrading.cli vibe-probe --symbols BTCUSDC ETHUSDC --interval 15m --limit 1000
 python -m cointrading.cli vibe-probe-notify
+python -m cointrading.cli strategy-mine --symbols BTCUSDC ETHUSDC --interval 1h --start 2025-01-01
+python -m cointrading.cli strategy-refine --source data/strategy_mine_latest.json
 python -m cointrading.cli telegram-me
 python -m cointrading.cli telegram-updates --limit 5
 python -m cointrading.cli telegram-poll --once --timeout 10

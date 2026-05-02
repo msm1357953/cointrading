@@ -21,7 +21,9 @@ from cointrading.scalping import scalp_report_rows_text
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms, now_ms
 from cointrading.strategy_miner import (
     default_strategy_mine_report_path,
+    default_strategy_refine_report_path,
     load_strategy_mine_report,
+    load_strategy_refine_report,
     strategy_action_ko,
 )
 from cointrading.strategy_notify import (
@@ -166,6 +168,7 @@ def _snapshot(
     probe_report = load_probe_report(default_probe_report_path()) or {}
     meta_report = load_meta_report(default_meta_report_path()) or {}
     mine_report = load_strategy_mine_report(default_strategy_mine_report_path()) or {}
+    refine_report = load_strategy_refine_report(default_strategy_refine_report_path()) or {}
     active_unrealized = _active_unrealized_total(
         active_scalp_cycles,
         active_strategy_cycles,
@@ -205,6 +208,7 @@ def _snapshot(
         "strategy_summary": _strategy_summary_html(latest_strategy_batch),
         "meta_summary": _meta_summary_html(meta_report),
         "mine_summary": _mine_summary_html(mine_report),
+        "refine_summary": _refine_summary_html(refine_report),
         "probe_summary": _probe_summary_html(probe_report),
         "report": report,
         "signal_rows": _signal_rows_html(rows[-limit:]) or _empty_table_row(5, "최근 신호 없음"),
@@ -214,6 +218,7 @@ def _snapshot(
         "strategy_rows": _strategy_rows_html(strategy_rows) or _empty_table_row(16, "전략 평가 결과 없음"),
         "meta_rows": _meta_rows_html(meta_report) or _empty_table_row(13, "메타전략 백테스트 결과 없음"),
         "meta_action_rows": _meta_action_rows_html(meta_report) or _empty_table_row(7, "메타전략 행동별 결과 없음"),
+        "refine_rows": _mine_rows_html(refine_report) or _empty_table_row(12, "전략 정제 결과 없음"),
         "mine_rows": _mine_rows_html(mine_report) or _empty_table_row(12, "전략 발굴 결과 없음"),
         "probe_rows": _probe_rows_html(probe_report) or _empty_table_row(13, "리서치 프로브 결과 없음"),
         "market_regime_rows": _market_regime_rows_html(market_regime_rows) or _empty_table_row(10, "장세 라우터 기록 없음"),
@@ -566,6 +571,36 @@ def _mine_summary_html(report: dict) -> str:
     )
 
 
+def _refine_summary_html(report: dict) -> str:
+    rows = list(report.get("results", []) or [])
+    if not rows:
+        return _metric_html("전략 2차 정제", "결과 없음", "warn")
+    survived = [row for row in rows if str(row.get("decision")) == "SURVIVED"]
+    watch = [row for row in rows if str(row.get("decision")) == "WATCH"]
+    generated_ms = int(report.get("generated_ms", 0) or 0)
+    source_count = int(report.get("source_count", 0) or 0)
+    ranked = sorted(
+        rows,
+        key=lambda row: float((row.get("test_summary") or {}).get("avg_pnl_bps", 0.0) or 0.0),
+        reverse=True,
+    )
+    best = ranked[0]
+    best_summary = best.get("test_summary") or {}
+    best_text = (
+        f"{best.get('symbol', '')} {strategy_action_ko(str(best.get('action', '')))} "
+        f"{float(best_summary.get('avg_pnl_bps', 0.0) or 0.0):+.2f}bps"
+    )
+    return "\n".join(
+        [
+            _metric_html("최근 실행", kst_from_ms(generated_ms) if generated_ms else "없음", "muted"),
+            _metric_html("정제 대상", str(source_count), "muted"),
+            _metric_html("생존", str(len(survived)), "good" if survived else "warn"),
+            _metric_html("관찰", str(len(watch)), "warn" if watch else "muted"),
+            _metric_html("상위 정제", best_text, "good" if survived else "warn"),
+        ]
+    )
+
+
 def _probe_summary_html(report: dict) -> str:
     rows = list(report.get("results", []) or [])
     if not rows:
@@ -880,6 +915,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     strategy_rows = snapshot["strategy_rows"] or _empty_table_row(16, "전략 평가 결과 없음")
     meta_rows = snapshot.get("meta_rows", "") or _empty_table_row(13, "메타전략 백테스트 결과 없음")
     meta_action_rows = snapshot.get("meta_action_rows", "") or _empty_table_row(7, "메타전략 행동별 결과 없음")
+    refine_rows = snapshot.get("refine_rows", "") or _empty_table_row(12, "전략 정제 결과 없음")
     mine_rows = snapshot.get("mine_rows", "") or _empty_table_row(12, "전략 발굴 결과 없음")
     market_regime_rows = snapshot["market_regime_rows"] or _empty_table_row(10, "장세 라우터 기록 없음")
     market_context_rows = snapshot.get("market_context_rows", "") or _empty_table_row(8, "시장상황 기록 없음")
@@ -1132,6 +1168,15 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       <h2>상황판단형 메타전략</h2>
       <div id="meta-summary" class="metric-grid">{snapshot.get("meta_summary", "")}</div>
       <p class="muted">실주문 없음. 장기 Binance 공개 캔들로 상승/하락/횡보/돌파/패닉을 판단하고, 그 시점에 하나의 행동만 선택한 결과입니다.</p>
+      <h3>2차 정제 후보</h3>
+      <div id="refine-summary" class="metric-grid">{snapshot.get("refine_summary", "")}</div>
+      <p class="muted">1차 WATCH 후보만 대상으로 TP/SL/보유시간/필터를 주변값으로 다시 흔든 결과입니다. 생존 후보가 없으면 실전 승격이 아니라 paper 관찰 대상입니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>판정</th><th>심볼</th><th>행동</th><th>TP</th><th>SL</th><th>보유봉</th><th>WF 양수</th><th>테스트 n</th><th>테스트 평균bps</th><th>테스트 PF</th><th>전체 평균bps</th><th>이유</th></tr></thead>
+          <tbody id="refine-rows">{refine_rows}</tbody>
+        </table>
+      </div>
       <h3>데이터 기반 전략 발굴</h3>
       <div id="mine-summary" class="metric-grid">{snapshot.get("mine_summary", "")}</div>
       <div class="table-wrap">
@@ -1245,6 +1290,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("strategy-summary").innerHTML = data.strategy_summary;
       document.getElementById("strategy-summary-tab").innerHTML = data.strategy_summary;
       document.getElementById("meta-summary").innerHTML = data.meta_summary;
+      document.getElementById("refine-summary").innerHTML = data.refine_summary;
       document.getElementById("mine-summary").innerHTML = data.mine_summary;
       document.getElementById("probe-summary").innerHTML = data.probe_summary;
       document.getElementById("risk-state").textContent = data.risk_state;
@@ -1254,6 +1300,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("cycle-rows").innerHTML = data.cycle_rows;
       document.getElementById("strategy-cycle-rows").innerHTML = data.strategy_cycle_rows;
       document.getElementById("strategy-rows").innerHTML = data.strategy_rows;
+      document.getElementById("refine-rows").innerHTML = data.refine_rows;
       document.getElementById("mine-rows").innerHTML = data.mine_rows;
       document.getElementById("meta-rows").innerHTML = data.meta_rows;
       document.getElementById("meta-action-rows").innerHTML = data.meta_action_rows;
