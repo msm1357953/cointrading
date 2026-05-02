@@ -364,6 +364,7 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         default=default_refined_entry_notify_state_path(),
     )
+    refine_entry_notify_parser.add_argument("--watch-periodic-minutes", type=int, default=360)
     refine_entry_notify_parser.add_argument("--force", action="store_true")
     refine_entry_notify_parser.add_argument("--no-send", action="store_true")
 
@@ -557,6 +558,7 @@ def main(argv: list[str] | None = None) -> None:
             args.limit,
             args.output,
             args.state_path,
+            args.watch_periodic_minutes,
             args.force,
             args.no_send,
         )
@@ -1401,6 +1403,7 @@ def refine_entry_notify(
     limit: int,
     output: Path,
     state_path: Path,
+    watch_periodic_minutes: int,
     force: bool,
     no_send: bool,
 ) -> None:
@@ -1420,22 +1423,24 @@ def refine_entry_notify(
         candidates,
         state,
         force=force,
+        watch_periodic_minutes=watch_periodic_minutes,
     )
     text = refined_entry_text(ready or candidates, warnings=warnings, limit=min(limit, 8))
+    is_watch = bool(ready) and all(candidate.decision == "WAIT" for candidate in ready)
     if not should_send:
         print(f"refine-entry-notify: skipped - {reason}")
         return
     if no_send:
         print("refine-entry-notify: print only")
         print(text)
-        apply_refined_entry_notification_state(state, signature=signature).save(state_path)
+        apply_refined_entry_notification_state(state, signature=signature, watch=is_watch).save(state_path)
         return
     try:
         TelegramClient(TelegramConfig.from_env()).send_message(_telegram_safe_text(text))
     except Exception as exc:
         print(f"refine-entry-notify: failed - {exc}")
         return
-    apply_refined_entry_notification_state(state, signature=signature).save(state_path)
+    apply_refined_entry_notification_state(state, signature=signature, watch=is_watch).save(state_path)
     print("refine-entry-notify: sent")
 
 

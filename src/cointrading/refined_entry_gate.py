@@ -61,6 +61,8 @@ class RefinedEntryCandidate:
 class RefinedEntryNotifyState:
     last_signature: str = ""
     last_sent_ms: int = 0
+    last_watch_signature: str = ""
+    last_watch_sent_ms: int = 0
 
     @classmethod
     def load(cls, path: Path) -> "RefinedEntryNotifyState":
@@ -70,6 +72,8 @@ class RefinedEntryNotifyState:
         return cls(
             last_signature=str(payload.get("last_signature", "")),
             last_sent_ms=int(payload.get("last_sent_ms", 0) or 0),
+            last_watch_signature=str(payload.get("last_watch_signature", "")),
+            last_watch_sent_ms=int(payload.get("last_watch_sent_ms", 0) or 0),
         )
 
     def save(self, path: Path) -> None:
@@ -182,6 +186,11 @@ def refined_entry_text(
             f"과거승률={best.test_win_rate:.1%} 평균={best.test_avg_pnl_bps:+.2f}bps"
         )
         lines.append("주의: 이 단계도 주문 실행이 아닙니다. live-supervisor/preflight/live flag가 따로 통과해야 합니다.")
+    elif wait:
+        lines.append(
+            "관찰: 아래 후보들은 손익비 기준은 통과했지만 현재 feature가 아직 맞지 않습니다. "
+            "진입 신호가 아닙니다."
+        )
     else:
         lines.append("현재 닫힌 봉 기준으로 바로 진입할 정제후보는 없습니다.")
     warnings = list(warnings)
@@ -220,6 +229,10 @@ def ready_refined_entry_candidates(candidates: Iterable[RefinedEntryCandidate]) 
     return [candidate for candidate in candidates if candidate.decision == ENTRY_READY]
 
 
+def watch_refined_entry_candidates(candidates: Iterable[RefinedEntryCandidate]) -> list[RefinedEntryCandidate]:
+    return [candidate for candidate in candidates if candidate.decision == ENTRY_WAIT]
+
+
 def refined_entry_signature(candidates: Iterable[RefinedEntryCandidate]) -> str:
     parts = [
         (
@@ -236,29 +249,74 @@ def refined_entry_signature(candidates: Iterable[RefinedEntryCandidate]) -> str:
     return json.dumps(parts, ensure_ascii=False, sort_keys=True)
 
 
+def refined_entry_watch_signature(candidates: Iterable[RefinedEntryCandidate]) -> str:
+    parts = [
+        (
+            candidate.symbol,
+            candidate.action,
+            candidate.side,
+            round(candidate.take_profit_bps, 3),
+            round(candidate.stop_loss_bps, 3),
+            candidate.max_hold_bars,
+        )
+        for candidate in watch_refined_entry_candidates(candidates)
+    ]
+    return json.dumps(parts, ensure_ascii=False, sort_keys=True)
+
+
 def refined_entry_notification_decision(
     candidates: Iterable[RefinedEntryCandidate],
     state: RefinedEntryNotifyState,
     *,
     force: bool = False,
+    watch_periodic_minutes: int = 360,
 ) -> tuple[bool, str, str, list[RefinedEntryCandidate]]:
-    ready = ready_refined_entry_candidates(candidates)
+    candidate_list = list(candidates)
+    ready = ready_refined_entry_candidates(candidate_list)
     signature = refined_entry_signature(ready)
-    if not ready:
+    if ready:
+        if force:
+            return True, "강제 전송", signature, ready
+        if signature != state.last_signature:
+            return True, "현재장 정제 진입후보 변화", signature, ready
+        return False, "변화 없음", signature, ready
+
+    watch = watch_refined_entry_candidates(candidate_list)
+    watch_signature = refined_entry_watch_signature(watch)
+    if not watch:
         return False, "현재 진입후보 없음", signature, []
     if force:
-        return True, "강제 전송", signature, ready
-    if signature != state.last_signature:
-        return True, "현재장 정제 진입후보 변화", signature, ready
-    return False, "변화 없음", signature, ready
+        return True, "강제 관찰후보 전송", watch_signature, watch
+    interval_ms = max(watch_periodic_minutes, 0) * 60_000
+    periodic_due = (
+        interval_ms > 0
+        and (state.last_watch_sent_ms <= 0 or now_ms() - state.last_watch_sent_ms >= interval_ms)
+    )
+    if periodic_due:
+        return True, "정제 관찰후보 주기 보고", watch_signature, watch
+    return False, "현재 진입후보 없음; 관찰후보 주기 미도래", watch_signature, []
 
 
 def apply_refined_entry_notification_state(
     state: RefinedEntryNotifyState,
     *,
     signature: str,
+    watch: bool = False,
 ) -> RefinedEntryNotifyState:
-    return RefinedEntryNotifyState(last_signature=signature, last_sent_ms=now_ms())
+    ts = now_ms()
+    if watch:
+        return RefinedEntryNotifyState(
+            last_signature=state.last_signature,
+            last_sent_ms=state.last_sent_ms,
+            last_watch_signature=signature,
+            last_watch_sent_ms=ts,
+        )
+    return RefinedEntryNotifyState(
+        last_signature=signature,
+        last_sent_ms=ts,
+        last_watch_signature=state.last_watch_signature,
+        last_watch_sent_ms=state.last_watch_sent_ms,
+    )
 
 
 def _candidate_from_result(
