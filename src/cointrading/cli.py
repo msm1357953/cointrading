@@ -15,6 +15,12 @@ from cointrading.dashboard import run_dashboard
 from cointrading.execution import build_post_only_intent, place_post_only_maker
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
 from cointrading.exchange_filters import SymbolFilters
+from cointrading.historical_data import (
+    default_history_dir,
+    default_history_end_date,
+    load_binance_vision_klines,
+    parse_yyyy_mm_dd,
+)
 from cointrading.llm_report import (
     GeminiReportClient,
     LLMReportState,
@@ -33,6 +39,16 @@ from cointrading.live_supervisor_notify import (
 )
 from cointrading.market_context import collect_market_context, market_context_rows_text
 from cointrading.market_regime import evaluate_market_regime
+from cointrading.meta_strategy import (
+    MetaNotifyState,
+    apply_meta_notification_state,
+    default_meta_notify_state_path,
+    default_meta_report_path,
+    meta_notification_decision,
+    meta_results_text,
+    run_meta_backtest,
+    write_meta_report,
+)
 from cointrading.models import Kline
 from cointrading.research_probe import (
     ProbeNotifyState,
@@ -261,6 +277,28 @@ def main(argv: list[str] | None = None) -> None:
     vibe_probe_notify_parser.add_argument("--force", action="store_true")
     vibe_probe_notify_parser.add_argument("--no-send", action="store_true")
 
+    meta_backtest_parser = subparsers.add_parser("meta-backtest")
+    meta_backtest_parser.add_argument("--symbols", nargs="+")
+    meta_backtest_parser.add_argument("--interval", default="15m")
+    meta_backtest_parser.add_argument("--start", default="2025-01-01")
+    meta_backtest_parser.add_argument("--end")
+    meta_backtest_parser.add_argument("--history-dir", type=Path, default=default_history_dir())
+    meta_backtest_parser.add_argument("--notional", type=float)
+    meta_backtest_parser.add_argument("--output", type=Path, default=default_meta_report_path())
+
+    meta_notify_parser = subparsers.add_parser("meta-backtest-notify")
+    meta_notify_parser.add_argument("--symbols", nargs="+")
+    meta_notify_parser.add_argument("--interval", default="15m")
+    meta_notify_parser.add_argument("--start", default="2025-01-01")
+    meta_notify_parser.add_argument("--end")
+    meta_notify_parser.add_argument("--history-dir", type=Path, default=default_history_dir())
+    meta_notify_parser.add_argument("--notional", type=float)
+    meta_notify_parser.add_argument("--output", type=Path, default=default_meta_report_path())
+    meta_notify_parser.add_argument("--state-path", type=Path, default=default_meta_notify_state_path())
+    meta_notify_parser.add_argument("--periodic-minutes", type=int, default=720)
+    meta_notify_parser.add_argument("--force", action="store_true")
+    meta_notify_parser.add_argument("--no-send", action="store_true")
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -377,6 +415,30 @@ def main(argv: list[str] | None = None) -> None:
             _active_scalp_symbols(args.symbols),
             args.interval,
             args.limit,
+            args.notional,
+            args.output,
+            args.state_path,
+            args.periodic_minutes,
+            args.force,
+            args.no_send,
+        )
+    elif args.command == "meta-backtest":
+        meta_backtest(
+            _active_scalp_symbols(args.symbols),
+            args.interval,
+            args.start,
+            args.end,
+            args.history_dir,
+            args.notional,
+            args.output,
+        )
+    elif args.command == "meta-backtest-notify":
+        meta_backtest_notify(
+            _active_scalp_symbols(args.symbols),
+            args.interval,
+            args.start,
+            args.end,
+            args.history_dir,
             args.notional,
             args.output,
             args.state_path,
@@ -965,6 +1027,126 @@ def vibe_probe_notify(
         return
     apply_probe_notification_state(state, signature=signature).save(state_path)
     print("vibe-probe-notify: sent")
+
+
+def meta_backtest(
+    symbols: list[str],
+    interval: str,
+    start: str,
+    end: str | None,
+    history_dir: Path,
+    notional: float | None,
+    output: Path,
+) -> None:
+    results = _run_meta_backtests(
+        symbols=symbols,
+        interval=interval,
+        start=start,
+        end=end,
+        history_dir=history_dir,
+        notional=notional,
+    )
+    end_date = parse_yyyy_mm_dd(end) if end else default_history_end_date()
+    write_meta_report(
+        output,
+        results=results,
+        symbols=symbols,
+        interval=interval,
+        start_date=str(parse_yyyy_mm_dd(start)),
+        end_date=str(end_date),
+    )
+    print(meta_results_text(results))
+    print(f"\nreport: {output}")
+
+
+def meta_backtest_notify(
+    symbols: list[str],
+    interval: str,
+    start: str,
+    end: str | None,
+    history_dir: Path,
+    notional: float | None,
+    output: Path,
+    state_path: Path,
+    periodic_minutes: int,
+    force: bool,
+    no_send: bool,
+) -> None:
+    results = _run_meta_backtests(
+        symbols=symbols,
+        interval=interval,
+        start=start,
+        end=end,
+        history_dir=history_dir,
+        notional=notional,
+    )
+    end_date = parse_yyyy_mm_dd(end) if end else default_history_end_date()
+    write_meta_report(
+        output,
+        results=results,
+        symbols=symbols,
+        interval=interval,
+        start_date=str(parse_yyyy_mm_dd(start)),
+        end_date=str(end_date),
+    )
+    state = MetaNotifyState.load(state_path)
+    should_send, reason, signature = meta_notification_decision(
+        results,
+        state,
+        periodic_minutes=periodic_minutes,
+        force=force,
+    )
+    text = "\n".join(
+        [
+            "자동 메타전략 백테스트",
+            f"사유: {reason}",
+            meta_results_text(results, limit=6),
+        ]
+    )
+    print(text)
+    if not should_send:
+        print("meta-backtest-notify: skipped")
+        return
+    if no_send:
+        print("meta-backtest-notify: print only")
+        apply_meta_notification_state(state, signature=signature).save(state_path)
+        return
+    try:
+        TelegramClient(TelegramConfig.from_env()).send_message(_telegram_safe_text(text))
+    except Exception as exc:
+        print(f"meta-backtest-notify: failed - {exc}")
+        return
+    apply_meta_notification_state(state, signature=signature).save(state_path)
+    print("meta-backtest-notify: sent")
+
+
+def _run_meta_backtests(
+    *,
+    symbols: list[str],
+    interval: str,
+    start: str,
+    end: str | None,
+    history_dir: Path,
+    notional: float | None,
+):
+    config = TradingConfig.from_env()
+    end_date = parse_yyyy_mm_dd(end) if end else default_history_end_date()
+    results = []
+    for symbol in symbols:
+        history = load_binance_vision_klines(
+            symbol=symbol,
+            interval=interval,
+            start_date=parse_yyyy_mm_dd(start),
+            end_date=end_date,
+            history_dir=history_dir,
+        )
+        result = run_meta_backtest(
+            history=history,
+            config=config,
+            notional=notional,
+        )
+        results.append(result)
+    return results
 
 
 def llm_report(

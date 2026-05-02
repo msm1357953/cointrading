@@ -1,0 +1,11 @@
+[Unit]
+Description=Run meta strategy research every 6 hours
+
+[Timer]
+OnBootSec=600
+OnUnitInactiveSec=21600
+AccuracySec=300
+Unit=cointrading-meta-backtest-notify.service
+
+[Install]
+WantedBy=timers.target

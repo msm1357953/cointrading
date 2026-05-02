@@ -9,4 +9,5 @@ data/*.csv
 data/*.json
 data/*.sqlite
 data/*.sqlite-*
+data/binance_history/
 logs/
