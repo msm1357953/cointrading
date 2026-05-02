@@ -76,10 +76,11 @@
 - 2026-05-02: Macro strategy exits now support adaptive profiles. `trend_follow`, `range_reversion`, and `breakout_reduced` still have conservative base TP/SL/hold settings, but new cycles can tighten or extend targets based on current ATR and trend strength. This can be disabled with `COINTRADING_STRATEGY_ADAPTIVE_EXITS_ENABLED=false`.
 - 2026-05-02: Adaptive exit safety gates were tightened after review. Live macro strategy entries now require exact observed `strategy_cycles` paper approval for the actual TP/SL/hold profile that will be submitted, stale macro rows are ignored when choosing adaptive exits, broad bad observed paper results can veto untested adaptive profiles, and live-supervisor reports now show the actual order plan separately from the candidate row.
 - 2026-05-02: Dry-run order submission was hardened. Scalp and macro strategy dry-run paths now synthesize local dry-run order responses without calling the exchange client's `new_order`, so a client/config mismatch cannot leak dry-run paper orders to Binance.
+- 2026-05-02: Vibe-Trading was tested as a research/backtest reference, not a live execution engine. A repeatable local `vibe-probe` command was added to run a Vibe-style closed-bar probe over Binance public USDC futures candles for trend-following, range-reversion, and breakout strategies with taker fee/slippage, TP/SL/max-hold exits, payoff, profit factor, drawdown, and approval/block decisions.
 
 ## Next Work Packets
 
-1. Run the included backtest on downloaded BTCUSDT/ETHUSDT klines.
+1. Run `python -m cointrading.cli vibe-probe --symbols BTCUSDC ETHUSDC SOLUSDC XRPUSDC DOGEUSDC --interval 15m --limit 1000` regularly and only promote strategies whose probe result and paper lifecycle result are both positive.
 2. Run `live-preflight --notional <tiny size> --symbols <symbol>` on the VM immediately before any real-money test.
 3. Add a one-shot/manual live enable path that caps notional to the chosen tiny size and automatically disables live mode after the first closed cycle.
 4. Continue validating live exchange fill ingestion and open-order reconciliation on tiny one-shot tests.

@@ -49,6 +49,7 @@ python -m cointrading.cli maker-once --symbol BTCUSDC
 python -m cointrading.cli scalp-engine-step
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 python -m cointrading.cli fee-status
+python -m cointrading.cli vibe-probe --symbols BTCUSDC ETHUSDC --interval 15m --limit 1000
 python -m cointrading.cli telegram-me
 python -m cointrading.cli telegram-updates --limit 5
 python -m cointrading.cli telegram-poll --once --timeout 10

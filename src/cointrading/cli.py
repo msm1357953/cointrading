@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import replace
 import math
 from pathlib import Path
 import time
@@ -33,6 +34,12 @@ from cointrading.live_supervisor_notify import (
 from cointrading.market_context import collect_market_context, market_context_rows_text
 from cointrading.market_regime import evaluate_market_regime
 from cointrading.models import Kline
+from cointrading.research_probe import (
+    default_probe_report_path,
+    run_vibe_style_probe,
+    vibe_probe_text,
+    write_probe_report,
+)
 from cointrading.risk_state import evaluate_runtime_risk
 from cointrading.scalp_lifecycle import manage_cycle, start_cycle_from_signal
 from cointrading.scalping import (
@@ -228,6 +235,13 @@ def main(argv: list[str] | None = None) -> None:
     trade_event_notify_parser.add_argument("--force-summary", action="store_true")
     trade_event_notify_parser.add_argument("--no-send", action="store_true")
 
+    vibe_probe_parser = subparsers.add_parser("vibe-probe")
+    vibe_probe_parser.add_argument("--symbols", nargs="+")
+    vibe_probe_parser.add_argument("--interval", default="15m")
+    vibe_probe_parser.add_argument("--limit", type=int, default=1000)
+    vibe_probe_parser.add_argument("--notional", type=float)
+    vibe_probe_parser.add_argument("--output", type=Path, default=default_probe_report_path())
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -330,6 +344,14 @@ def main(argv: list[str] | None = None) -> None:
             args.event_limit,
             args.force_summary,
             args.no_send,
+        )
+    elif args.command == "vibe-probe":
+        vibe_probe(
+            _active_scalp_symbols(args.symbols),
+            args.interval,
+            args.limit,
+            args.notional,
+            args.output,
         )
     elif args.command == "telegram-me":
         telegram_me()
@@ -821,6 +843,36 @@ def trade_event_notify(
         summary_sent=include_summary,
     ).save(state_path)
     print("trade-event-notify: sent")
+
+
+def vibe_probe(
+    symbols: list[str],
+    interval: str,
+    limit: int,
+    notional: float | None,
+    output: Path,
+) -> None:
+    config = TradingConfig.from_env()
+    market_config = replace(config, testnet=False)
+    client = BinanceUSDMClient(config=market_config)
+    results, trades = run_vibe_style_probe(
+        symbols=symbols,
+        interval=interval,
+        limit=limit,
+        notional=notional,
+        config=config,
+        client=client,
+    )
+    write_probe_report(
+        output,
+        results=results,
+        trades=trades,
+        symbols=symbols,
+        interval=interval,
+        limit=limit,
+    )
+    print(vibe_probe_text(results))
+    print(f"\nreport: {output}")
 
 
 def llm_report(
