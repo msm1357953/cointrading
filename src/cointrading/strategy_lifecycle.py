@@ -56,6 +56,8 @@ class StrategyPlan:
     max_hold_seconds: int
     maker_one_way_bps: float
     taker_one_way_bps: float
+    exit_profile: str
+    exit_reason: str
 
 
 def start_strategy_cycle_from_setup(
@@ -125,7 +127,14 @@ def start_strategy_cycle_from_setup(
         return _blocked_order_attempt(store, setup, symbol, gate.reason, config, ts)
 
     mid = (bid + ask) / 2.0
-    plan = strategy_plan_from_setup(setup, config, symbol=symbol, bid=bid, ask=ask)
+    plan = strategy_plan_from_setup(
+        setup,
+        config,
+        symbol=symbol,
+        bid=bid,
+        ask=ask,
+        macro_row=store.latest_market_regime(symbol),
+    )
     if plan is None:
         return StrategyLifecycleResult(setup.strategy, symbol, "blocked", "no strategy plan")
 
@@ -193,7 +202,7 @@ def start_strategy_cycle_from_setup(
         symbol=symbol,
         side=setup.side,
         status="ENTRY_SUBMITTED",
-        reason=f"entry submitted; {setup.reason}",
+        reason=f"entry submitted; {setup.reason}; exit profile {plan.exit_profile}: {plan.exit_reason}",
         entry_order_id=order_id,
         quantity=normalized_intent.quantity,
         entry_price=entry_price,
@@ -222,7 +231,11 @@ def start_strategy_cycle_from_setup(
         setup.strategy,
         symbol,
         "entry_submitted",
-        f"{plan.entry_order_type} entry={entry_price:.8f}",
+        (
+            f"{plan.entry_order_type} entry={entry_price:.8f} "
+            f"TP={plan.take_profit_bps:.1f} SL={plan.stop_loss_bps:.1f} "
+            f"H={plan.max_hold_seconds}s profile={plan.exit_profile}"
+        ),
         cycle_id,
     )
 
@@ -268,6 +281,7 @@ def strategy_plan_from_setup(
     symbol: str,
     bid: float,
     ask: float,
+    macro_row=None,
 ) -> StrategyPlan | None:
     if setup.side not in {"long", "short"}:
         return None
@@ -295,6 +309,15 @@ def strategy_plan_from_setup(
     else:
         return None
 
+    tp, sl, hold, profile, profile_reason = _adaptive_exit_profile(
+        setup.strategy,
+        config,
+        base_take_profit_bps=tp,
+        base_stop_loss_bps=sl,
+        base_max_hold_seconds=hold,
+        macro_row=macro_row,
+    )
+
     notional = min(config.strategy_order_notional, config.max_single_order_notional)
     entry_price = _strategy_entry_price(setup.side, entry_type, bid, ask, mid)
     return StrategyPlan(
@@ -310,6 +333,92 @@ def strategy_plan_from_setup(
         max_hold_seconds=hold,
         maker_one_way_bps=config.maker_fee_rate * 10_000.0,
         taker_one_way_bps=config.taker_fee_rate * 10_000.0,
+        exit_profile=profile,
+        exit_reason=profile_reason,
+    )
+
+
+def _adaptive_exit_profile(
+    strategy: str,
+    config: TradingConfig,
+    *,
+    base_take_profit_bps: float,
+    base_stop_loss_bps: float,
+    base_max_hold_seconds: int,
+    macro_row,
+) -> tuple[float, float, int, str, str]:
+    if not config.strategy_adaptive_exits_enabled:
+        return (
+            float(base_take_profit_bps),
+            float(base_stop_loss_bps),
+            int(base_max_hold_seconds),
+            "fixed",
+            "adaptive exits disabled",
+        )
+    if macro_row is None:
+        return (
+            float(base_take_profit_bps),
+            float(base_stop_loss_bps),
+            int(base_max_hold_seconds),
+            "base",
+            "macro data unavailable",
+        )
+
+    atr = max(0.0, _row_float(macro_row, "atr_bps"))
+    trend_1h = abs(_row_float(macro_row, "trend_1h_bps"))
+    trend_4h = abs(_row_float(macro_row, "trend_4h_bps"))
+    trend_strength = max(trend_1h, trend_4h * 0.5)
+    if atr <= 0 and trend_strength <= 0:
+        return (
+            float(base_take_profit_bps),
+            float(base_stop_loss_bps),
+            int(base_max_hold_seconds),
+            "base",
+            "macro volatility/trend unavailable",
+        )
+
+    if strategy == "trend_follow":
+        if atr >= 70.0 or trend_strength >= 70.0:
+            tp = _round_bps(_clamp(max(base_take_profit_bps, atr * 1.8, trend_strength * 1.2), base_take_profit_bps, 180.0))
+            sl = _round_bps(_clamp(max(base_stop_loss_bps, atr * 0.55), base_stop_loss_bps, 60.0))
+            hold = max(int(base_max_hold_seconds), 21_600)
+            return tp, sl, hold, "trend_runner", _profile_reason(atr, trend_strength)
+        if (0 < atr < 30.0) or trend_strength < 25.0:
+            tp = _round_bps(_clamp(min(base_take_profit_bps, max(45.0, atr * 2.0 if atr > 0 else 60.0)), 45.0, base_take_profit_bps))
+            sl = _round_bps(_clamp(min(base_stop_loss_bps, max(18.0, atr * 0.75 if atr > 0 else 25.0)), 18.0, base_stop_loss_bps))
+            hold = min(int(base_max_hold_seconds), 7_200)
+            return tp, sl, hold, "trend_tight", _profile_reason(atr, trend_strength)
+
+    if strategy == "range_reversion":
+        if 0 < atr < 20.0:
+            tp = _round_bps(min(base_take_profit_bps, 20.0))
+            sl = _round_bps(min(base_stop_loss_bps, 10.0))
+            hold = min(int(base_max_hold_seconds), 1_800)
+            return tp, sl, hold, "range_tight", _profile_reason(atr, trend_strength)
+        if atr >= 45.0:
+            tp = _round_bps(_clamp(max(base_take_profit_bps, atr * 0.8), base_take_profit_bps, 50.0))
+            sl = _round_bps(_clamp(max(base_stop_loss_bps, atr * 0.4), base_stop_loss_bps, 25.0))
+            hold = max(int(base_max_hold_seconds), 5_400)
+            return tp, sl, hold, "range_wide", _profile_reason(atr, trend_strength)
+
+    if strategy == "breakout_reduced":
+        if atr >= 120.0 or trend_strength >= 100.0:
+            tp = _round_bps(_clamp(max(base_take_profit_bps, atr * 1.6, trend_strength * 1.3), base_take_profit_bps, 240.0))
+            sl = _round_bps(_clamp(max(base_stop_loss_bps, atr * 0.55), base_stop_loss_bps, 80.0))
+            hold = max(int(base_max_hold_seconds), 10_800)
+            return tp, sl, hold, "breakout_runner", _profile_reason(atr, trend_strength)
+        if 0 < atr < 80.0:
+            tp = _round_bps(min(base_take_profit_bps, 90.0))
+            sl = _round_bps(min(base_stop_loss_bps, 35.0))
+            hold = min(int(base_max_hold_seconds), 5_400)
+            return tp, sl, hold, "breakout_quick", _profile_reason(atr, trend_strength)
+
+    return (
+        _round_bps(base_take_profit_bps),
+        _round_bps(base_stop_loss_bps),
+        int(base_max_hold_seconds),
+        "base",
+        _profile_reason(atr, trend_strength),
     )
 
 
@@ -758,6 +867,31 @@ def _strategy_entry_price(side: str, entry_type: str, bid: float, ask: float, mi
     if entry_type == "MARKET":
         return ask if side == "long" else bid
     return bid if side == "long" else ask
+
+
+def _row_float(row, key: str) -> float:
+    try:
+        keys = row.keys()
+    except AttributeError:
+        value = row.get(key, 0.0)
+    else:
+        value = row[key] if key in keys else 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _round_bps(value: float) -> float:
+    return round(float(value), 1)
+
+
+def _profile_reason(atr_bps: float, trend_strength_bps: float) -> str:
+    return f"ATR={atr_bps:.1f}bps trend={trend_strength_bps:.1f}bps"
 
 
 def _paper_entry_fill_price(cycle: sqlite3.Row, bid: float, ask: float, mid: float) -> float | None:

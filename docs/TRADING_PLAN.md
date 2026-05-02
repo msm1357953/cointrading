@@ -20,6 +20,11 @@ Start with a simple trend-following strategy:
 - Go long when fast moving average is above slow moving average.
 - Go short when fast moving average is below slow moving average.
 - Stay flat when volatility is too high or there is not enough data.
+- Do not use one fixed target forever. Macro strategy exits choose an exit profile at entry time:
+  - weak/quiet trend: shorter target, tighter stop, shorter hold
+  - normal regime: base TP/SL/hold
+  - strong trend or volatility expansion: runner profile with wider target and longer hold
+  - range strategy: smaller mean-reversion target in quiet ranges, wider target only when ATR supports it
 
 This is intentionally simple. The first goal is to validate data, costs, position sizing, and risk controls before trying clever alpha.
 

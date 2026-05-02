@@ -132,6 +132,7 @@ class TradingConfig:
     breakout_take_profit_bps: float = 120.0
     breakout_stop_loss_bps: float = 40.0
     breakout_max_hold_seconds: float = 7_200.0
+    strategy_adaptive_exits_enabled: bool = True
     simple_trade_gate_enabled: bool = True
     simple_trade_gate_apply_to_dry_run: bool = False
     simple_trade_gate_allowed_strategies: tuple[str, ...] = ("trend_follow",)
@@ -322,6 +323,10 @@ class TradingConfig:
             breakout_max_hold_seconds=_get_float(
                 "COINTRADING_BREAKOUT_MAX_HOLD_SECONDS",
                 cls.breakout_max_hold_seconds,
+            ),
+            strategy_adaptive_exits_enabled=_get_bool(
+                "COINTRADING_STRATEGY_ADAPTIVE_EXITS_ENABLED",
+                cls.strategy_adaptive_exits_enabled,
             ),
             simple_trade_gate_enabled=_get_bool(
                 "COINTRADING_SIMPLE_TRADE_GATE_ENABLED",

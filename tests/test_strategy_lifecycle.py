@@ -5,6 +5,7 @@ from pathlib import Path
 from cointrading.config import TradingConfig
 from cointrading.strategy_lifecycle import (
     manage_strategy_cycle,
+    strategy_plan_from_setup,
     start_strategy_cycle_from_setup,
 )
 from cointrading.strategy_router import SETUP_PASS, StrategySetup
@@ -113,7 +114,76 @@ def _setup(strategy="trend_follow", side="long") -> StrategySetup:
     )
 
 
+def _macro_row(*, atr_bps=40.0, trend_1h_bps=40.0, trend_4h_bps=60.0):
+    return {
+        "atr_bps": atr_bps,
+        "trend_1h_bps": trend_1h_bps,
+        "trend_4h_bps": trend_4h_bps,
+    }
+
+
 class StrategyLifecycleTests(unittest.TestCase):
+    def test_trend_plan_extends_target_when_trend_and_atr_are_strong(self) -> None:
+        plan = strategy_plan_from_setup(
+            _setup(strategy="trend_follow", side="long"),
+            TradingConfig(
+                trend_take_profit_bps=90,
+                trend_stop_loss_bps=30,
+                trend_max_hold_seconds=14_400,
+            ),
+            symbol="ETHUSDC",
+            bid=99.9,
+            ask=100.1,
+            macro_row=_macro_row(atr_bps=80, trend_1h_bps=95, trend_4h_bps=130),
+        )
+
+        assert plan is not None
+        self.assertEqual(plan.exit_profile, "trend_runner")
+        self.assertGreater(plan.take_profit_bps, 90)
+        self.assertGreaterEqual(plan.stop_loss_bps, 30)
+        self.assertGreater(plan.max_hold_seconds, 14_400)
+
+    def test_trend_plan_can_tighten_target_when_trend_is_weak(self) -> None:
+        plan = strategy_plan_from_setup(
+            _setup(strategy="trend_follow", side="long"),
+            TradingConfig(
+                trend_take_profit_bps=90,
+                trend_stop_loss_bps=30,
+                trend_max_hold_seconds=14_400,
+            ),
+            symbol="ETHUSDC",
+            bid=99.9,
+            ask=100.1,
+            macro_row=_macro_row(atr_bps=18, trend_1h_bps=15, trend_4h_bps=20),
+        )
+
+        assert plan is not None
+        self.assertEqual(plan.exit_profile, "trend_tight")
+        self.assertLess(plan.take_profit_bps, 90)
+        self.assertLessEqual(plan.stop_loss_bps, 30)
+        self.assertLess(plan.max_hold_seconds, 14_400)
+
+    def test_adaptive_exit_can_be_disabled(self) -> None:
+        plan = strategy_plan_from_setup(
+            _setup(strategy="breakout_reduced", side="long"),
+            TradingConfig(
+                breakout_take_profit_bps=120,
+                breakout_stop_loss_bps=40,
+                breakout_max_hold_seconds=7_200,
+                strategy_adaptive_exits_enabled=False,
+            ),
+            symbol="ETHUSDC",
+            bid=99.9,
+            ask=100.1,
+            macro_row=_macro_row(atr_bps=180, trend_1h_bps=160, trend_4h_bps=210),
+        )
+
+        assert plan is not None
+        self.assertEqual(plan.exit_profile, "fixed")
+        self.assertEqual(plan.take_profit_bps, 120)
+        self.assertEqual(plan.stop_loss_bps, 40)
+        self.assertEqual(plan.max_hold_seconds, 7_200)
+
     def test_strategy_entry_skips_when_scalp_cycle_active_for_symbol(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")
