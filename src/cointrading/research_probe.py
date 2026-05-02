@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 import statistics
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from cointrading.config import TradingConfig
 from cointrading.exchange.binance_usdm import BinanceUSDMClient
@@ -59,8 +59,42 @@ class ProbeResult:
     reason: str
 
 
+@dataclass
+class ProbeNotifyState:
+    last_signature: str = ""
+    last_sent_ms: int = 0
+
+    @classmethod
+    def load(cls, path: Path) -> "ProbeNotifyState":
+        if not path.exists():
+            return cls()
+        payload = json.loads(path.read_text())
+        return cls(
+            last_signature=str(payload.get("last_signature", "")),
+            last_sent_ms=int(payload.get("last_sent_ms", 0) or 0),
+        )
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "last_signature": self.last_signature,
+                    "last_sent_ms": self.last_sent_ms,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+
 def default_probe_report_path() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "vibe_probe_latest.json"
+
+
+def default_probe_notify_state_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "vibe_probe_notify_state.json"
 
 
 def default_probe_strategies(config: TradingConfig) -> tuple[ProbeStrategy, ...]:
@@ -305,7 +339,12 @@ def summarize_probe_result(
     )
 
 
-def vibe_probe_text(results: list[ProbeResult], *, limit: int = 12) -> str:
+def vibe_probe_text(
+    results: list[ProbeResult],
+    *,
+    limit: int = 12,
+    generated_ms: int | None = None,
+) -> str:
     lines = [
         "Vibe 스타일 리서치 프로브",
         "실주문 없음: 공개 캔들 기반 폐쇄형 백테스트입니다.",
@@ -313,7 +352,7 @@ def vibe_probe_text(results: list[ProbeResult], *, limit: int = 12) -> str:
     if not results:
         lines.append("결과 없음")
         return "\n".join(lines)
-    generated = kst_from_ms(now_ms())
+    generated = kst_from_ms(generated_ms or now_ms())
     lines.append(f"생성시각: {generated}")
     approved = [row for row in results if row.decision == "APPROVED"]
     blocked = [row for row in results if row.decision == "BLOCKED"]
@@ -335,6 +374,53 @@ def vibe_probe_text(results: list[ProbeResult], *, limit: int = 12) -> str:
     for row in ranked[:limit]:
         lines.append(_probe_result_line(row))
     return "\n".join(lines)
+
+
+def vibe_probe_report_text(path: Path | None = None, *, limit: int = 12) -> str:
+    payload = load_probe_report(path or default_probe_report_path())
+    if payload is None:
+        return "리서치 프로브 결과가 아직 없습니다. VM 자동 타이머가 곧 생성합니다."
+    results = [_probe_result_from_dict(row) for row in payload.get("results", [])]
+    generated_ms = int(payload.get("generated_ms", 0) or 0)
+    return vibe_probe_text(results, limit=limit, generated_ms=generated_ms or None)
+
+
+def load_probe_report(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def probe_notification_decision(
+    results: list[ProbeResult],
+    state: ProbeNotifyState,
+    *,
+    periodic_minutes: int,
+    force: bool = False,
+    current_ms: int | None = None,
+) -> tuple[bool, str, str]:
+    ts = current_ms or now_ms()
+    signature = _probe_signature(results)
+    approved = [row for row in results if row.decision == "APPROVED"]
+    if force:
+        return True, "수동 강제 실행", signature
+    if approved and signature != state.last_signature:
+        return True, "승인 후보 변화", signature
+    interval_ms = max(periodic_minutes, 1) * 60_000
+    if ts - state.last_sent_ms >= interval_ms:
+        return True, "주기 요약", signature
+    return False, "변화 없음", signature
+
+
+def apply_probe_notification_state(
+    state: ProbeNotifyState,
+    *,
+    signature: str,
+    timestamp_ms: int | None = None,
+) -> ProbeNotifyState:
+    state.last_signature = signature
+    state.last_sent_ms = timestamp_ms or now_ms()
+    return state
 
 
 def write_probe_report(
@@ -367,6 +453,43 @@ def _probe_result_line(row: ProbeResult) -> str:
         f"PF={row.profit_factor:.2f} 손익비={row.payoff_ratio:.2f} "
         f"MDD={row.max_drawdown_pct:.1%} 연손={row.max_consecutive_loss} "
         f"- {row.reason}"
+    )
+
+
+def _probe_signature(results: list[ProbeResult]) -> str:
+    approved = [
+        {
+            "symbol": row.symbol,
+            "strategy": row.strategy,
+            "avg_pnl_bps": round(row.avg_pnl_bps, 2),
+            "trade_count": row.trade_count,
+        }
+        for row in sorted(results, key=lambda item: (item.symbol, item.strategy))
+        if row.decision == "APPROVED"
+    ]
+    if not approved:
+        return "NO_APPROVED"
+    return json.dumps(approved, sort_keys=True, ensure_ascii=False)
+
+
+def _probe_result_from_dict(row: dict[str, Any]) -> ProbeResult:
+    return ProbeResult(
+        strategy=str(row.get("strategy", "")),
+        strategy_label=str(row.get("strategy_label", "")),
+        symbol=str(row.get("symbol", "")),
+        interval=str(row.get("interval", "")),
+        sample_bars=int(row.get("sample_bars", 0) or 0),
+        trade_count=int(row.get("trade_count", 0) or 0),
+        win_rate=float(row.get("win_rate", 0.0) or 0.0),
+        avg_pnl_bps=float(row.get("avg_pnl_bps", 0.0) or 0.0),
+        sum_pnl=float(row.get("sum_pnl", 0.0) or 0.0),
+        sum_pnl_bps=float(row.get("sum_pnl_bps", 0.0) or 0.0),
+        max_drawdown_pct=float(row.get("max_drawdown_pct", 0.0) or 0.0),
+        profit_factor=float(row.get("profit_factor", 0.0) or 0.0),
+        payoff_ratio=float(row.get("payoff_ratio", 0.0) or 0.0),
+        max_consecutive_loss=int(row.get("max_consecutive_loss", 0) or 0),
+        decision=str(row.get("decision", "")),
+        reason=str(row.get("reason", "")),
     )
 
 

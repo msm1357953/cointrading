@@ -25,6 +25,7 @@ class DashboardTests(unittest.TestCase):
                 "overview": "<div>overview</div>",
                 "paper_summary": "<div>paper</div>",
                 "strategy_summary": "<div>strategy</div>",
+                "probe_summary": "<div>probe</div>",
                 "active_paper_rows": "",
                 "paper_rows": "",
                 "mode_summary": "",
@@ -34,6 +35,7 @@ class DashboardTests(unittest.TestCase):
                 "cycle_rows": "",
                 "strategy_cycle_rows": "",
                 "strategy_rows": "",
+                "probe_rows": "",
                 "market_regime_rows": "",
                 "market_context_rows": "",
                 "performance_rows": "",
@@ -45,6 +47,7 @@ class DashboardTests(unittest.TestCase):
         )
         self.assertIn("new EventSource", html)
         self.assertIn('data-tab="paper"', html)
+        self.assertIn('data-tab="research"', html)
         self.assertIn('data-tab="market"', html)
         self.assertIn('data-tab="strategies"', html)
         self.assertIn('id="active-paper-rows"', html)

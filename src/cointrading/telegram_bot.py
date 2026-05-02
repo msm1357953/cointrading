@@ -17,6 +17,7 @@ from cointrading.exchange_filters import SymbolFilters
 from cointrading.market_context import collect_market_context, market_context_rows_text
 from cointrading.market_regime import evaluate_market_regime, market_regime_rows_text
 from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
+from cointrading.research_probe import vibe_probe_report_text
 from cointrading.scalping import (
     ScalpSignalEngine,
     default_scalp_log_path,
@@ -188,6 +189,12 @@ class TelegramCommandProcessor:
         "전략후보": "strategy",
         "후보평가": "strategy",
         "strategy": "strategy",
+        "리서치": "research",
+        "연구": "research",
+        "프로브": "research",
+        "백테스트": "research",
+        "vibe": "research",
+        "research": "research",
         "진입": "entry_check",
         "진입점검": "entry_check",
         "점검": "entry_check",
@@ -265,6 +272,8 @@ class TelegramCommandProcessor:
             return self.scalp_report_text(args)
         if command == "strategy":
             return self.strategy_text()
+        if command == "research":
+            return self.research_text()
         if command == "entry_check":
             return self.entry_check_text(args)
         if command == "live_supervisor":
@@ -300,6 +309,7 @@ class TelegramCommandProcessor:
                 "보고 BTCUSDC - BTCUSDC만 결과 요약",
                 "보고 전체 - 예전 USDT 로그까지 포함",
                 "전략 - 신호 로그 기반 후보평가, live 잠금, 전략 상태머신 요약",
+                "리서치 - 자동 백테스트 프로브 결과. 주문은 넣지 않음",
                 "진입 ETHUSDC 25 - 전략별 진입 점검. 주문은 넣지 않음",
                 "실전 ETHUSDC 25 - 실전 가능/불가 최종 감독 판정",
                 "주문 - 최근 dry-run 주문/차단 기록",
@@ -505,6 +515,9 @@ class TelegramCommandProcessor:
             config=self.trading_config,
             active_strategy_cycles=store.active_strategy_cycles(),
         )
+
+    def research_text(self) -> str:
+        return vibe_probe_report_text(limit=8)
 
     def entry_check_text(self, args: list[str]) -> str:
         symbol, notional = self._entry_check_args(args)

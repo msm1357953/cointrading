@@ -265,6 +265,25 @@ class TelegramCommandTests(unittest.TestCase):
             active_strategy_cycles=store.active_strategy_cycles.return_value,
         )
 
+    def test_research_command_reads_latest_probe_report(self) -> None:
+        processor = TelegramCommandProcessor(
+            TelegramConfig(
+                allowed_chat_ids=frozenset({"123"}),
+                commands_enabled=True,
+            ),
+            TradingConfig(),
+            TelegramBotState(),
+            exchange_client=FakeExchangeClient(),
+        )
+        with patch(
+            "cointrading.telegram_bot.vibe_probe_report_text",
+            return_value="research ok",
+        ) as text_fn:
+            reply = processor.handle_text("123", "리서치")
+
+        self.assertEqual(reply, "research ok")
+        text_fn.assert_called_once_with(limit=8)
+
     def test_entry_check_command_reports_strategy_setups_without_ordering(self) -> None:
         processor = TelegramCommandProcessor(
             TelegramConfig(
@@ -320,6 +339,8 @@ class TelegramCommandTests(unittest.TestCase):
             exchange_client=FakeExchangeClient(),
         )
         self.assertIn("현재 상태", processor.handle_text("123", "상태"))
+        with patch("cointrading.telegram_bot.vibe_probe_report_text", return_value="research ok"):
+            self.assertEqual(processor.handle_text("123", "리서치"), "research ok")
         self.assertIn("스캘핑 신호", processor.handle_text("123", "스캘핑 BTCUSDC"))
         self.assertIn("선물 수수료 상태", processor.handle_text("123", "수수료"))
         with (

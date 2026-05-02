@@ -35,7 +35,11 @@ from cointrading.market_context import collect_market_context, market_context_ro
 from cointrading.market_regime import evaluate_market_regime
 from cointrading.models import Kline
 from cointrading.research_probe import (
+    ProbeNotifyState,
+    apply_probe_notification_state,
+    default_probe_notify_state_path,
     default_probe_report_path,
+    probe_notification_decision,
     run_vibe_style_probe,
     vibe_probe_text,
     write_probe_report,
@@ -242,6 +246,21 @@ def main(argv: list[str] | None = None) -> None:
     vibe_probe_parser.add_argument("--notional", type=float)
     vibe_probe_parser.add_argument("--output", type=Path, default=default_probe_report_path())
 
+    vibe_probe_notify_parser = subparsers.add_parser("vibe-probe-notify")
+    vibe_probe_notify_parser.add_argument("--symbols", nargs="+")
+    vibe_probe_notify_parser.add_argument("--interval", default="15m")
+    vibe_probe_notify_parser.add_argument("--limit", type=int, default=1000)
+    vibe_probe_notify_parser.add_argument("--notional", type=float)
+    vibe_probe_notify_parser.add_argument("--output", type=Path, default=default_probe_report_path())
+    vibe_probe_notify_parser.add_argument(
+        "--state-path",
+        type=Path,
+        default=default_probe_notify_state_path(),
+    )
+    vibe_probe_notify_parser.add_argument("--periodic-minutes", type=int, default=360)
+    vibe_probe_notify_parser.add_argument("--force", action="store_true")
+    vibe_probe_notify_parser.add_argument("--no-send", action="store_true")
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -352,6 +371,18 @@ def main(argv: list[str] | None = None) -> None:
             args.limit,
             args.notional,
             args.output,
+        )
+    elif args.command == "vibe-probe-notify":
+        vibe_probe_notify(
+            _active_scalp_symbols(args.symbols),
+            args.interval,
+            args.limit,
+            args.notional,
+            args.output,
+            args.state_path,
+            args.periodic_minutes,
+            args.force,
+            args.no_send,
         )
     elif args.command == "telegram-me":
         telegram_me()
@@ -873,6 +904,67 @@ def vibe_probe(
     )
     print(vibe_probe_text(results))
     print(f"\nreport: {output}")
+
+
+def vibe_probe_notify(
+    symbols: list[str],
+    interval: str,
+    limit: int,
+    notional: float | None,
+    output: Path,
+    state_path: Path,
+    periodic_minutes: int,
+    force: bool,
+    no_send: bool,
+) -> None:
+    config = TradingConfig.from_env()
+    market_config = replace(config, testnet=False)
+    client = BinanceUSDMClient(config=market_config)
+    results, trades = run_vibe_style_probe(
+        symbols=symbols,
+        interval=interval,
+        limit=limit,
+        notional=notional,
+        config=config,
+        client=client,
+    )
+    write_probe_report(
+        output,
+        results=results,
+        trades=trades,
+        symbols=symbols,
+        interval=interval,
+        limit=limit,
+    )
+    state = ProbeNotifyState.load(state_path)
+    should_send, reason, signature = probe_notification_decision(
+        results,
+        state,
+        periodic_minutes=periodic_minutes,
+        force=force,
+    )
+    text = "\n".join(
+        [
+            "자동 리서치 프로브",
+            f"사유: {reason}",
+            vibe_probe_text(results, limit=8),
+        ]
+    )
+    print(text)
+    if not should_send:
+        print("vibe-probe-notify: skipped")
+        return
+    if no_send:
+        print("vibe-probe-notify: print only")
+        apply_probe_notification_state(state, signature=signature).save(state_path)
+        return
+    try:
+        TelegramClient(TelegramConfig.from_env()).send_message(_telegram_safe_text(text))
+    except Exception as exc:
+        print(f"vibe-probe-notify: failed - {exc}")
+        return
+    apply_probe_notification_state(state, signature=signature).save(state_path)
+    print("vibe-probe-notify: sent")
 
 
 def llm_report(

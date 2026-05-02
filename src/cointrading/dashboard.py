@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 from cointrading.config import TradingConfig
 from cointrading.market_regime import macro_regime_ko, trade_bias_ko
 from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
+from cointrading.research_probe import default_probe_report_path, load_probe_report
 from cointrading.scalping import scalp_report_rows_text
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms, now_ms
 from cointrading.strategy_notify import (
@@ -152,6 +153,7 @@ def _snapshot(
     strategy_performance = store.strategy_cycle_performance()
     scalp_exit_reasons = store.scalp_cycle_exit_reasons()
     strategy_exit_reasons = store.strategy_cycle_exit_reasons()
+    probe_report = load_probe_report(default_probe_report_path()) or {}
     active_unrealized = _active_unrealized_total(
         active_scalp_cycles,
         active_strategy_cycles,
@@ -189,12 +191,14 @@ def _snapshot(
             strategy_exit_reasons=strategy_exit_reasons,
         ),
         "strategy_summary": _strategy_summary_html(latest_strategy_batch),
+        "probe_summary": _probe_summary_html(probe_report),
         "report": report,
         "signal_rows": _signal_rows_html(rows[-limit:]) or _empty_table_row(5, "최근 신호 없음"),
         "order_rows": _order_rows_html(store.recent_orders(limit=limit)) or _empty_table_row(5, "최근 주문/차단 없음"),
         "cycle_rows": _cycle_rows_html(scalp_cycles) or _empty_table_row(6, "스캘핑 상태머신 기록 없음"),
         "strategy_cycle_rows": _strategy_cycle_rows_html(strategy_cycles) or _empty_table_row(7, "전략 상태머신 기록 없음"),
         "strategy_rows": _strategy_rows_html(strategy_rows) or _empty_table_row(16, "전략 평가 결과 없음"),
+        "probe_rows": _probe_rows_html(probe_report) or _empty_table_row(13, "리서치 프로브 결과 없음"),
         "market_regime_rows": _market_regime_rows_html(market_regime_rows) or _empty_table_row(10, "장세 라우터 기록 없음"),
         "market_context_rows": _market_context_rows_html(market_context_rows) or _empty_table_row(8, "시장상황 기록 없음"),
         "performance_rows": _performance_rows_html(scalp_performance) or _empty_table_row(12, "스캘핑 종료 표본 없음"),
@@ -485,6 +489,57 @@ def _strategy_summary_html(rows) -> str:
             _metric_html("차단", str(len(blocked)), "block" if blocked else "muted"),
             _metric_html("상위 후보", best_text, tone),
         ]
+    )
+
+
+def _probe_summary_html(report: dict) -> str:
+    rows = list(report.get("results", []) or [])
+    if not rows:
+        return _metric_html("리서치 프로브", "결과 없음", "warn")
+    approved = [row for row in rows if str(row.get("decision")) == "APPROVED"]
+    watch = [row for row in rows if str(row.get("decision")) == "WATCH"]
+    blocked = [row for row in rows if str(row.get("decision")) == "BLOCKED"]
+    generated_ms = int(report.get("generated_ms", 0) or 0)
+    ranked = sorted(rows, key=lambda row: float(row.get("avg_pnl_bps", 0.0) or 0.0), reverse=True)
+    best = ranked[0] if ranked else None
+    best_text = "없음"
+    best_tone = "warn"
+    if best is not None:
+        best_text = (
+            f"{best.get('symbol', '')} {_strategy_label(str(best.get('strategy', '')))} "
+            f"{float(best.get('avg_pnl_bps', 0.0) or 0.0):+.2f}bps"
+        )
+        best_tone = "good" if str(best.get("decision")) == "APPROVED" else "warn"
+    return "\n".join(
+        [
+            _metric_html("최근 실행", kst_from_ms(generated_ms) if generated_ms else "없음", "muted"),
+            _metric_html("승인", str(len(approved)), "good" if approved else "warn"),
+            _metric_html("관찰/차단", f"{len(watch)} / {len(blocked)}", "warn" if watch else "muted"),
+            _metric_html("상위 결과", best_text, best_tone),
+        ]
+    )
+
+
+def _probe_rows_html(report: dict) -> str:
+    rows = list(report.get("results", []) or [])
+    ranked = sorted(rows, key=lambda row: float(row.get("avg_pnl_bps", 0.0) or 0.0), reverse=True)
+    return "\n".join(
+        "<tr>"
+        f"<td>{_decision_pill(str(row.get('decision', '')))}</td>"
+        f"<td>{escape(str(row.get('symbol', '')))}</td>"
+        f"<td>{escape(_strategy_label(str(row.get('strategy', ''))))}</td>"
+        f"<td>{escape(str(row.get('interval', '')))}</td>"
+        f"<td>{int(row.get('sample_bars', 0) or 0)}</td>"
+        f"<td>{int(row.get('trade_count', 0) or 0)}</td>"
+        f"<td>{escape(_fmt_pct(float(row.get('win_rate', 0.0) or 0.0)))}</td>"
+        f"<td>{float(row.get('avg_pnl_bps', 0.0) or 0.0):+.2f}</td>"
+        f"<td>{float(row.get('sum_pnl', 0.0) or 0.0):+.6f}</td>"
+        f"<td>{float(row.get('profit_factor', 0.0) or 0.0):.2f}</td>"
+        f"<td>{float(row.get('payoff_ratio', 0.0) or 0.0):.2f}</td>"
+        f"<td>{escape(_fmt_pct(float(row.get('max_drawdown_pct', 0.0) or 0.0)))}</td>"
+        f"<td>{escape(str(row.get('reason', '')))}</td>"
+        "</tr>"
+        for row in ranked
     )
 
 
@@ -862,6 +917,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     <nav>
       <button class="active" data-tab="overview">개요</button>
       <button data-tab="paper">Paper</button>
+      <button data-tab="research">리서치</button>
       <button data-tab="strategies">전략</button>
       <button data-tab="market">시장</button>
       <button data-tab="risk">위험</button>
@@ -927,6 +983,17 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
         <table>
           <thead><tr><th>평가</th><th>판정</th><th>출처</th><th>전략</th><th>주문방식</th><th>심볼</th><th>장상태</th><th>방향</th><th>TP</th><th>SL</th><th>보유</th><th>표본</th><th>승률</th><th>평균bps</th><th>합계bps</th><th>이유</th></tr></thead>
           <tbody id="strategy-rows">{strategy_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section id="tab-research" class="tab-panel">
+      <h2>자동 리서치 프로브</h2>
+      <div id="probe-summary" class="metric-grid">{snapshot.get("probe_summary", "")}</div>
+      <p class="muted">실주문 없음. VM 타이머가 공개 캔들로 추세/레인지/돌파 후보를 먼저 걸러냅니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>판정</th><th>심볼</th><th>전략</th><th>봉</th><th>표본봉</th><th>거래수</th><th>승률</th><th>평균bps</th><th>합계손익</th><th>PF</th><th>손익비</th><th>MDD</th><th>이유</th></tr></thead>
+          <tbody id="probe-rows">{snapshot.get("probe_rows", _empty_table_row(13, "리서치 프로브 결과 없음"))}</tbody>
         </table>
       </div>
     </section>
@@ -1010,6 +1077,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("paper-summary").innerHTML = data.paper_summary;
       document.getElementById("strategy-summary").innerHTML = data.strategy_summary;
       document.getElementById("strategy-summary-tab").innerHTML = data.strategy_summary;
+      document.getElementById("probe-summary").innerHTML = data.probe_summary;
       document.getElementById("risk-state").textContent = data.risk_state;
       document.getElementById("report").textContent = data.report;
       document.getElementById("signal-rows").innerHTML = data.signal_rows;
@@ -1017,6 +1085,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("cycle-rows").innerHTML = data.cycle_rows;
       document.getElementById("strategy-cycle-rows").innerHTML = data.strategy_cycle_rows;
       document.getElementById("strategy-rows").innerHTML = data.strategy_rows;
+      document.getElementById("probe-rows").innerHTML = data.probe_rows;
       document.getElementById("market-regime-rows").innerHTML = data.market_regime_rows;
       document.getElementById("market-context-rows").innerHTML = data.market_context_rows;
       document.getElementById("performance-rows").innerHTML = data.performance_rows;
@@ -1089,7 +1158,7 @@ def _decision_pill(decision: str) -> str:
     tone = "muted"
     if decision == "APPROVED":
         tone = "good"
-    elif decision == "SAMPLE_LOW":
+    elif decision in {"SAMPLE_LOW", "WATCH"}:
         tone = "warn"
     elif decision == "BLOCKED":
         tone = "block"
@@ -1109,6 +1178,7 @@ def _decision_label(decision: str) -> str:
         "APPROVED": "승인",
         "BLOCKED": "차단",
         "SAMPLE_LOW": "표본부족",
+        "WATCH": "관찰",
     }.get(decision, decision)
 
 

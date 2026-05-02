@@ -3,9 +3,11 @@ from __future__ import annotations
 from cointrading.config import TradingConfig
 from cointrading.models import Kline
 from cointrading.research_probe import (
+    ProbeNotifyState,
     ProbeStrategy,
     ProbeTrade,
     backtest_probe_strategy,
+    probe_notification_decision,
     summarize_probe_result,
     vibe_probe_text,
 )
@@ -80,6 +82,36 @@ def test_probe_summary_approves_positive_stable_profile() -> None:
     assert result.decision == "APPROVED"
     assert result.avg_pnl_bps == 5.0
     assert "승인" in vibe_probe_text([result])
+
+
+def test_probe_notification_sends_periodic_even_without_approved() -> None:
+    strategy = ProbeStrategy(
+        name="trend_follow",
+        label="추세추종",
+        take_profit_bps=90.0,
+        stop_loss_bps=30.0,
+        max_hold_bars=96,
+        signal_fn=lambda _rows, _index: "flat",
+    )
+    result = summarize_probe_result(
+        symbol="BTCUSDC",
+        interval="15m",
+        sample_bars=100,
+        strategy=strategy,
+        trades=[],
+        initial_equity=1000.0,
+    )
+
+    should_send, reason, signature = probe_notification_decision(
+        [result],
+        ProbeNotifyState(last_sent_ms=0),
+        periodic_minutes=360,
+        current_ms=360 * 60_000,
+    )
+
+    assert should_send
+    assert reason == "주기 요약"
+    assert signature == "NO_APPROVED"
 
 
 def _kline(index: int, open_: float, high: float, low: float, close: float) -> Kline:

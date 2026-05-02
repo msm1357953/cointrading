@@ -36,6 +36,7 @@ python -m cointrading.cli strategy-engine-step
 python -m cointrading.cli live-preflight --notional 25 --symbols ETHUSDC
 python -m cointrading.cli live-supervisor --notional 25 --symbols ETHUSDC
 python -m cointrading.cli live-supervisor-notify
+python -m cointrading.cli vibe-probe-notify
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 ```
 
@@ -134,12 +135,19 @@ Default paper exits now target positive payoff before frequency: maker scalping 
 
 `strategy-notify` sends a Telegram report when strategy decisions change or when the periodic interval elapses. The VM checks every 15 minutes and defaults to a 6-hour periodic report via `COINTRADING_STRATEGY_NOTIFY_INTERVAL_MINUTES=360`.
 
+## Automated Research Probe
+
+`vibe-probe-notify` is the automated research gate. It runs a closed-bar probe over Binance public USDC futures candles for the active symbols, scores trend-following, range-reversion, and breakout candidates after taker fee/slippage, writes `data/vibe_probe_latest.json`, and sends Telegram only when an approved research candidate appears or a periodic 6-hour summary is due.
+
+The VM runs this as `cointrading-vibe-probe-notify.timer` every 30 minutes. It does not place orders and does not change live flags. Telegram `리서치` reads the latest result without requiring a shell command.
+
 ## Dashboard
 
 The dashboard is a small HTTP server organized around the questions needed before live trading:
 
 - `개요`: live/dry-run guard flags, runtime risk mode, active paper cycles, total paper PnL, and approved candidate count.
 - `Paper`: combined scalping and macro-strategy paper cycles with entry price, current mark price, target/stop, active-cycle unrealized PnL, realized PnL, and exit reason, plus strategy-vs-scalp performance, average win/loss, payoff ratio, break-even win rate, and exit reason summaries.
+- `리서치`: latest automated research-probe result, including approval/watch/block counts, strategy, symbol, sample size, win rate, average bps, profit factor, payoff ratio, and drawdown.
 - `전략`: latest strategy candidate evaluations with Korean labels for source, execution mode, regime, side, and decision.
 - `시장`: macro regime routing plus market context such as premium, funding, spread, depth, and imbalance.
 - `위험`, `신호`, `주문`, `원본요약`: detailed runtime risk text, raw signals, blocked/order attempts, and legacy summaries for debugging.

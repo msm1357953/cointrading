@@ -1,0 +1,11 @@
+[Unit]
+Description=Run research probe every 30 minutes
+
+[Timer]
+OnBootSec=300
+OnUnitInactiveSec=1800
+AccuracySec=60
+Unit=cointrading-vibe-probe-notify.service
+
+[Install]
+WantedBy=timers.target
