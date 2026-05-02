@@ -8,7 +8,10 @@ The VM is the production-like runner:
 
 - project path: `~/cointrading`
 - static IP: `34.50.6.186`
-- systemd units: `cointrading-telegram.service`, `cointrading-scalp-collect.timer`, `cointrading-scalp-score.timer`, `cointrading-market-regime.timer`, `cointrading-market-context.timer`, `cointrading-strategy-evaluate.timer`, `cointrading-strategy-notify.timer`, `cointrading-vibe-probe-notify.timer`, `cointrading-refine-entry-notify.timer`, `cointrading-live-supervisor-notify.timer`, `cointrading-trade-event-notify.timer`, `cointrading-llm-report.timer`, `cointrading-scalp-engine.timer`, `cointrading-strategy-engine.timer`
+- always-on services: `cointrading-telegram.service`, `cointrading-dashboard.service`
+- data and paper timers: `cointrading-scalp-collect.timer`, `cointrading-scalp-score.timer`, `cointrading-market-regime.timer`, `cointrading-market-context.timer`, `cointrading-strategy-evaluate.timer`, `cointrading-scalp-engine.timer`, `cointrading-strategy-engine.timer`
+- automatic Telegram alert timers: `cointrading-refine-entry-notify.timer`, `cointrading-live-supervisor-notify.timer`
+- manual/reporting timers kept disabled by default: `cointrading-strategy-notify.timer`, `cointrading-trade-event-notify.timer`, `cointrading-llm-report.timer`, `cointrading-vibe-probe-notify.timer`, `cointrading-meta-backtest-notify.timer`
 
 ## GitHub Actions Deploy
 
@@ -22,6 +25,8 @@ Required GitHub repository secrets:
 - `VM_SSH_PRIVATE_KEY`
 
 The deploy workflow intentionally uses `workflow_dispatch` instead of deploying every push. That keeps Codex Web useful for code changes while preserving a human deployment gate before touching the VM.
+
+The workflow also disables legacy/noisy Telegram report timers on each deploy. This prevents old signal-grid summaries, paper trade events, LLM risk summaries, and research probes from being re-enabled accidentally after a VM refresh.
 
 ## Manual Deploy Path
 

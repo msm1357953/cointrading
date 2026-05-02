@@ -137,13 +137,13 @@ Approval is based on positive net expectancy after fees/slippage, a minimum samp
 
 Default paper exits now target positive payoff before frequency: maker scalping defaults to TP 16 bps / SL 4 bps / 300s max hold, while macro strategy defaults are trend 90/30 bps, range 30/15 bps, and breakout 120/40 bps.
 
-`strategy-notify` sends a Telegram report when strategy decisions change or when the periodic interval elapses. The VM checks every 15 minutes and defaults to a 6-hour periodic report via `COINTRADING_STRATEGY_NOTIFY_INTERVAL_MINUTES=360`.
+`strategy-notify` can send a Telegram report when strategy decisions change or when the periodic interval elapses. It is manual/disabled by default on the VM because this report is a historical signal/paper evaluation, not a current tradable timing alert. Use Telegram `전략` or run the command manually when you want to inspect this layer.
 
 ## Automated Research Probe
 
 `vibe-probe-notify` is the automated research gate. It runs a closed-bar probe over Binance public USDC futures candles for the active symbols, scores trend-following, range-reversion, and breakout candidates after taker fee/slippage, writes `data/vibe_probe_latest.json`, and sends Telegram only when an approved research candidate appears or a periodic 6-hour summary is due.
 
-The VM runs this as `cointrading-vibe-probe-notify.timer` every 30 minutes. It does not place orders and does not change live flags. Telegram `리서치` reads the latest result without requiring a shell command.
+The VM installs `cointrading-vibe-probe-notify.timer`, but it is disabled by default to keep Telegram focused on current-entry alerts. It does not place orders and does not change live flags. Telegram `리서치` reads the latest result without requiring a shell command.
 
 ## Dashboard
 

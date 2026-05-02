@@ -48,6 +48,9 @@ jobs:
             cointrading-market-context.timer \
             cointrading-strategy-evaluate.timer \
             cointrading-strategy-notify.timer \
+            cointrading-vibe-probe-notify.timer \
+            cointrading-meta-backtest-notify.timer \
+            cointrading-refine-entry-notify.timer \
             cointrading-live-supervisor-notify.timer \
             cointrading-trade-event-notify.timer \
             cointrading-llm-report.timer \
@@ -62,6 +65,9 @@ jobs:
             cointrading-market-context.service \
             cointrading-strategy-evaluate.service \
             cointrading-strategy-notify.service \
+            cointrading-vibe-probe-notify.service \
+            cointrading-meta-backtest-notify.service \
+            cointrading-refine-entry-notify.service \
             cointrading-live-supervisor-notify.service \
             cointrading-trade-event-notify.service \
             cointrading-llm-report.service \
@@ -118,6 +124,12 @@ jobs:
 
           sudo cp deploy/cointrading-*.service deploy/cointrading-*.timer /etc/systemd/system/
           sudo systemctl daemon-reload
+          sudo systemctl disable --now \
+            cointrading-strategy-notify.timer \
+            cointrading-trade-event-notify.timer \
+            cointrading-llm-report.timer \
+            cointrading-vibe-probe-notify.timer \
+            cointrading-meta-backtest-notify.timer || true
           sudo systemctl enable --now cointrading-telegram.service
           sudo systemctl enable --now cointrading-dashboard.service
           sudo systemctl enable --now cointrading-scalp-collect.timer
@@ -125,18 +137,15 @@ jobs:
           sudo systemctl enable --now cointrading-market-regime.timer
           sudo systemctl enable --now cointrading-market-context.timer
           sudo systemctl enable --now cointrading-strategy-evaluate.timer
-          sudo systemctl enable --now cointrading-strategy-notify.timer
+          sudo systemctl enable --now cointrading-refine-entry-notify.timer
           sudo systemctl enable --now cointrading-live-supervisor-notify.timer
-          sudo systemctl enable --now cointrading-trade-event-notify.timer
-          sudo systemctl enable --now cointrading-llm-report.timer
           sudo systemctl enable --now cointrading-scalp-engine.timer
           sudo systemctl enable --now cointrading-strategy-engine.timer
           sudo systemctl start cointrading-market-regime.service
           sudo systemctl start cointrading-market-context.service
           sudo systemctl start cointrading-strategy-evaluate.service
-          sudo systemctl start cointrading-strategy-notify.service
+          sudo systemctl start cointrading-refine-entry-notify.service
           sudo systemctl start cointrading-live-supervisor-notify.service
-          sudo systemctl start cointrading-trade-event-notify.service
           sudo systemctl restart cointrading-telegram.service
           sudo systemctl restart cointrading-dashboard.service
 
@@ -147,10 +156,20 @@ jobs:
           systemctl is-active cointrading-market-regime.timer
           systemctl is-active cointrading-market-context.timer
           systemctl is-active cointrading-strategy-evaluate.timer
-          systemctl is-active cointrading-strategy-notify.timer
+          systemctl is-active cointrading-refine-entry-notify.timer
           systemctl is-active cointrading-live-supervisor-notify.timer
-          systemctl is-active cointrading-trade-event-notify.timer
-          systemctl is-active cointrading-llm-report.timer
           systemctl is-active cointrading-scalp-engine.timer
           systemctl is-active cointrading-strategy-engine.timer
+          for disabled_unit in \
+            cointrading-strategy-notify.timer \
+            cointrading-trade-event-notify.timer \
+            cointrading-llm-report.timer \
+            cointrading-vibe-probe-notify.timer \
+            cointrading-meta-backtest-notify.timer
+          do
+            if systemctl is-enabled --quiet "$disabled_unit"; then
+              echo "$disabled_unit should stay disabled by default"
+              exit 1
+            fi
+          done
           REMOTE
