@@ -17,6 +17,7 @@ from cointrading.exchange_filters import SymbolFilters
 from cointrading.market_context import collect_market_context, market_context_rows_text
 from cointrading.market_regime import evaluate_market_regime, market_regime_rows_text
 from cointrading.meta_strategy import meta_report_text
+from cointrading.refined_entry_gate import refined_entry_report_text
 from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
 from cointrading.research_probe import vibe_probe_report_text
 from cointrading.scalping import (
@@ -201,6 +202,10 @@ class TelegramCommandProcessor:
         "정제": "strategy_refine",
         "후보정제": "strategy_refine",
         "refine": "strategy_refine",
+        "현재후보": "refined_entry",
+        "진입후보": "refined_entry",
+        "타이밍": "refined_entry",
+        "entrygate": "refined_entry",
         "리서치": "research",
         "연구": "research",
         "백테스트": "research",
@@ -290,6 +295,8 @@ class TelegramCommandProcessor:
             return self.strategy_mine_text()
         if command == "strategy_refine":
             return self.strategy_refine_text()
+        if command == "refined_entry":
+            return self.refined_entry_text()
         if command == "probe":
             return self.probe_text()
         if command == "entry_check":
@@ -330,6 +337,7 @@ class TelegramCommandProcessor:
                 "메타 - 장기 데이터 기반 상황판단형 메타전략 결과. 주문은 넣지 않음",
                 "발굴 - 과거 데이터에서 walk-forward로 살아남은 전략 후보 확인",
                 "정제 - 1차 발굴 후보를 다시 흔들어 본 2차 정제 결과",
+                "현재후보 - 정제 후보가 지금 닫힌 봉 조건에도 맞는지 확인",
                 "프로브 - 예전 개별 후보 백테스트 프로브 결과",
                 "진입 ETHUSDC 25 - 전략별 진입 점검. 주문은 넣지 않음",
                 "실전 ETHUSDC 25 - 실전 가능/불가 최종 감독 판정",
@@ -545,6 +553,9 @@ class TelegramCommandProcessor:
 
     def strategy_refine_text(self) -> str:
         return strategy_refine_report_text(limit=8)
+
+    def refined_entry_text(self) -> str:
+        return refined_entry_report_text(limit=8)
 
     def probe_text(self) -> str:
         return vibe_probe_report_text(limit=8)

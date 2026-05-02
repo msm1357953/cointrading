@@ -1,0 +1,9 @@
+[Unit]
+Description=Check refined strategy current-entry candidates and send Telegram alerts
+
+[Service]
+Type=oneshot
+User=msm1357953_gmail_com
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli refine-entry-notify

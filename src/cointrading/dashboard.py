@@ -15,6 +15,10 @@ from cointrading.meta_strategy import (
     load_meta_report,
     meta_action_ko,
 )
+from cointrading.refined_entry_gate import (
+    default_refined_entry_report_path,
+    load_refined_entry_report,
+)
 from cointrading.risk_state import evaluate_runtime_risk, risk_mode_ko
 from cointrading.research_probe import default_probe_report_path, load_probe_report
 from cointrading.scalping import scalp_report_rows_text
@@ -169,6 +173,7 @@ def _snapshot(
     meta_report = load_meta_report(default_meta_report_path()) or {}
     mine_report = load_strategy_mine_report(default_strategy_mine_report_path()) or {}
     refine_report = load_strategy_refine_report(default_strategy_refine_report_path()) or {}
+    refined_entry_report = load_refined_entry_report(default_refined_entry_report_path()) or {}
     active_unrealized = _active_unrealized_total(
         active_scalp_cycles,
         active_strategy_cycles,
@@ -209,6 +214,7 @@ def _snapshot(
         "meta_summary": _meta_summary_html(meta_report),
         "mine_summary": _mine_summary_html(mine_report),
         "refine_summary": _refine_summary_html(refine_report),
+        "refined_entry_summary": _refined_entry_summary_html(refined_entry_report),
         "probe_summary": _probe_summary_html(probe_report),
         "report": report,
         "signal_rows": _signal_rows_html(rows[-limit:]) or _empty_table_row(5, "최근 신호 없음"),
@@ -218,6 +224,7 @@ def _snapshot(
         "strategy_rows": _strategy_rows_html(strategy_rows) or _empty_table_row(16, "전략 평가 결과 없음"),
         "meta_rows": _meta_rows_html(meta_report) or _empty_table_row(13, "메타전략 백테스트 결과 없음"),
         "meta_action_rows": _meta_action_rows_html(meta_report) or _empty_table_row(7, "메타전략 행동별 결과 없음"),
+        "refined_entry_rows": _refined_entry_rows_html(refined_entry_report) or _empty_table_row(16, "현재장 정제후보 결과 없음"),
         "refine_rows": _mine_rows_html(refine_report) or _empty_table_row(12, "전략 정제 결과 없음"),
         "mine_rows": _mine_rows_html(mine_report) or _empty_table_row(12, "전략 발굴 결과 없음"),
         "probe_rows": _probe_rows_html(probe_report) or _empty_table_row(13, "리서치 프로브 결과 없음"),
@@ -601,6 +608,28 @@ def _refine_summary_html(report: dict) -> str:
     )
 
 
+def _refined_entry_summary_html(report: dict) -> str:
+    rows = list(report.get("candidates", []) or [])
+    if not rows:
+        return _metric_html("현재장 진입후보", "결과 없음", "warn")
+    ready = [row for row in rows if str(row.get("decision")) == "READY"]
+    wait = [row for row in rows if str(row.get("decision")) == "WAIT"]
+    generated_ms = int(report.get("generated_ms", 0) or 0)
+    best = rows[0]
+    best_text = (
+        f"{best.get('symbol', '')} {strategy_action_ko(str(best.get('action', '')))} "
+        f"{float(best.get('test_avg_pnl_bps', 0.0) or 0.0):+.2f}bps"
+    )
+    return "\n".join(
+        [
+            _metric_html("최근 실행", kst_from_ms(generated_ms) if generated_ms else "없음", "muted"),
+            _metric_html("진입후보", str(len(ready)), "good" if ready else "warn"),
+            _metric_html("대기", str(len(wait)), "warn" if wait else "muted"),
+            _metric_html("상위 매칭", best_text, "good" if ready else "warn"),
+        ]
+    )
+
+
 def _probe_summary_html(report: dict) -> str:
     rows = list(report.get("results", []) or [])
     if not rows:
@@ -688,6 +717,31 @@ def _mine_rows_html(report: dict) -> str:
         f"<td>{float((row.get('test_summary') or {}).get('avg_pnl_bps', 0.0) or 0.0):+.2f}</td>"
         f"<td>{float((row.get('test_summary') or {}).get('profit_factor', 0.0) or 0.0):.2f}</td>"
         f"<td>{float((row.get('full_summary') or {}).get('avg_pnl_bps', 0.0) or 0.0):+.2f}</td>"
+        f"<td>{escape(str(row.get('reason', '')))}</td>"
+        "</tr>"
+        for row in rows
+    )
+
+
+def _refined_entry_rows_html(report: dict) -> str:
+    rows = list(report.get("candidates", []) or [])
+    return "\n".join(
+        "<tr>"
+        f"<td>{_decision_pill(str(row.get('decision', '')))}</td>"
+        f"<td>{escape(str(row.get('symbol', '')))}</td>"
+        f"<td>{escape(strategy_action_ko(str(row.get('action', ''))))}</td>"
+        f"<td>{escape(_side_label(str(row.get('side', ''))))}</td>"
+        f"<td>{escape(kst_from_ms(int(row.get('feature_time_ms', 0) or 0)))}</td>"
+        f"<td>{_fmt_price(row.get('current_price'))}</td>"
+        f"<td>{_fmt_price(row.get('target_price'))}</td>"
+        f"<td>{_fmt_price(row.get('stop_price'))}</td>"
+        f"<td>{float(row.get('take_profit_bps', 0.0) or 0.0):.0f}</td>"
+        f"<td>{float(row.get('stop_loss_bps', 0.0) or 0.0):.0f}</td>"
+        f"<td>{int(row.get('max_hold_bars', 0) or 0)}</td>"
+        f"<td>{int(row.get('test_count', 0) or 0)}</td>"
+        f"<td>{escape(_fmt_pct(float(row.get('test_win_rate', 0.0) or 0.0)))}</td>"
+        f"<td>{float(row.get('test_avg_pnl_bps', 0.0) or 0.0):+.2f}</td>"
+        f"<td>{float(row.get('test_profit_factor', 0.0) or 0.0):.2f}</td>"
         f"<td>{escape(str(row.get('reason', '')))}</td>"
         "</tr>"
         for row in rows
@@ -915,6 +969,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     strategy_rows = snapshot["strategy_rows"] or _empty_table_row(16, "전략 평가 결과 없음")
     meta_rows = snapshot.get("meta_rows", "") or _empty_table_row(13, "메타전략 백테스트 결과 없음")
     meta_action_rows = snapshot.get("meta_action_rows", "") or _empty_table_row(7, "메타전략 행동별 결과 없음")
+    refined_entry_rows = snapshot.get("refined_entry_rows", "") or _empty_table_row(16, "현재장 정제후보 결과 없음")
     refine_rows = snapshot.get("refine_rows", "") or _empty_table_row(12, "전략 정제 결과 없음")
     mine_rows = snapshot.get("mine_rows", "") or _empty_table_row(12, "전략 발굴 결과 없음")
     market_regime_rows = snapshot["market_regime_rows"] or _empty_table_row(10, "장세 라우터 기록 없음")
@@ -1168,6 +1223,15 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       <h2>상황판단형 메타전략</h2>
       <div id="meta-summary" class="metric-grid">{snapshot.get("meta_summary", "")}</div>
       <p class="muted">실주문 없음. 장기 Binance 공개 캔들로 상승/하락/횡보/돌파/패닉을 판단하고, 그 시점에 하나의 행동만 선택한 결과입니다.</p>
+      <h3>현재장 진입후보</h3>
+      <div id="refined-entry-summary" class="metric-grid">{snapshot.get("refined_entry_summary", "")}</div>
+      <p class="muted">2차 정제에서 살아남은 후보가 지금 닫힌 봉 feature에도 맞는지 보는 단계입니다. 여기서 진입후보가 떠도 실주문은 live-supervisor, preflight, live flag가 따로 통과해야 합니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>판정</th><th>심볼</th><th>행동</th><th>방향</th><th>feature 시각</th><th>현재가</th><th>목표가</th><th>손절가</th><th>TP</th><th>SL</th><th>보유봉</th><th>테스트 n</th><th>승률</th><th>평균bps</th><th>PF</th><th>이유</th></tr></thead>
+          <tbody id="refined-entry-rows">{refined_entry_rows}</tbody>
+        </table>
+      </div>
       <h3>2차 정제 후보</h3>
       <div id="refine-summary" class="metric-grid">{snapshot.get("refine_summary", "")}</div>
       <p class="muted">1차 WATCH 후보만 대상으로 TP/SL/보유시간/필터를 주변값으로 다시 흔든 결과입니다. 생존 후보가 없으면 실전 승격이 아니라 paper 관찰 대상입니다.</p>
@@ -1290,6 +1354,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("strategy-summary").innerHTML = data.strategy_summary;
       document.getElementById("strategy-summary-tab").innerHTML = data.strategy_summary;
       document.getElementById("meta-summary").innerHTML = data.meta_summary;
+      document.getElementById("refined-entry-summary").innerHTML = data.refined_entry_summary;
       document.getElementById("refine-summary").innerHTML = data.refine_summary;
       document.getElementById("mine-summary").innerHTML = data.mine_summary;
       document.getElementById("probe-summary").innerHTML = data.probe_summary;
@@ -1300,6 +1365,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("cycle-rows").innerHTML = data.cycle_rows;
       document.getElementById("strategy-cycle-rows").innerHTML = data.strategy_cycle_rows;
       document.getElementById("strategy-rows").innerHTML = data.strategy_rows;
+      document.getElementById("refined-entry-rows").innerHTML = data.refined_entry_rows;
       document.getElementById("refine-rows").innerHTML = data.refine_rows;
       document.getElementById("mine-rows").innerHTML = data.mine_rows;
       document.getElementById("meta-rows").innerHTML = data.meta_rows;
@@ -1375,9 +1441,9 @@ def _status_pill(status: str) -> str:
 
 def _decision_pill(decision: str) -> str:
     tone = "muted"
-    if decision in {"APPROVED", "PAPER_READY", "SURVIVED"}:
+    if decision in {"APPROVED", "PAPER_READY", "SURVIVED", "READY"}:
         tone = "good"
-    elif decision in {"SAMPLE_LOW", "WATCH", "OBSERVE"}:
+    elif decision in {"SAMPLE_LOW", "WATCH", "OBSERVE", "WAIT"}:
         tone = "warn"
     elif decision in {"BLOCKED", "REJECTED"}:
         tone = "block"
@@ -1402,6 +1468,8 @@ def _decision_label(decision: str) -> str:
         "BLOCKED": "차단",
         "SAMPLE_LOW": "표본부족",
         "WATCH": "관찰",
+        "READY": "진입후보",
+        "WAIT": "대기",
     }.get(decision, decision)
 
 

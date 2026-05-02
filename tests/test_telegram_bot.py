@@ -322,6 +322,25 @@ class TelegramCommandTests(unittest.TestCase):
         self.assertEqual(reply, "refine ok")
         text_fn.assert_called_once_with(limit=8)
 
+    def test_refined_entry_command_reads_latest_report(self) -> None:
+        processor = TelegramCommandProcessor(
+            TelegramConfig(
+                allowed_chat_ids=frozenset({"123"}),
+                commands_enabled=True,
+            ),
+            TradingConfig(),
+            TelegramBotState(),
+            exchange_client=FakeExchangeClient(),
+        )
+        with patch(
+            "cointrading.telegram_bot.refined_entry_report_text",
+            return_value="entry ok",
+        ) as text_fn:
+            reply = processor.handle_text("123", "현재후보")
+
+        self.assertEqual(reply, "entry ok")
+        text_fn.assert_called_once_with(limit=8)
+
     def test_entry_check_command_reports_strategy_setups_without_ordering(self) -> None:
         processor = TelegramCommandProcessor(
             TelegramConfig(

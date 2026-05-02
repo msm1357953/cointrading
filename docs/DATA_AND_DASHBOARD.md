@@ -37,6 +37,8 @@ python -m cointrading.cli live-preflight --notional 25 --symbols ETHUSDC
 python -m cointrading.cli live-supervisor --notional 25 --symbols ETHUSDC
 python -m cointrading.cli live-supervisor-notify
 python -m cointrading.cli vibe-probe-notify
+python -m cointrading.cli refine-entry-check
+python -m cointrading.cli refine-entry-notify
 python -m cointrading.cli dashboard --host 127.0.0.1 --port 8080
 ```
 
@@ -78,6 +80,8 @@ The VM runs this as `cointrading-market-regime.timer` every 5 minutes. When `COI
 `market-context-collect` runs every minute on the VM and records funding, premium, open interest, spread, top-book liquidity, order-book depth, and imbalance. `live-supervisor` refreshes both market context and macro regime before producing a final go/no-go report.
 
 `live-supervisor-notify` runs on the VM and sends a Telegram alert when a symbol has an approved, macro-aligned, paper-performance-positive candidate and only safety locks remain. It never places orders; it tells the operator to rerun `실전 80` before any manual one-shot enable.
+
+`refine-entry-check` is the current-market gate for second-stage refined strategies. It reads `data/strategy_refine_latest.json`, fetches recent live klines, compares the latest closed-bar features with each historical SURVIVED condition, writes `data/refined_entry_latest.json`, and never places orders. `refine-entry-notify` sends Telegram only when a current READY candidate appears or changes.
 
 The alert gate is deliberately stricter than the strategy-candidate table. A candidate must have at least 20 closed paper lifecycle cycles, positive all-time and recent paper PnL, a paper payoff ratio of at least 1.2, and a recent stop/max-hold exit ratio no higher than 65%. This keeps `signal_grid` approvals from becoming live candidates until the real paper state machine has also shown survivable behavior. The live supervisor only treats `maker_post_only`, `taker_trend`, `maker_range`, and `taker_breakout` as supported live execution modes; experimental `taker_momentum` and hybrid signal-grid rows remain research-only until matching live state machines exist.
 

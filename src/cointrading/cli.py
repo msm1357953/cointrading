@@ -50,6 +50,16 @@ from cointrading.meta_strategy import (
     write_meta_report,
 )
 from cointrading.models import Kline
+from cointrading.refined_entry_gate import (
+    RefinedEntryNotifyState,
+    apply_refined_entry_notification_state,
+    default_refined_entry_notify_state_path,
+    default_refined_entry_report_path,
+    evaluate_refined_entry_candidates,
+    refined_entry_notification_decision,
+    refined_entry_text,
+    write_refined_entry_report,
+)
 from cointrading.research_probe import (
     ProbeNotifyState,
     apply_probe_notification_state,
@@ -336,6 +346,27 @@ def main(argv: list[str] | None = None) -> None:
     strategy_refine_parser.add_argument("--top-limit", type=int, default=30)
     strategy_refine_parser.add_argument("--output", type=Path, default=default_strategy_refine_report_path())
 
+    refine_entry_parser = subparsers.add_parser("refine-entry-check")
+    refine_entry_parser.add_argument("--source", type=Path, default=default_strategy_refine_report_path())
+    refine_entry_parser.add_argument("--symbols", nargs="+")
+    refine_entry_parser.add_argument("--kline-limit", type=int, default=500)
+    refine_entry_parser.add_argument("--limit", type=int, default=20)
+    refine_entry_parser.add_argument("--output", type=Path, default=default_refined_entry_report_path())
+
+    refine_entry_notify_parser = subparsers.add_parser("refine-entry-notify")
+    refine_entry_notify_parser.add_argument("--source", type=Path, default=default_strategy_refine_report_path())
+    refine_entry_notify_parser.add_argument("--symbols", nargs="+")
+    refine_entry_notify_parser.add_argument("--kline-limit", type=int, default=500)
+    refine_entry_notify_parser.add_argument("--limit", type=int, default=20)
+    refine_entry_notify_parser.add_argument("--output", type=Path, default=default_refined_entry_report_path())
+    refine_entry_notify_parser.add_argument(
+        "--state-path",
+        type=Path,
+        default=default_refined_entry_notify_state_path(),
+    )
+    refine_entry_notify_parser.add_argument("--force", action="store_true")
+    refine_entry_notify_parser.add_argument("--no-send", action="store_true")
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -509,6 +540,25 @@ def main(argv: list[str] | None = None) -> None:
             args.test_months,
             args.top_limit,
             args.output,
+        )
+    elif args.command == "refine-entry-check":
+        refine_entry_check(
+            args.source,
+            args.symbols,
+            args.kline_limit,
+            args.limit,
+            args.output,
+        )
+    elif args.command == "refine-entry-notify":
+        refine_entry_notify(
+            args.source,
+            args.symbols,
+            args.kline_limit,
+            args.limit,
+            args.output,
+            args.state_path,
+            args.force,
+            args.no_send,
         )
     elif args.command == "telegram-me":
         telegram_me()
@@ -1320,6 +1370,73 @@ def strategy_refine(
     )
     print(strategy_refine_text(ranked, source_count=len(selected_candidates), limit=top_limit))
     print(f"\nreport: {output}")
+
+
+def refine_entry_check(
+    source: Path,
+    symbols: list[str] | None,
+    kline_limit: int,
+    limit: int,
+    output: Path,
+) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    candidates, warnings = evaluate_refined_entry_candidates(
+        client,
+        config=config,
+        source_path=source,
+        symbols=symbols,
+        kline_limit=kline_limit,
+        limit=limit,
+    )
+    write_refined_entry_report(output, candidates=candidates, warnings=warnings, source_path=source)
+    print(refined_entry_text(candidates, warnings=warnings, limit=limit))
+    print(f"\nreport: {output}")
+
+
+def refine_entry_notify(
+    source: Path,
+    symbols: list[str] | None,
+    kline_limit: int,
+    limit: int,
+    output: Path,
+    state_path: Path,
+    force: bool,
+    no_send: bool,
+) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    candidates, warnings = evaluate_refined_entry_candidates(
+        client,
+        config=config,
+        source_path=source,
+        symbols=symbols,
+        kline_limit=kline_limit,
+        limit=limit,
+    )
+    write_refined_entry_report(output, candidates=candidates, warnings=warnings, source_path=source)
+    state = RefinedEntryNotifyState.load(state_path)
+    should_send, reason, signature, ready = refined_entry_notification_decision(
+        candidates,
+        state,
+        force=force,
+    )
+    text = refined_entry_text(ready or candidates, warnings=warnings, limit=min(limit, 8))
+    if not should_send:
+        print(f"refine-entry-notify: skipped - {reason}")
+        return
+    if no_send:
+        print("refine-entry-notify: print only")
+        print(text)
+        apply_refined_entry_notification_state(state, signature=signature).save(state_path)
+        return
+    try:
+        TelegramClient(TelegramConfig.from_env()).send_message(_telegram_safe_text(text))
+    except Exception as exc:
+        print(f"refine-entry-notify: failed - {exc}")
+        return
+    apply_refined_entry_notification_state(state, signature=signature).save(state_path)
+    print("refine-entry-notify: sent")
 
 
 def _run_meta_backtests(

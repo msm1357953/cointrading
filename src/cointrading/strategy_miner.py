@@ -506,6 +506,27 @@ def strategy_action_ko(action: str) -> str:
     }.get(action, action)
 
 
+def current_feature_snapshot(
+    *,
+    symbol: str,
+    interval: str,
+    klines: list[Kline],
+    current_ms: int | None = None,
+) -> MarketFeatureSnapshot | None:
+    closed = [row for row in klines if current_ms is None or row.close_time <= current_ms]
+    if len(closed) < 101:
+        return None
+    features = _feature_series(symbol.upper(), interval, closed)
+    return features[-1]
+
+
+def mined_result_matches_feature(
+    result: MinedStrategyResult,
+    feature: MarketFeatureSnapshot,
+) -> bool:
+    return _matches(result.condition, feature)
+
+
 def _refined_candidate_rules(source_rows: list[MinedStrategyResult]) -> list[CandidateRule]:
     rules: list[CandidateRule] = []
     seen = set()
