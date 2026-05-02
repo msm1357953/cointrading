@@ -279,7 +279,7 @@ def main(argv: list[str] | None = None) -> None:
 
     meta_backtest_parser = subparsers.add_parser("meta-backtest")
     meta_backtest_parser.add_argument("--symbols", nargs="+")
-    meta_backtest_parser.add_argument("--interval", default="15m")
+    meta_backtest_parser.add_argument("--interval", default="1h")
     meta_backtest_parser.add_argument("--start", default="2025-01-01")
     meta_backtest_parser.add_argument("--end")
     meta_backtest_parser.add_argument("--history-dir", type=Path, default=default_history_dir())
@@ -288,7 +288,7 @@ def main(argv: list[str] | None = None) -> None:
 
     meta_notify_parser = subparsers.add_parser("meta-backtest-notify")
     meta_notify_parser.add_argument("--symbols", nargs="+")
-    meta_notify_parser.add_argument("--interval", default="15m")
+    meta_notify_parser.add_argument("--interval", default="1h")
     meta_notify_parser.add_argument("--start", default="2025-01-01")
     meta_notify_parser.add_argument("--end")
     meta_notify_parser.add_argument("--history-dir", type=Path, default=default_history_dir())
