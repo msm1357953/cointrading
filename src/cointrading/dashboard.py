@@ -656,7 +656,7 @@ def _tactical_radar_summary_html(report: dict) -> str:
     return "\n".join(
         [
             _metric_html("최근 실행", kst_from_ms(generated_ms) if generated_ms else "없음", "muted"),
-            _metric_html("진입가능", str(len(ready)), "good" if ready else "muted"),
+            _metric_html("전술후보", str(len(ready)), "good" if ready else "muted"),
             _metric_html("근접/감시", f"{len(near)} / {len(watch)}", "warn" if near or watch else "muted"),
             _metric_html("관망", str(len(avoid)), "muted"),
             _metric_html("상위 전술", best_text, "good" if ready else "warn" if near or watch else "muted"),
@@ -740,7 +740,7 @@ def _mine_rows_html(report: dict) -> str:
     rows = list(report.get("results", []) or [])
     return "\n".join(
         "<tr>"
-        f"<td>{_decision_pill(str(row.get('decision', '')))}</td>"
+        f"<td>{_radar_decision_pill(str(row.get('decision', '')))}</td>"
         f"<td>{escape(str(row.get('symbol', '')))}</td>"
         f"<td>{escape(strategy_action_ko(str(row.get('action', ''))))}</td>"
         f"<td>{float(row.get('take_profit_bps', 0.0) or 0.0):.0f}</td>"
@@ -1524,6 +1524,26 @@ def _decision_pill(decision: str) -> str:
     elif decision in {"BLOCKED", "REJECTED", "AVOID"}:
         tone = "block"
     return f'<span class="pill {_tone_class(tone)}">{escape(_decision_label(decision))}</span>'
+
+
+def _radar_decision_pill(decision: str) -> str:
+    tone = "muted"
+    if decision == "READY":
+        tone = "good"
+    elif decision in {"NEAR", "WATCH"}:
+        tone = "warn"
+    elif decision == "AVOID":
+        tone = "block"
+    return f'<span class="pill {_tone_class(tone)}">{escape(_radar_decision_label(decision))}</span>'
+
+
+def _radar_decision_label(decision: str) -> str:
+    return {
+        "READY": "전술후보",
+        "NEAR": "근접",
+        "WATCH": "감시",
+        "AVOID": "관망",
+    }.get(decision, decision)
 
 
 def _status_row_class(status: str) -> str:

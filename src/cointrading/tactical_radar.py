@@ -404,10 +404,10 @@ def tactical_radar_text(
     if generated_ms:
         lines.append(f"생성시각: {kst_from_ms(generated_ms)}")
     lines.append(
-        f"요약: 진입가능 {len(ready)}개, 근접 {len(near)}개, 감시 {len(watch)}개, 관망 {len(avoid)}개"
+        f"요약: 전술후보 {len(ready)}개, 근접 {len(near)}개, 감시 {len(watch)}개, 관망 {len(avoid)}개"
     )
     if ready:
-        lines.append("현재 결론: 조건부 진입 후보가 있습니다. live-supervisor/preflight는 별도입니다.")
+        lines.append("현재 결론: 전술상 후보가 있습니다. 실전 진입 허가는 live-supervisor/preflight가 따로 필요합니다.")
     elif near:
         lines.append("현재 결론: 근접 후보가 있습니다. 확인 캔들 없이는 추격하지 않습니다.")
     elif watch:
@@ -651,7 +651,7 @@ def _radar_rank_key(signal: TacticalRadarSignal) -> tuple[int, float, float]:
 
 def _decision_ko(decision: str) -> str:
     return {
-        RADAR_READY: "진입가능",
+        RADAR_READY: "전술후보",
         RADAR_NEAR: "근접",
         RADAR_WATCH: "감시",
         RADAR_AVOID: "관망",
