@@ -21,6 +21,7 @@ MODE_LABELS = {
     "taker_trend": "시장가 추세추종",
     "maker_range": "지정가 평균회귀",
     "taker_breakout": "시장가 축소돌파",
+    "paper_tactical": "전술 paper",
 }
 STRATEGY_FAMILY_LABELS = {
     "maker_post_only": "메이커 스캘핑",
@@ -66,6 +67,9 @@ STRATEGY_LABELS = {
     "short_scalp_only": "숏 스캘핑만",
     "range_mean_reversion": "레인지 평균회귀",
     "strict_maker_scalp": "엄격 메이커 스캘핑",
+    "tactical_pullback_long": "눌림 반등 롱",
+    "tactical_pullback_short": "반등 재하락 숏",
+    "tactical_failed_breakout_short": "상방 실패 숏",
 }
 STATUS_LABELS = {
     "ENTRY_SUBMITTED": "진입 대기",
