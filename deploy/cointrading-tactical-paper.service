@@ -1,0 +1,10 @@
+[Unit]
+Description=Run tactical radar paper bridge
+
+[Service]
+Type=oneshot
+User=msm1357953_gmail_com
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+Environment=PYTHONUNBUFFERED=1
+TimeoutStartSec=55
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli tactical-paper-step --notional 80

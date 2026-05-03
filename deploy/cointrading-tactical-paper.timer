@@ -1,0 +1,11 @@
+[Unit]
+Description=Run tactical radar paper bridge every minute
+
+[Timer]
+OnBootSec=240
+OnUnitInactiveSec=60
+AccuracySec=10
+Unit=cointrading-tactical-paper.service
+
+[Install]
+WantedBy=timers.target

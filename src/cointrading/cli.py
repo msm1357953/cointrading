@@ -118,6 +118,7 @@ from cointrading.tactical_radar import (
     tactical_radar_text,
     write_tactical_radar_report,
 )
+from cointrading.tactical_paper import run_tactical_paper_step, tactical_paper_results_text
 from cointrading.strategies import MovingAverageCrossStrategy
 from cointrading.telegram_bot import (
     TelegramBotState,
@@ -396,6 +397,11 @@ def main(argv: list[str] | None = None) -> None:
     tactical_radar_notify_parser.add_argument("--force", action="store_true")
     tactical_radar_notify_parser.add_argument("--no-send", action="store_true")
 
+    tactical_paper_parser = subparsers.add_parser("tactical-paper-step")
+    tactical_paper_parser.add_argument("--symbols", nargs="+")
+    tactical_paper_parser.add_argument("--notional", type=float)
+    tactical_paper_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -606,6 +612,8 @@ def main(argv: list[str] | None = None) -> None:
             args.force,
             args.no_send,
         )
+    elif args.command == "tactical-paper-step":
+        tactical_paper_step(_active_scalp_symbols(args.symbols), args.notional, args.db_path)
     elif args.command == "telegram-me":
         telegram_me()
     elif args.command == "telegram-send":
@@ -1537,6 +1545,24 @@ def tactical_radar_notify(
         return
     apply_tactical_radar_notification_state(state, signature=signature).save(state_path)
     print("tactical-radar-notify: sent")
+
+
+def tactical_paper_step(
+    symbols: list[str],
+    notional: float | None,
+    db_path: Path,
+) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    store = TradingStore(db_path)
+    results, warnings = run_tactical_paper_step(
+        client,
+        store,
+        config,
+        symbols=symbols,
+        notional=notional,
+    )
+    print(tactical_paper_results_text(results, warnings))
 
 
 def _run_meta_backtests(
