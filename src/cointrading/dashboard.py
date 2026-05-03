@@ -614,6 +614,7 @@ def _refined_entry_summary_html(report: dict) -> str:
         return _metric_html("현재장 진입후보", "결과 없음", "warn")
     ready = [row for row in rows if str(row.get("decision")) == "READY"]
     wait = [row for row in rows if str(row.get("decision")) == "WAIT"]
+    observe = [row for row in rows if str(row.get("decision")) == "OBSERVE"]
     generated_ms = int(report.get("generated_ms", 0) or 0)
     best = rows[0]
     best_text = (
@@ -624,7 +625,8 @@ def _refined_entry_summary_html(report: dict) -> str:
         [
             _metric_html("최근 실행", kst_from_ms(generated_ms) if generated_ms else "없음", "muted"),
             _metric_html("진입후보", str(len(ready)), "good" if ready else "warn"),
-            _metric_html("대기", str(len(wait)), "warn" if wait else "muted"),
+            _metric_html("근접대기", str(len(wait)), "warn" if wait else "muted"),
+            _metric_html("먼관찰", str(len(observe)), "muted"),
             _metric_html("상위 매칭", best_text, "good" if ready else "warn"),
         ]
     )
@@ -1466,12 +1468,12 @@ def _decision_label(decision: str) -> str:
         "PAPER_READY": "Paper 후보",
         "SURVIVED": "생존",
         "REJECTED": "탈락",
-        "OBSERVE": "관찰",
+        "OBSERVE": "관찰보류",
         "BLOCKED": "차단",
         "SAMPLE_LOW": "표본부족",
         "WATCH": "관찰",
         "READY": "진입후보",
-        "WAIT": "대기",
+        "WAIT": "근접대기",
     }.get(decision, decision)
 
 

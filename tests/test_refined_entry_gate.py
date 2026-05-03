@@ -8,6 +8,7 @@ from cointrading.config import TradingConfig
 from cointrading.models import Kline
 from cointrading.refined_entry_gate import (
     ENTRY_BLOCKED,
+    ENTRY_OBSERVE,
     ENTRY_READY,
     ENTRY_WAIT,
     RefinedEntryNotifyState,
@@ -163,9 +164,9 @@ class RefinedEntryGateTests(unittest.TestCase):
                 symbol="ETHUSDC",
                 interval="1h",
                 rule_id="rule",
-                action="breakout_short",
-                side="short",
-                condition=RuleCondition(require_low_breakout=True),
+                action="trend_long",
+                side="long",
+                condition=RuleCondition(min_volume_ratio=1.1),
                 take_profit_bps=180.0,
                 stop_loss_bps=60.0,
                 max_hold_bars=24,
@@ -218,7 +219,76 @@ class RefinedEntryGateTests(unittest.TestCase):
             watch_periodic_minutes=360,
         )
         self.assertFalse(should_send)
-        self.assertEqual(reason, "현재 진입후보 없음; 관찰후보 주기 미도래")
+        self.assertEqual(reason, "현재 진입후보 없음; 근접 관찰후보 주기 미도래")
+        self.assertEqual(selected, [])
+
+    def test_far_breakout_candidate_is_observe_not_watch_notification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "strategy_refine_latest.json"
+            summary = TradeSummary(
+                count=40,
+                win_rate=0.55,
+                avg_pnl_bps=18.0,
+                sum_pnl=1.0,
+                profit_factor=2.0,
+                payoff_ratio=2.0,
+                max_drawdown_pct=0.01,
+                max_consecutive_loss=2,
+            )
+            result = MinedStrategyResult(
+                symbol="BTCUSDC",
+                interval="1h",
+                rule_id="rule",
+                action="breakout_short",
+                side="short",
+                condition=RuleCondition(
+                    max_trend_4h_bps=0.0,
+                    max_trend_24h_bps=0.0,
+                    max_bollinger_position=0.1,
+                    min_volume_ratio=1.6,
+                    require_low_breakout=True,
+                ),
+                take_profit_bps=180.0,
+                stop_loss_bps=60.0,
+                max_hold_bars=24,
+                full_summary=summary,
+                selected_windows=4,
+                positive_test_windows=3,
+                test_summary=summary,
+                decision="SURVIVED",
+                reason="ok",
+            )
+            write_strategy_refine_report(
+                source,
+                results=[result],
+                symbols=["BTCUSDC"],
+                interval="1h",
+                start_date="2025-01-01",
+                end_date="2026-04-30",
+                train_months=6,
+                test_months=1,
+                source_path=None,
+                source_count=1,
+            )
+
+            candidates, _ = evaluate_refined_entry_candidates(
+                FakeKlineClient(_klines()),
+                config=TradingConfig(supervisor_min_samples=100),
+                source_path=source,
+                symbols=["BTCUSDC"],
+                current_ms=200 * 3_600_000,
+            )
+
+        self.assertEqual(candidates[0].decision, ENTRY_OBSERVE)
+        self.assertIn("현재 자리와 조건 거리가 큼", candidates[0].reason)
+        self.assertIn("하방돌파 아님", candidates[0].reason)
+        should_send, reason, _, selected = refined_entry_notification_decision(
+            candidates,
+            RefinedEntryNotifyState(),
+            watch_periodic_minutes=360,
+        )
+        self.assertFalse(should_send)
+        self.assertEqual(reason, "현재 진입후보 없음; 근접 관찰후보 없음")
         self.assertEqual(selected, [])
 
 

@@ -22,7 +22,15 @@ from cointrading.strategy_miner import (
 
 ENTRY_READY = "READY"
 ENTRY_WAIT = "WAIT"
+ENTRY_OBSERVE = "OBSERVE"
 ENTRY_BLOCKED = "BLOCKED"
+
+_MAX_NEAR_MISSES = 2
+_NEAR_BPS_MISS = 12.0
+_NEAR_RSI_MISS = 5.0
+_NEAR_BOLLINGER_MISS = 0.12
+_NEAR_VOLUME_FRACTION = 0.75
+_NEAR_ATR_MULTIPLIER = 1.10
 
 
 @dataclass(frozen=True)
@@ -175,8 +183,12 @@ def refined_entry_text(
         lines.append(f"생성시각: {kst_from_ms(generated_ms)}")
     ready = [row for row in candidates if row.decision == ENTRY_READY]
     wait = [row for row in candidates if row.decision == ENTRY_WAIT]
+    observe = [row for row in candidates if row.decision == ENTRY_OBSERVE]
     blocked = [row for row in candidates if row.decision == ENTRY_BLOCKED]
-    lines.append(f"요약: 진입후보 {len(ready)}개, 대기 {len(wait)}개, 차단 {len(blocked)}개")
+    lines.append(
+        f"요약: 진입후보 {len(ready)}개, 근접대기 {len(wait)}개, "
+        f"먼관찰 {len(observe)}개, 차단 {len(blocked)}개"
+    )
     if ready:
         best = ready[0]
         lines.append(
@@ -188,7 +200,12 @@ def refined_entry_text(
         lines.append("주의: 이 단계도 주문 실행이 아닙니다. live-supervisor/preflight/live flag가 따로 통과해야 합니다.")
     elif wait:
         lines.append(
-            "관찰: 아래 후보들은 손익비 기준은 통과했지만 현재 feature가 아직 맞지 않습니다. "
+            "근접대기: 아래 후보들은 손익비 기준은 통과했고 현재 조건에 가까워지고 있지만 "
+            "아직 진입 신호가 아닙니다."
+        )
+    elif observe:
+        lines.append(
+            "먼관찰: 손익비 기준은 통과한 과거 패턴이 있지만 현재 자리가 멉니다. "
             "진입 신호가 아닙니다."
         )
     else:
@@ -284,7 +301,7 @@ def refined_entry_notification_decision(
     watch = watch_refined_entry_candidates(candidate_list)
     watch_signature = refined_entry_watch_signature(watch)
     if not watch:
-        return False, "현재 진입후보 없음", signature, []
+        return False, "현재 진입후보 없음; 근접 관찰후보 없음", signature, []
     if force:
         return True, "강제 관찰후보 전송", watch_signature, watch
     interval_ms = max(watch_periodic_minutes, 0) * 60_000
@@ -294,7 +311,7 @@ def refined_entry_notification_decision(
     )
     if periodic_due:
         return True, "정제 관찰후보 주기 보고", watch_signature, watch
-    return False, "현재 진입후보 없음; 관찰후보 주기 미도래", watch_signature, []
+    return False, "현재 진입후보 없음; 근접 관찰후보 주기 미도래", watch_signature, []
 
 
 def apply_refined_entry_notification_state(
@@ -344,9 +361,12 @@ def _candidate_from_result(
     elif matches:
         decision = ENTRY_READY
         reason = "현재 feature가 손익비 검증 생존 조건과 일치합니다."
-    else:
+    elif _near_activation(row, feature):
         decision = ENTRY_WAIT
-        reason = _mismatch_reason(row, feature)
+        reason = _mismatch_reason(row, feature, near=True)
+    else:
+        decision = ENTRY_OBSERVE
+        reason = _mismatch_reason(row, feature, near=False)
     target = _target_price(feature.close, row.side, row.take_profit_bps)
     stop = _stop_price(feature.close, row.side, row.stop_loss_bps)
     return RefinedEntryCandidate(
@@ -382,7 +402,7 @@ def _candidate_from_result(
 
 
 def _entry_rank_key(row: RefinedEntryCandidate) -> tuple[int, float, float, int]:
-    rank = {ENTRY_READY: 0, ENTRY_WAIT: 1, ENTRY_BLOCKED: 2}.get(row.decision, 3)
+    rank = {ENTRY_READY: 0, ENTRY_WAIT: 1, ENTRY_OBSERVE: 2, ENTRY_BLOCKED: 3}.get(row.decision, 4)
     return (
         rank,
         -row.test_avg_pnl_bps,
@@ -391,8 +411,12 @@ def _entry_rank_key(row: RefinedEntryCandidate) -> tuple[int, float, float, int]
     )
 
 
-def _mismatch_reason(row: MinedStrategyResult, feature: MarketFeatureSnapshot) -> str:
-    return f"현재 feature가 조건 불일치: {_feature_summary(feature)}"
+def _mismatch_reason(row: MinedStrategyResult, feature: MarketFeatureSnapshot, *, near: bool) -> str:
+    prefix = "현재 조건 근접, 아직 불일치" if near else "현재 자리와 조건 거리가 큼"
+    gaps = _condition_gap_summary(row, feature)
+    if gaps:
+        return f"{prefix}: {gaps}; {_feature_summary(feature)}"
+    return f"{prefix}: {_feature_summary(feature)}"
 
 
 def _feature_summary(feature: MarketFeatureSnapshot) -> str:
@@ -452,9 +476,116 @@ def _candidate_from_dict(row: dict[str, Any]) -> RefinedEntryCandidate:
 def _decision_ko(decision: str) -> str:
     return {
         ENTRY_READY: "진입후보",
-        ENTRY_WAIT: "대기",
+        ENTRY_WAIT: "근접대기",
+        ENTRY_OBSERVE: "관찰보류",
         ENTRY_BLOCKED: "차단",
     }.get(decision, decision)
+
+
+def _near_activation(row: MinedStrategyResult, feature: MarketFeatureSnapshot) -> bool:
+    gaps = _condition_gaps(row, feature)
+    if not gaps:
+        return False
+    if len(gaps) > _MAX_NEAR_MISSES:
+        return False
+    return all(is_near for _, is_near in gaps)
+
+
+def _condition_gap_summary(row: MinedStrategyResult, feature: MarketFeatureSnapshot) -> str:
+    return ", ".join(gap[0] for gap in _condition_gaps(row, feature)[:6])
+
+
+def _condition_gaps(row: MinedStrategyResult, feature: MarketFeatureSnapshot) -> list[tuple[str, bool]]:
+    condition = row.condition
+    gaps: list[tuple[str, bool]] = []
+    if condition.require_high_breakout and not feature.high_breakout:
+        near = (
+            feature.bollinger_position is not None
+            and feature.bollinger_position >= 0.75
+            and feature.trend_4h_bps >= -_NEAR_BPS_MISS
+        )
+        gaps.append(("상방돌파 아님", near))
+    if condition.require_low_breakout and not feature.low_breakout:
+        near = (
+            feature.bollinger_position is not None
+            and feature.bollinger_position <= 0.25
+            and feature.trend_4h_bps <= _NEAR_BPS_MISS
+        )
+        gaps.append(("하방돌파 아님", near))
+
+    _add_min_gap(gaps, "ema", feature.ema_gap_bps, condition.min_ema_gap_bps, near_margin=_NEAR_BPS_MISS)
+    _add_max_gap(gaps, "ema", feature.ema_gap_bps, condition.max_ema_gap_bps, near_margin=_NEAR_BPS_MISS)
+    _add_min_gap(gaps, "slope", feature.ema_slope_bps, condition.min_ema_slope_bps, near_margin=_NEAR_BPS_MISS)
+    _add_max_gap(gaps, "slope", feature.ema_slope_bps, condition.max_ema_slope_bps, near_margin=_NEAR_BPS_MISS)
+    _add_min_gap(gaps, "4h", feature.trend_4h_bps, condition.min_trend_4h_bps, near_margin=_NEAR_BPS_MISS)
+    _add_max_gap(gaps, "4h", feature.trend_4h_bps, condition.max_trend_4h_bps, near_margin=_NEAR_BPS_MISS)
+    _add_min_gap(gaps, "24h", feature.trend_24h_bps, condition.min_trend_24h_bps, near_margin=_NEAR_BPS_MISS)
+    _add_max_gap(gaps, "24h", feature.trend_24h_bps, condition.max_trend_24h_bps, near_margin=_NEAR_BPS_MISS)
+    if feature.rsi14 is not None:
+        _add_min_gap(gaps, "RSI", feature.rsi14, condition.min_rsi14, near_margin=_NEAR_RSI_MISS)
+        _add_max_gap(gaps, "RSI", feature.rsi14, condition.max_rsi14, near_margin=_NEAR_RSI_MISS)
+    elif condition.min_rsi14 is not None or condition.max_rsi14 is not None:
+        gaps.append(("RSI 산출불가", False))
+    if feature.bollinger_position is not None:
+        _add_min_gap(gaps, "BB", feature.bollinger_position, condition.min_bollinger_position, near_margin=_NEAR_BOLLINGER_MISS)
+        _add_max_gap(gaps, "BB", feature.bollinger_position, condition.max_bollinger_position, near_margin=_NEAR_BOLLINGER_MISS)
+    elif condition.min_bollinger_position is not None or condition.max_bollinger_position is not None:
+        gaps.append(("BB 산출불가", False))
+    _add_min_ratio_gap(gaps, "vol", feature.volume_ratio, condition.min_volume_ratio, fraction=_NEAR_VOLUME_FRACTION)
+    _add_max_ratio_gap(gaps, "ATR", feature.atr_bps, condition.max_atr_bps, multiplier=_NEAR_ATR_MULTIPLIER)
+    return gaps
+
+
+def _add_min_gap(
+    gaps: list[tuple[str, bool]],
+    label: str,
+    value: float,
+    bound: float | None,
+    *,
+    near_margin: float,
+) -> None:
+    if bound is None or value >= bound:
+        return
+    gaps.append((f"{label} {value:+.1f} < {bound:+.1f}", value >= bound - near_margin))
+
+
+def _add_max_gap(
+    gaps: list[tuple[str, bool]],
+    label: str,
+    value: float,
+    bound: float | None,
+    *,
+    near_margin: float,
+) -> None:
+    if bound is None or value <= bound:
+        return
+    gaps.append((f"{label} {value:+.1f} > {bound:+.1f}", value <= bound + near_margin))
+
+
+def _add_min_ratio_gap(
+    gaps: list[tuple[str, bool]],
+    label: str,
+    value: float,
+    bound: float | None,
+    *,
+    fraction: float,
+) -> None:
+    if bound is None or value >= bound:
+        return
+    gaps.append((f"{label} {value:.2f} < {bound:.2f}", value >= bound * fraction))
+
+
+def _add_max_ratio_gap(
+    gaps: list[tuple[str, bool]],
+    label: str,
+    value: float,
+    bound: float | None,
+    *,
+    multiplier: float,
+) -> None:
+    if bound is None or value <= bound:
+        return
+    gaps.append((f"{label} {value:.1f} > {bound:.1f}", value <= bound * multiplier))
 
 
 def _quality_block_reasons(
