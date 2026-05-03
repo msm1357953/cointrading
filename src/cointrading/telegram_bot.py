@@ -34,6 +34,7 @@ from cointrading.symbol_supervisor import (
     supervise_symbols,
     supervisor_report_text,
 )
+from cointrading.tactical_radar import evaluate_tactical_radar, tactical_radar_text
 
 
 DEFAULT_FEE_SYMBOLS = ["BTCUSDC", "ETHUSDC"]
@@ -175,6 +176,11 @@ class TelegramCommandProcessor:
         "시장상황": "market_context",
         "컨텍스트": "market_context",
         "market_context": "market_context",
+        "레이더": "tactical_radar",
+        "기회": "tactical_radar",
+        "전술": "tactical_radar",
+        "타이밍레이더": "tactical_radar",
+        "radar": "tactical_radar",
         "스캘핑": "scalp",
         "스캘프": "scalp",
         "신호": "scalp",
@@ -283,6 +289,8 @@ class TelegramCommandProcessor:
             return self.market_text(args)
         if command == "market_context":
             return self.market_context_text(args)
+        if command == "tactical_radar":
+            return self.tactical_radar_text(args)
         if command == "scalp":
             return self.scalp_text(args)
         if command == "scalp_report":
@@ -329,6 +337,7 @@ class TelegramCommandProcessor:
                 "가격 BTCUSDC - 현재 가격 확인",
                 "장세 - 큰 장상태와 허용 전략 확인",
                 "시장상황 - 펀딩, 프리미엄, 미결제약정, 호가 유동성 확인",
+                "레이더 - 지금 가능한 전술 단계 확인. 추격금지/눌림대기/근접/진입가능",
                 "스캘핑 BTCUSDC - 현재 스캘핑 신호와 장 상태 확인",
                 "보고 - 스캘핑 dry-run 결과와 장 상태별 성과 요약",
                 "보고 BTCUSDC - BTCUSDC만 결과 요약",
@@ -466,6 +475,18 @@ class TelegramCommandProcessor:
         if snapshots:
             return "\n\n".join(snapshot.to_text() for snapshot in snapshots)
         return market_context_rows_text(store.latest_market_contexts(symbols=symbols))
+
+    def tactical_radar_text(self, args: list[str]) -> str:
+        symbols = [item.upper() for item in args] if args else list(self.trading_config.scalp_symbols)
+        for symbol in symbols:
+            if not self.SYMBOL_PATTERN.match(symbol):
+                return "심볼 형식이 이상합니다. 예: BTCUSDC"
+        signals, warnings = evaluate_tactical_radar(
+            self.exchange_client,
+            config=self.trading_config,
+            symbols=symbols,
+        )
+        return tactical_radar_text(signals, warnings=warnings, limit=8)
 
     def account_text(self) -> str:
         return account_summary_text(self.exchange_client.account_info())

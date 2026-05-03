@@ -1,0 +1,11 @@
+[Unit]
+Description=Check tactical radar every minute
+
+[Timer]
+OnBootSec=210
+OnUnitInactiveSec=60
+AccuracySec=15
+Unit=cointrading-tactical-radar-notify.service
+
+[Install]
+WantedBy=timers.target

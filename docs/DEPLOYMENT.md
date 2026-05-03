@@ -10,7 +10,7 @@ The VM is the production-like runner:
 - static IP: `34.50.6.186`
 - always-on services: `cointrading-telegram.service`, `cointrading-dashboard.service`
 - data/evaluation timers: `cointrading-scalp-collect.timer`, `cointrading-scalp-score.timer`, `cointrading-market-regime.timer`, `cointrading-market-context.timer`, `cointrading-strategy-evaluate.timer`
-- automatic Telegram alert timers: `cointrading-refine-entry-notify.timer`, `cointrading-live-supervisor-notify.timer`
+- automatic Telegram alert timers: `cointrading-refine-entry-notify.timer`, `cointrading-tactical-radar-notify.timer`, `cointrading-live-supervisor-notify.timer`
 - manual/reporting or legacy broad-entry timers kept disabled by default: `cointrading-strategy-notify.timer`, `cointrading-trade-event-notify.timer`, `cointrading-llm-report.timer`, `cointrading-vibe-probe-notify.timer`, `cointrading-meta-backtest-notify.timer`, `cointrading-scalp-engine.timer`, `cointrading-strategy-engine.timer`
 
 ## GitHub Actions Deploy

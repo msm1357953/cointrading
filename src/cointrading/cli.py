@@ -108,6 +108,16 @@ from cointrading.symbol_supervisor import (
     supervise_symbols,
     supervisor_report_text,
 )
+from cointrading.tactical_radar import (
+    TacticalRadarNotifyState,
+    apply_tactical_radar_notification_state,
+    default_tactical_radar_notify_state_path,
+    default_tactical_radar_report_path,
+    evaluate_tactical_radar,
+    tactical_radar_notification_decision,
+    tactical_radar_text,
+    write_tactical_radar_report,
+)
 from cointrading.strategies import MovingAverageCrossStrategy
 from cointrading.telegram_bot import (
     TelegramBotState,
@@ -368,6 +378,24 @@ def main(argv: list[str] | None = None) -> None:
     refine_entry_notify_parser.add_argument("--force", action="store_true")
     refine_entry_notify_parser.add_argument("--no-send", action="store_true")
 
+    tactical_radar_parser = subparsers.add_parser("tactical-radar")
+    tactical_radar_parser.add_argument("--symbols", nargs="+")
+    tactical_radar_parser.add_argument("--output", type=Path, default=default_tactical_radar_report_path())
+    tactical_radar_parser.add_argument("--limit", type=int, default=8)
+
+    tactical_radar_notify_parser = subparsers.add_parser("tactical-radar-notify")
+    tactical_radar_notify_parser.add_argument("--symbols", nargs="+")
+    tactical_radar_notify_parser.add_argument("--output", type=Path, default=default_tactical_radar_report_path())
+    tactical_radar_notify_parser.add_argument(
+        "--state-path",
+        type=Path,
+        default=default_tactical_radar_notify_state_path(),
+    )
+    tactical_radar_notify_parser.add_argument("--periodic-minutes", type=int, default=30)
+    tactical_radar_notify_parser.add_argument("--limit", type=int, default=8)
+    tactical_radar_notify_parser.add_argument("--force", action="store_true")
+    tactical_radar_notify_parser.add_argument("--no-send", action="store_true")
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -559,6 +587,22 @@ def main(argv: list[str] | None = None) -> None:
             args.output,
             args.state_path,
             args.watch_periodic_minutes,
+            args.force,
+            args.no_send,
+        )
+    elif args.command == "tactical-radar":
+        tactical_radar(
+            _active_scalp_symbols(args.symbols),
+            args.output,
+            args.limit,
+        )
+    elif args.command == "tactical-radar-notify":
+        tactical_radar_notify(
+            _active_scalp_symbols(args.symbols),
+            args.output,
+            args.state_path,
+            args.periodic_minutes,
+            args.limit,
             args.force,
             args.no_send,
         )
@@ -1442,6 +1486,57 @@ def refine_entry_notify(
         return
     apply_refined_entry_notification_state(state, signature=signature, watch=is_watch).save(state_path)
     print("refine-entry-notify: sent")
+
+
+def tactical_radar(
+    symbols: list[str],
+    output: Path,
+    limit: int,
+) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    signals, warnings = evaluate_tactical_radar(client, config=config, symbols=symbols)
+    write_tactical_radar_report(output, signals=signals, warnings=warnings)
+    print(tactical_radar_text(signals, warnings=warnings, limit=limit))
+    print(f"\nreport: {output}")
+
+
+def tactical_radar_notify(
+    symbols: list[str],
+    output: Path,
+    state_path: Path,
+    periodic_minutes: int,
+    limit: int,
+    force: bool,
+    no_send: bool,
+) -> None:
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    signals, warnings = evaluate_tactical_radar(client, config=config, symbols=symbols)
+    write_tactical_radar_report(output, signals=signals, warnings=warnings)
+    state = TacticalRadarNotifyState.load(state_path)
+    should_send, reason, signature, selected = tactical_radar_notification_decision(
+        signals,
+        state,
+        force=force,
+        periodic_minutes=periodic_minutes,
+    )
+    if not should_send:
+        print(f"tactical-radar-notify: skipped - {reason}")
+        return
+    text = tactical_radar_text(selected or signals, warnings=warnings, limit=limit)
+    if no_send:
+        print("tactical-radar-notify: print only")
+        print(text)
+        apply_tactical_radar_notification_state(state, signature=signature).save(state_path)
+        return
+    try:
+        TelegramClient(TelegramConfig.from_env()).send_message(_telegram_safe_text(text))
+    except Exception as exc:
+        print(f"tactical-radar-notify: failed - {exc}")
+        return
+    apply_tactical_radar_notification_state(state, signature=signature).save(state_path)
+    print("tactical-radar-notify: sent")
 
 
 def _run_meta_backtests(

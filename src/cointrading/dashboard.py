@@ -40,6 +40,10 @@ from cointrading.strategy_notify import (
     STRATEGY_LABELS,
     strategy_family_label,
 )
+from cointrading.tactical_radar import (
+    default_tactical_radar_report_path,
+    load_tactical_radar_report,
+)
 
 
 DEFAULT_DASHBOARD_ROW_LIMIT = 200
@@ -174,6 +178,7 @@ def _snapshot(
     mine_report = load_strategy_mine_report(default_strategy_mine_report_path()) or {}
     refine_report = load_strategy_refine_report(default_strategy_refine_report_path()) or {}
     refined_entry_report = load_refined_entry_report(default_refined_entry_report_path()) or {}
+    tactical_radar_report = load_tactical_radar_report(default_tactical_radar_report_path()) or {}
     active_unrealized = _active_unrealized_total(
         active_scalp_cycles,
         active_strategy_cycles,
@@ -211,6 +216,7 @@ def _snapshot(
             strategy_exit_reasons=strategy_exit_reasons,
         ),
         "strategy_summary": _strategy_summary_html(latest_strategy_batch),
+        "tactical_radar_summary": _tactical_radar_summary_html(tactical_radar_report),
         "meta_summary": _meta_summary_html(meta_report),
         "mine_summary": _mine_summary_html(mine_report),
         "refine_summary": _refine_summary_html(refine_report),
@@ -222,6 +228,7 @@ def _snapshot(
         "cycle_rows": _cycle_rows_html(scalp_cycles) or _empty_table_row(6, "스캘핑 상태머신 기록 없음"),
         "strategy_cycle_rows": _strategy_cycle_rows_html(strategy_cycles) or _empty_table_row(7, "전략 상태머신 기록 없음"),
         "strategy_rows": _strategy_rows_html(strategy_rows) or _empty_table_row(16, "전략 평가 결과 없음"),
+        "tactical_radar_rows": _tactical_radar_rows_html(tactical_radar_report) or _empty_table_row(13, "전술 레이더 결과 없음"),
         "meta_rows": _meta_rows_html(meta_report) or _empty_table_row(13, "메타전략 백테스트 결과 없음"),
         "meta_action_rows": _meta_action_rows_html(meta_report) or _empty_table_row(7, "메타전략 행동별 결과 없음"),
         "refined_entry_rows": _refined_entry_rows_html(refined_entry_report) or _empty_table_row(18, "현재장 정제후보 결과 없음"),
@@ -632,6 +639,31 @@ def _refined_entry_summary_html(report: dict) -> str:
     )
 
 
+def _tactical_radar_summary_html(report: dict) -> str:
+    rows = list(report.get("signals", []) or [])
+    if not rows:
+        return _metric_html("전술 레이더", "결과 없음", "warn")
+    ready = [row for row in rows if str(row.get("decision")) == "READY"]
+    near = [row for row in rows if str(row.get("decision")) == "NEAR"]
+    watch = [row for row in rows if str(row.get("decision")) == "WATCH"]
+    avoid = [row for row in rows if str(row.get("decision")) == "AVOID"]
+    generated_ms = int(report.get("generated_ms", 0) or 0)
+    best = rows[0]
+    best_text = (
+        f"{best.get('symbol', '')} {_scenario_label(str(best.get('scenario', '')))} "
+        f"{_decision_label(str(best.get('decision', '')))}"
+    )
+    return "\n".join(
+        [
+            _metric_html("최근 실행", kst_from_ms(generated_ms) if generated_ms else "없음", "muted"),
+            _metric_html("진입가능", str(len(ready)), "good" if ready else "muted"),
+            _metric_html("근접/감시", f"{len(near)} / {len(watch)}", "warn" if near or watch else "muted"),
+            _metric_html("관망", str(len(avoid)), "muted"),
+            _metric_html("상위 전술", best_text, "good" if ready else "warn" if near or watch else "muted"),
+        ]
+    )
+
+
 def _probe_summary_html(report: dict) -> str:
     rows = list(report.get("results", []) or [])
     if not rows:
@@ -747,6 +779,28 @@ def _refined_entry_rows_html(report: dict) -> str:
         f"<td>{float(row.get('test_payoff_ratio', 0.0) or 0.0):.2f}</td>"
         f"<td>{escape(_fmt_pct(float(row.get('win_rate_edge', 0.0) or 0.0)))}</td>"
         f"<td>{escape(str(row.get('reason', '')))}</td>"
+        "</tr>"
+        for row in rows
+    )
+
+
+def _tactical_radar_rows_html(report: dict) -> str:
+    rows = list(report.get("signals", []) or [])
+    return "\n".join(
+        "<tr>"
+        f"<td>{_decision_pill(str(row.get('decision', '')))}</td>"
+        f"<td>{escape(str(row.get('symbol', '')))}</td>"
+        f"<td>{escape(_scenario_label(str(row.get('scenario', ''))))}</td>"
+        f"<td>{escape(_side_label(str(row.get('side', ''))))}</td>"
+        f"<td>{escape(kst_from_ms(int(row.get('timestamp_ms', 0) or 0)))}</td>"
+        f"<td>{_fmt_price(row.get('current_price'))}</td>"
+        f"<td>{_fmt_price(row.get('trigger_price'))}</td>"
+        f"<td>{_fmt_price(row.get('target_price'))}</td>"
+        f"<td>{_fmt_price(row.get('stop_price'))}</td>"
+        f"<td>{float(row.get('confidence', 0.0) or 0.0):.0%}</td>"
+        f"<td>{float(row.get('change_2h_bps', 0.0) or 0.0):+.1f}</td>"
+        f"<td>{float(row.get('pullback_bps', 0.0) or 0.0):.1f}</td>"
+        f"<td>{escape(str(row.get('reason', '')))} / {escape(str(row.get('detail', '')))}</td>"
         "</tr>"
         for row in rows
     )
@@ -966,6 +1020,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     paper_rows = snapshot.get("paper_rows", "") or _empty_table_row(14, "paper 사이클 기록 없음")
     paper_summary = snapshot.get("paper_summary", "")
     strategy_summary = snapshot.get("strategy_summary", "")
+    tactical_radar_rows = snapshot.get("tactical_radar_rows", "") or _empty_table_row(13, "전술 레이더 결과 없음")
     signal_rows = snapshot["signal_rows"] or _empty_table_row(5, "최근 신호 없음")
     order_rows = snapshot["order_rows"] or _empty_table_row(5, "최근 주문/차단 없음")
     cycle_rows = snapshot["cycle_rows"] or _empty_table_row(6, "스캘핑 상태머신 기록 없음")
@@ -1154,6 +1209,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     <nav>
       <button class="active" data-tab="overview">개요</button>
       <button data-tab="paper">Paper</button>
+      <button data-tab="radar">레이더</button>
       <button data-tab="research">메타전략</button>
       <button data-tab="strategies">전략</button>
       <button data-tab="market">시장</button>
@@ -1178,7 +1234,20 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
         <div>
           <h3>전략 후보</h3>
           <div id="strategy-summary" class="metric-grid">{strategy_summary}</div>
+          <h3>전술 레이더</h3>
+          <div id="tactical-radar-summary" class="metric-grid">{snapshot.get("tactical_radar_summary", "")}</div>
         </div>
+      </div>
+    </section>
+    <section id="tab-radar" class="tab-panel">
+      <h2>전술 레이더</h2>
+      <div id="tactical-radar-summary-tab" class="metric-grid">{snapshot.get("tactical_radar_summary", "")}</div>
+      <p class="muted">실전 주문이 아니라 현재 장에서 할 수 있는 전술 단계를 보여줍니다. 추격금지, 눌림대기, 근접, 진입가능을 분리합니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>판정</th><th>심볼</th><th>시나리오</th><th>방향</th><th>시각</th><th>현재가</th><th>트리거</th><th>목표가</th><th>손절가</th><th>확신</th><th>2h</th><th>눌림/반등</th><th>이유</th></tr></thead>
+          <tbody id="tactical-radar-rows">{tactical_radar_rows}</tbody>
+        </table>
       </div>
     </section>
     <section id="tab-paper" class="tab-panel">
@@ -1357,6 +1426,8 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("paper-summary").innerHTML = data.paper_summary;
       document.getElementById("strategy-summary").innerHTML = data.strategy_summary;
       document.getElementById("strategy-summary-tab").innerHTML = data.strategy_summary;
+      document.getElementById("tactical-radar-summary").innerHTML = data.tactical_radar_summary;
+      document.getElementById("tactical-radar-summary-tab").innerHTML = data.tactical_radar_summary;
       document.getElementById("meta-summary").innerHTML = data.meta_summary;
       document.getElementById("refined-entry-summary").innerHTML = data.refined_entry_summary;
       document.getElementById("refine-summary").innerHTML = data.refine_summary;
@@ -1369,6 +1440,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("cycle-rows").innerHTML = data.cycle_rows;
       document.getElementById("strategy-cycle-rows").innerHTML = data.strategy_cycle_rows;
       document.getElementById("strategy-rows").innerHTML = data.strategy_rows;
+      document.getElementById("tactical-radar-rows").innerHTML = data.tactical_radar_rows;
       document.getElementById("refined-entry-rows").innerHTML = data.refined_entry_rows;
       document.getElementById("refine-rows").innerHTML = data.refine_rows;
       document.getElementById("mine-rows").innerHTML = data.mine_rows;
@@ -1447,9 +1519,9 @@ def _decision_pill(decision: str) -> str:
     tone = "muted"
     if decision in {"APPROVED", "PAPER_READY", "SURVIVED", "READY"}:
         tone = "good"
-    elif decision in {"SAMPLE_LOW", "WATCH", "OBSERVE", "WAIT"}:
+    elif decision in {"SAMPLE_LOW", "WATCH", "OBSERVE", "WAIT", "NEAR"}:
         tone = "warn"
-    elif decision in {"BLOCKED", "REJECTED"}:
+    elif decision in {"BLOCKED", "REJECTED", "AVOID"}:
         tone = "block"
     return f'<span class="pill {_tone_class(tone)}">{escape(_decision_label(decision))}</span>'
 
@@ -1474,7 +1546,21 @@ def _decision_label(decision: str) -> str:
         "WATCH": "관찰",
         "READY": "진입후보",
         "WAIT": "근접대기",
+        "NEAR": "근접",
+        "AVOID": "관망",
     }.get(decision, decision)
+
+
+def _scenario_label(scenario: str) -> str:
+    return {
+        "pullback_long": "눌림 롱",
+        "pullback_short": "반등 숏",
+        "impulse_up_wait_pullback": "상방 임펄스 눌림대기",
+        "impulse_down_wait_bounce": "하방 임펄스 반등대기",
+        "failed_breakout_short": "상방 실패돌파 숏",
+        "no_tactical_edge": "전술 없음",
+        "data_low": "표본부족",
+    }.get(scenario, scenario)
 
 
 def _source_label(source: str) -> str:

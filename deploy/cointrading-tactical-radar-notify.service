@@ -1,0 +1,9 @@
+[Unit]
+Description=Send tactical radar Telegram alerts
+
+[Service]
+Type=oneshot
+User=msm1357953_gmail_com
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli tactical-radar-notify --periodic-minutes 30
