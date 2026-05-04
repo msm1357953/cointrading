@@ -96,6 +96,8 @@ class BinanceUSDMClient:
             params["timeInForce"] = intent.time_in_force
         if intent.working_type:
             params["workingType"] = intent.working_type
+        if intent.response_type:
+            params["newOrderRespType"] = intent.response_type
         if intent.reduce_only:
             params["reduceOnly"] = "true"
         if intent.client_order_id:

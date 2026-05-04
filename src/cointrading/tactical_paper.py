@@ -365,6 +365,7 @@ def start_tactical_live_cycle_from_signal(
         side="BUY" if signal.side == "long" else "SELL",
         quantity=float(notional) / entry_price,
         order_type="MARKET",
+        response_type="RESULT",
         reduce_only=False,
         client_order_id=f"cttl{symbol.lower()}{ts}"[:36],
     )
@@ -415,6 +416,23 @@ def start_tactical_live_cycle_from_signal(
     )
     if config.live_one_shot_required:
         consume_live_one_shot(symbol=symbol, strategy=strategy, notional=notional, cycle_id=cycle_id)
+    detail_suffix = ""
+    if str(response.get("status") or "").upper() == "FILLED":
+        cycle = store.active_strategy_cycle(strategy, symbol)
+        if cycle is not None:
+            managed = manage_strategy_cycle(
+                client,
+                store,
+                cycle,
+                config,
+                bid=bid,
+                ask=ask,
+                timestamp_ms=ts,
+            )
+            if managed.action == "entry_filled":
+                detail_suffix = "; 보호손절 제출"
+            elif managed.action:
+                detail_suffix = f"; 즉시관리={managed.action}"
     return TacticalPaperResult(
         symbol,
         "entry_submitted",
@@ -422,6 +440,7 @@ def start_tactical_live_cycle_from_signal(
             f"{strategy} {signal.side} LIVE 시작 "
             f"entry~{entry_price:.8g} TP={take_profit_bps:.1f}bps "
             f"SL={stop_loss_bps:.1f}bps H={_max_hold_seconds(signal)}s"
+            f"{detail_suffix}"
         ),
         cycle_id,
     )

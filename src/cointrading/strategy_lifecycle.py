@@ -1104,6 +1104,7 @@ def _entry_intent(plan: StrategyPlan) -> OrderIntent:
         order_type=plan.entry_order_type,
         price=plan.entry_price if plan.entry_order_type == "LIMIT" else None,
         time_in_force="GTX" if plan.entry_order_type == "LIMIT" else None,
+        response_type="RESULT" if plan.entry_order_type == "MARKET" else None,
         reduce_only=False,
         client_order_id=_client_order_id(plan.strategy, plan.symbol),
     )

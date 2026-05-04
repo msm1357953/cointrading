@@ -79,6 +79,7 @@ class SymbolFilters:
                 stop_price=stop_price,
                 time_in_force=intent.time_in_force,
                 working_type=intent.working_type,
+                response_type=intent.response_type,
                 reduce_only=intent.reduce_only,
                 client_order_id=intent.client_order_id,
             ),

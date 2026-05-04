@@ -48,6 +48,7 @@ class OrderIntent:
     stop_price: float | None = None
     time_in_force: str | None = None
     working_type: str | None = None
+    response_type: str | None = None
     reduce_only: bool = False
     client_order_id: str | None = None
 
