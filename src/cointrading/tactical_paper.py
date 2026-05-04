@@ -296,6 +296,12 @@ def start_tactical_live_cycle_from_signal(
         return TacticalPaperResult(symbol, "blocked", "live 전략 상태머신 플래그가 꺼져 있음")
     if signal.decision != RADAR_READY:
         return TacticalPaperResult(symbol, "skip", "READY 전술후보가 아니라 live 진입하지 않음")
+    if not _is_live_scenario_allowed(config, signal):
+        return TacticalPaperResult(
+            symbol,
+            "blocked",
+            f"live 허용 전술이 아님: {signal.scenario}",
+        )
     if signal.side not in {"long", "short"}:
         return TacticalPaperResult(symbol, "blocked", f"전술 방향이 진입 방향이 아님: {signal.side}")
     if signal.stop_price is None or signal.target_price is None:
@@ -464,6 +470,11 @@ def _active_live_symbols(store: TradingStore) -> set[str]:
     return symbols
 
 
+def _is_live_scenario_allowed(config: TradingConfig, signal: TacticalRadarSignal) -> bool:
+    allowed = {scenario.lower() for scenario in config.tactical_live_scenarios}
+    return "*" in allowed or signal.scenario.lower() in allowed
+
+
 def _actual_exchange_symbols(client: BinanceUSDMClient) -> tuple[set[str], set[str], str]:
     try:
         orders = client._signed_request("GET", "/fapi/v1/openOrders")
@@ -524,4 +535,10 @@ def _exit_bps(side: str, entry_price: float, target_price: float, stop_price: fl
 def _max_hold_seconds(signal: TacticalRadarSignal) -> int:
     if "failed_breakout" in signal.scenario:
         return 900
+    if "range_reversion" in signal.scenario:
+        return 1200
+    if "breakout_retest" in signal.scenario:
+        return 3600
+    if "key_level_breakout" in signal.scenario:
+        return 7200
     return 1800

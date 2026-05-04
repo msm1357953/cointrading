@@ -14,5 +14,6 @@ Environment=COINTRADING_LIVE_ONE_SHOT_REQUIRED=true
 Environment=COINTRADING_LIVE_ONE_SHOT_ENABLED=true
 Environment=COINTRADING_LIVE_ONE_SHOT_NOTIONAL=80
 Environment=COINTRADING_MAX_SINGLE_ORDER_NOTIONAL=80
+Environment=COINTRADING_TACTICAL_LIVE_SCENARIOS=pullback_long,pullback_short,key_level_breakout_long,key_level_breakout_short,breakout_retest_long,breakout_retest_short
 TimeoutStartSec=55
 ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli tactical-live-step --notional 80 --armed

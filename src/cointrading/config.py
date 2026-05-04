@@ -160,6 +160,14 @@ class TradingConfig:
     live_one_shot_symbol: str = ""
     live_one_shot_strategy: str = ""
     live_one_shot_notional: float = 25.0
+    tactical_live_scenarios: tuple[str, ...] = (
+        "pullback_long",
+        "pullback_short",
+        "key_level_breakout_long",
+        "key_level_breakout_short",
+        "breakout_retest_long",
+        "breakout_retest_short",
+    )
     refined_entry_min_test_count: int = 20
     refined_entry_min_avg_pnl_bps: float = 10.0
     refined_entry_min_full_avg_pnl_bps: float = 5.0
@@ -445,6 +453,10 @@ class TradingConfig:
             live_one_shot_notional=_get_float(
                 "COINTRADING_LIVE_ONE_SHOT_NOTIONAL",
                 cls.live_one_shot_notional,
+            ),
+            tactical_live_scenarios=_get_csv_lower_tuple(
+                "COINTRADING_TACTICAL_LIVE_SCENARIOS",
+                cls.tactical_live_scenarios,
             ),
             refined_entry_min_test_count=_get_int(
                 "COINTRADING_REFINED_ENTRY_MIN_TEST_COUNT",

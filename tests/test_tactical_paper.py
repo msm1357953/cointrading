@@ -145,6 +145,32 @@ class TacticalPaperTests(unittest.TestCase):
             order = store.recent_orders(limit=1)[0]
             self.assertEqual(order["dry_run"], 0)
 
+    def test_live_scenario_allowlist_blocks_unapproved_ready_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TradingStore(Path(tmp) / "trading.db")
+            client = FakeLiveTacticalClient()
+            config = TradingConfig(
+                dry_run=False,
+                live_trading_enabled=True,
+                live_strategy_lifecycle_enabled=True,
+                live_one_shot_required=False,
+                tactical_live_scenarios=("key_level_breakout_long",),
+            )
+
+            result = start_tactical_live_cycle_from_signal(
+                client,
+                store,
+                _signal(decision=RADAR_READY),
+                config,
+                notional=80.0,
+                timestamp_ms=1_000,
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertIn("live 허용 전술", result.detail)
+            self.assertEqual(client.orders, [])
+            self.assertEqual(store.recent_strategy_cycles(limit=1), [])
+
     def test_live_cycle_is_not_managed_by_paper_step(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TradingStore(Path(tmp) / "trading.db")

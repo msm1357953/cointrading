@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
+import math
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -81,10 +82,11 @@ def evaluate_tactical_radar(
         try:
             klines_15m = client.klines(symbol=symbol, interval="15m", limit=120)
             klines_1h = client.klines(symbol=symbol, interval="1h", limit=120)
+            klines_4h = client.klines(symbol=symbol, interval="4h", limit=120)
         except BinanceAPIError as exc:
             warnings.append(f"{symbol} 캔들 조회 실패: {exc}")
             continue
-        signal = evaluate_tactical_symbol(symbol, klines_15m, klines_1h, timestamp_ms=ts)
+        signal = evaluate_tactical_symbol(symbol, klines_15m, klines_1h, klines_4h, timestamp_ms=ts)
         output.append(signal)
     return sorted(output, key=_radar_rank_key), tuple(warnings)
 
@@ -93,6 +95,7 @@ def evaluate_tactical_symbol(
     symbol: str,
     klines_15m: list[Kline],
     klines_1h: list[Kline],
+    klines_4h: list[Kline] | None = None,
     *,
     timestamp_ms: int | None = None,
 ) -> TacticalRadarSignal:
@@ -161,6 +164,24 @@ def evaluate_tactical_symbol(
             or (bb is not None and bb <= 0.15)
         )
     )
+
+    major_signal = _major_level_signal(
+        symbol=symbol,
+        klines_15m=klines_15m,
+        klines_4h=klines_4h or [],
+        snap15=snap15,
+        snap1h=snap1h,
+        current=current,
+        previous=previous,
+        recent_high=recent_high,
+        recent_low=recent_low,
+        timestamp_ms=ts,
+        change_2h_bps=change_2h,
+        pullback_from_high=pullback_from_high,
+        bounce_from_low=bounce_from_low,
+    )
+    if major_signal is not None:
+        return major_signal
 
     failed_breakout = _failed_upside_breakout(klines_15m, recent_high, snap15)
     if failed_breakout:
@@ -266,6 +287,39 @@ def evaluate_tactical_symbol(
             change_2h_bps=change_2h,
             pullback_bps=bounce_from_low,
         )
+
+    volatility_signal = _volatility_expansion_signal(
+        symbol=symbol,
+        snap15=snap15,
+        uptrend=uptrend,
+        downtrend=downtrend,
+        current=current,
+        recent_high=recent_high,
+        recent_low=recent_low,
+        timestamp_ms=ts,
+        change_2h_bps=change_2h,
+        pullback_from_high=pullback_from_high,
+        bounce_from_low=bounce_from_low,
+    )
+    if volatility_signal is not None:
+        return volatility_signal
+
+    range_signal = _range_reversion_signal(
+        symbol=symbol,
+        snap15=snap15,
+        snap1h=snap1h,
+        uptrend=uptrend,
+        downtrend=downtrend,
+        current=current,
+        recent_high=recent_high,
+        recent_low=recent_low,
+        timestamp_ms=ts,
+        change_2h_bps=change_2h,
+        pullback_from_high=pullback_from_high,
+        bounce_from_low=bounce_from_low,
+    )
+    if range_signal is not None:
+        return range_signal
 
     if uptrend and pullback_from_high >= 15.0 and _not_overextended_for_long(snap15):
         trigger = snap15.ema_fast or current
@@ -568,6 +622,531 @@ def _optional_float(value: Any) -> float | None:
     return float(value)
 
 
+def _major_level_signal(
+    *,
+    symbol: str,
+    klines_15m: list[Kline],
+    klines_4h: list[Kline],
+    snap15: TechnicalSnapshot,
+    snap1h: TechnicalSnapshot,
+    current: float,
+    previous: float,
+    recent_high: float,
+    recent_low: float,
+    timestamp_ms: int,
+    change_2h_bps: float,
+    pullback_from_high: float,
+    bounce_from_low: float,
+) -> TacticalRadarSignal | None:
+    closed_4h = _closed_rows(klines_4h)
+    if len(closed_4h) < 32:
+        return None
+
+    snap4h = build_technical_snapshot(closed_4h, interval="4h")
+    latest = closed_4h[-1]
+    prior = closed_4h[-21:-1]
+    high_level, high_source, high_touches = _upper_breakout_level(prior, latest.close)
+    low_level, low_source, low_touches = _lower_breakout_level(prior, latest.close)
+
+    if high_level > 0 and latest.close >= high_level * 1.0005 and current > high_level:
+        return _major_breakout_long_signal(
+            symbol=symbol,
+            klines_15m=klines_15m,
+            snap15=snap15,
+            snap1h=snap1h,
+            snap4h=snap4h,
+            current=current,
+            previous=previous,
+            level=high_level,
+            level_source=high_source,
+            touches=high_touches,
+            recent_high=recent_high,
+            recent_low=recent_low,
+            timestamp_ms=timestamp_ms,
+            change_2h_bps=change_2h_bps,
+            pullback_from_high=pullback_from_high,
+        )
+
+    if low_level > 0 and latest.close <= low_level * 0.9995 and current < low_level:
+        return _major_breakout_short_signal(
+            symbol=symbol,
+            klines_15m=klines_15m,
+            snap15=snap15,
+            snap1h=snap1h,
+            snap4h=snap4h,
+            current=current,
+            previous=previous,
+            level=low_level,
+            level_source=low_source,
+            touches=low_touches,
+            recent_high=recent_high,
+            recent_low=recent_low,
+            timestamp_ms=timestamp_ms,
+            change_2h_bps=change_2h_bps,
+            bounce_from_low=bounce_from_low,
+        )
+    return None
+
+
+def _major_breakout_long_signal(
+    *,
+    symbol: str,
+    klines_15m: list[Kline],
+    snap15: TechnicalSnapshot,
+    snap1h: TechnicalSnapshot,
+    snap4h: TechnicalSnapshot,
+    current: float,
+    previous: float,
+    level: float,
+    level_source: str,
+    touches: int,
+    recent_high: float,
+    recent_low: float,
+    timestamp_ms: int,
+    change_2h_bps: float,
+    pullback_from_high: float,
+) -> TacticalRadarSignal:
+    stop = level * (1.0 - _level_stop_buffer_bps(snap15) / 10_000.0)
+    risk_bps = _price_risk_bps("long", current, stop)
+    extension_bps = ((current / level) - 1.0) * 10_000.0 if level > 0 else 0.0
+    target = _reward_target("long", current, risk_bps, min_reward_bps=80.0, reward_risk=1.45)
+    retested = _recent_retest_long(klines_15m, level) and current > previous
+    trend_ok = _is_uptrend(snap1h) or (snap4h.ema_slow is not None and current >= snap4h.ema_slow)
+
+    if retested and trend_ok and risk_bps <= 220.0:
+        return _signal(
+            symbol=symbol,
+            decision=RADAR_READY,
+            scenario="breakout_retest_long",
+            side="long",
+            current=current,
+            trigger=current,
+            stop=stop,
+            target=target,
+            confidence=0.72,
+            reason="상방 돌파 후 레벨 재테스트 롱 후보",
+            detail=(
+                f"{level_source} {level:.8g} 상향 돌파 뒤 되눌림/재회복을 확인했습니다. "
+                f"최근 4h 레벨 근접 횟수={touches}, 추격폭={extension_bps:.1f}bps입니다."
+            ),
+            snap15=snap15,
+            timestamp_ms=timestamp_ms,
+            change_2h_bps=change_2h_bps,
+            pullback_bps=pullback_from_high,
+        )
+
+    if trend_ok and extension_bps <= 140.0 and risk_bps <= 220.0 and _not_extreme_chase_long(snap15):
+        return _signal(
+            symbol=symbol,
+            decision=RADAR_READY,
+            scenario="key_level_breakout_long",
+            side="long",
+            current=current,
+            trigger=current,
+            stop=stop,
+            target=target,
+            confidence=0.66,
+            reason="주요 레벨 상방 돌파 롱 후보",
+            detail=(
+                f"{level_source} {level:.8g} 위에서 4h 돌파가 확인됐습니다. "
+                f"추격폭={extension_bps:.1f}bps, 손절거리={risk_bps:.1f}bps라 아직 허용권입니다."
+            ),
+            snap15=snap15,
+            timestamp_ms=timestamp_ms,
+            change_2h_bps=change_2h_bps,
+            pullback_bps=pullback_from_high,
+        )
+
+    trigger = level * 1.001
+    return _signal(
+        symbol=symbol,
+        decision=RADAR_WATCH,
+        scenario="key_level_breakout_wait_retest",
+        side="long",
+        current=current,
+        trigger=trigger,
+        stop=stop,
+        target=max(recent_high, target),
+        confidence=0.48,
+        reason="상방 큰 돌파는 확인, 추격폭/위험거리 때문에 재테스트 대기",
+        detail=(
+            f"{level_source} {level:.8g} 돌파는 맞지만 현재 진입 손절거리={risk_bps:.1f}bps, "
+            f"추격폭={extension_bps:.1f}bps입니다. 레벨 근처 재확인을 기다립니다."
+        ),
+        snap15=snap15,
+        timestamp_ms=timestamp_ms,
+        change_2h_bps=change_2h_bps,
+        pullback_bps=pullback_from_high,
+    )
+
+
+def _major_breakout_short_signal(
+    *,
+    symbol: str,
+    klines_15m: list[Kline],
+    snap15: TechnicalSnapshot,
+    snap1h: TechnicalSnapshot,
+    snap4h: TechnicalSnapshot,
+    current: float,
+    previous: float,
+    level: float,
+    level_source: str,
+    touches: int,
+    recent_high: float,
+    recent_low: float,
+    timestamp_ms: int,
+    change_2h_bps: float,
+    bounce_from_low: float,
+) -> TacticalRadarSignal:
+    stop = level * (1.0 + _level_stop_buffer_bps(snap15) / 10_000.0)
+    risk_bps = _price_risk_bps("short", current, stop)
+    extension_bps = ((level / current) - 1.0) * 10_000.0 if current > 0 else 0.0
+    target = _reward_target("short", current, risk_bps, min_reward_bps=80.0, reward_risk=1.45)
+    retested = _recent_retest_short(klines_15m, level) and current < previous
+    trend_ok = _is_downtrend(snap1h) or (snap4h.ema_slow is not None and current <= snap4h.ema_slow)
+
+    if retested and trend_ok and risk_bps <= 220.0:
+        return _signal(
+            symbol=symbol,
+            decision=RADAR_READY,
+            scenario="breakout_retest_short",
+            side="short",
+            current=current,
+            trigger=current,
+            stop=stop,
+            target=target,
+            confidence=0.72,
+            reason="하방 이탈 후 레벨 재테스트 숏 후보",
+            detail=(
+                f"{level_source} {level:.8g} 하향 이탈 뒤 반등/재이탈을 확인했습니다. "
+                f"최근 4h 레벨 근접 횟수={touches}, 추격폭={extension_bps:.1f}bps입니다."
+            ),
+            snap15=snap15,
+            timestamp_ms=timestamp_ms,
+            change_2h_bps=change_2h_bps,
+            pullback_bps=bounce_from_low,
+        )
+
+    if trend_ok and extension_bps <= 140.0 and risk_bps <= 220.0 and _not_extreme_chase_short(snap15):
+        return _signal(
+            symbol=symbol,
+            decision=RADAR_READY,
+            scenario="key_level_breakout_short",
+            side="short",
+            current=current,
+            trigger=current,
+            stop=stop,
+            target=target,
+            confidence=0.66,
+            reason="주요 레벨 하방 이탈 숏 후보",
+            detail=(
+                f"{level_source} {level:.8g} 아래에서 4h 이탈이 확인됐습니다. "
+                f"추격폭={extension_bps:.1f}bps, 손절거리={risk_bps:.1f}bps라 아직 허용권입니다."
+            ),
+            snap15=snap15,
+            timestamp_ms=timestamp_ms,
+            change_2h_bps=change_2h_bps,
+            pullback_bps=bounce_from_low,
+        )
+
+    trigger = level * 0.999
+    return _signal(
+        symbol=symbol,
+        decision=RADAR_WATCH,
+        scenario="key_level_breakout_wait_retest",
+        side="short",
+        current=current,
+        trigger=trigger,
+        stop=stop,
+        target=min(recent_low, target),
+        confidence=0.48,
+        reason="하방 큰 이탈은 확인, 추격폭/위험거리 때문에 재테스트 대기",
+        detail=(
+            f"{level_source} {level:.8g} 이탈은 맞지만 현재 진입 손절거리={risk_bps:.1f}bps, "
+            f"추격폭={extension_bps:.1f}bps입니다. 레벨 근처 재확인을 기다립니다."
+        ),
+        snap15=snap15,
+        timestamp_ms=timestamp_ms,
+        change_2h_bps=change_2h_bps,
+        pullback_bps=bounce_from_low,
+    )
+
+
+def _volatility_expansion_signal(
+    *,
+    symbol: str,
+    snap15: TechnicalSnapshot,
+    uptrend: bool,
+    downtrend: bool,
+    current: float,
+    recent_high: float,
+    recent_low: float,
+    timestamp_ms: int,
+    change_2h_bps: float,
+    pullback_from_high: float,
+    bounce_from_low: float,
+) -> TacticalRadarSignal | None:
+    if snap15.volume_ratio < 1.35 or snap15.bollinger_width_bps < 35.0:
+        return None
+    if uptrend and snap15.high_breakout and change_2h_bps >= 25.0 and _not_extreme_chase_long(snap15):
+        stop = min(recent_low, current * (1.0 - max(snap15.atr_bps, 25.0) / 10_000.0))
+        risk_bps = _price_risk_bps("long", current, stop)
+        return _signal(
+            symbol=symbol,
+            decision=RADAR_READY,
+            scenario="volatility_expansion_long",
+            side="long",
+            current=current,
+            trigger=current,
+            stop=stop,
+            target=_reward_target("long", current, risk_bps, min_reward_bps=60.0, reward_risk=1.35),
+            confidence=0.58,
+            reason="상방 변동성 확장 롱 후보",
+            detail="15m 고점 돌파, 거래량 증가, 밴드 확장이 동시에 나온 모멘텀 paper 후보입니다.",
+            snap15=snap15,
+            timestamp_ms=timestamp_ms,
+            change_2h_bps=change_2h_bps,
+            pullback_bps=pullback_from_high,
+        )
+    if downtrend and snap15.low_breakout and change_2h_bps <= -25.0 and _not_extreme_chase_short(snap15):
+        stop = max(recent_high, current * (1.0 + max(snap15.atr_bps, 25.0) / 10_000.0))
+        risk_bps = _price_risk_bps("short", current, stop)
+        return _signal(
+            symbol=symbol,
+            decision=RADAR_READY,
+            scenario="volatility_expansion_short",
+            side="short",
+            current=current,
+            trigger=current,
+            stop=stop,
+            target=_reward_target("short", current, risk_bps, min_reward_bps=60.0, reward_risk=1.35),
+            confidence=0.58,
+            reason="하방 변동성 확장 숏 후보",
+            detail="15m 저점 이탈, 거래량 증가, 밴드 확장이 동시에 나온 모멘텀 paper 후보입니다.",
+            snap15=snap15,
+            timestamp_ms=timestamp_ms,
+            change_2h_bps=change_2h_bps,
+            pullback_bps=bounce_from_low,
+        )
+    return None
+
+
+def _range_reversion_signal(
+    *,
+    symbol: str,
+    snap15: TechnicalSnapshot,
+    snap1h: TechnicalSnapshot,
+    uptrend: bool,
+    downtrend: bool,
+    current: float,
+    recent_high: float,
+    recent_low: float,
+    timestamp_ms: int,
+    change_2h_bps: float,
+    pullback_from_high: float,
+    bounce_from_low: float,
+) -> TacticalRadarSignal | None:
+    if uptrend or downtrend or current <= 0 or recent_low <= 0:
+        return None
+    range_width_bps = ((recent_high / recent_low) - 1.0) * 10_000.0
+    range_like = abs(snap1h.ema_gap_bps) <= 12.0 and 35.0 <= range_width_bps <= 220.0
+    if not range_like:
+        return None
+
+    bb = snap15.bollinger_position
+    rsi = snap15.rsi14
+    near_low = current <= recent_low * 1.0025
+    near_high = current >= recent_high * 0.9975
+    if near_low and ((bb is not None and bb <= 0.12) or (rsi is not None and rsi <= 30.0)):
+        stop = current * (1.0 - max(20.0, snap15.atr_bps * 0.9) / 10_000.0)
+        risk_bps = _price_risk_bps("long", current, stop)
+        target = min(recent_high, _reward_target("long", current, risk_bps, min_reward_bps=35.0, reward_risk=1.25))
+        if target > current:
+            return _signal(
+                symbol=symbol,
+                decision=RADAR_READY,
+                scenario="range_reversion_long",
+                side="long",
+                current=current,
+                trigger=current,
+                stop=stop,
+                target=target,
+                confidence=0.54,
+                reason="횡보 하단 반등 롱 후보",
+                detail="1h 추세가 약하고 15m 가격이 박스 하단/과매도에 붙은 mean-reversion paper 후보입니다.",
+                snap15=snap15,
+                timestamp_ms=timestamp_ms,
+                change_2h_bps=change_2h_bps,
+                pullback_bps=pullback_from_high,
+            )
+
+    if near_high and ((bb is not None and bb >= 0.88) or (rsi is not None and rsi >= 70.0)):
+        stop = current * (1.0 + max(20.0, snap15.atr_bps * 0.9) / 10_000.0)
+        risk_bps = _price_risk_bps("short", current, stop)
+        target = max(recent_low, _reward_target("short", current, risk_bps, min_reward_bps=35.0, reward_risk=1.25))
+        if target < current:
+            return _signal(
+                symbol=symbol,
+                decision=RADAR_READY,
+                scenario="range_reversion_short",
+                side="short",
+                current=current,
+                trigger=current,
+                stop=stop,
+                target=target,
+                confidence=0.54,
+                reason="횡보 상단 되돌림 숏 후보",
+                detail="1h 추세가 약하고 15m 가격이 박스 상단/과매수에 붙은 mean-reversion paper 후보입니다.",
+                snap15=snap15,
+                timestamp_ms=timestamp_ms,
+                change_2h_bps=change_2h_bps,
+                pullback_bps=bounce_from_low,
+            )
+    return None
+
+
+def _closed_rows(klines: list[Kline]) -> list[Kline]:
+    if len(klines) <= 2:
+        return klines
+    return klines[:-1]
+
+
+def _upper_breakout_level(rows: list[Kline], latest_close: float) -> tuple[float, str, int]:
+    raw_level = max(row.high for row in rows)
+    level = raw_level
+    source = "20개 4h 고점"
+    round_level = _round_level_below(latest_close)
+    if (
+        round_level is not None
+        and latest_close > round_level
+        and raw_level <= round_level
+        and raw_level >= round_level * 0.990
+    ):
+        level = round_level
+        source = "심리적 라운드 레벨"
+    return level, source, _upper_touch_count(rows, level)
+
+
+def _lower_breakout_level(rows: list[Kline], latest_close: float) -> tuple[float, str, int]:
+    raw_level = min(row.low for row in rows)
+    level = raw_level
+    source = "20개 4h 저점"
+    round_level = _round_level_above(latest_close)
+    if (
+        round_level is not None
+        and latest_close < round_level
+        and raw_level >= round_level
+        and raw_level <= round_level * 1.010
+    ):
+        level = round_level
+        source = "심리적 라운드 레벨"
+    return level, source, _lower_touch_count(rows, level)
+
+
+def _round_level_below(price: float) -> float | None:
+    step = _psychological_step(price)
+    if step <= 0:
+        return None
+    level = math.floor(price / step) * step
+    return level if level > 0 else None
+
+
+def _round_level_above(price: float) -> float | None:
+    step = _psychological_step(price)
+    if step <= 0:
+        return None
+    level = math.ceil(price / step) * step
+    return level if level > 0 else None
+
+
+def _psychological_step(price: float) -> float:
+    if price >= 50_000:
+        return 1_000.0
+    if price >= 10_000:
+        return 500.0
+    if price >= 1_000:
+        return 50.0
+    if price >= 100:
+        return 5.0
+    if price >= 10:
+        return 0.5
+    if price >= 1:
+        return 0.05
+    return 0.005
+
+
+def _upper_touch_count(rows: list[Kline], level: float, *, tolerance_bps: float = 100.0) -> int:
+    if level <= 0:
+        return 0
+    threshold = level * (1.0 - tolerance_bps / 10_000.0)
+    return sum(1 for row in rows if threshold <= row.high <= level * 1.002)
+
+
+def _lower_touch_count(rows: list[Kline], level: float, *, tolerance_bps: float = 100.0) -> int:
+    if level <= 0:
+        return 0
+    threshold = level * (1.0 + tolerance_bps / 10_000.0)
+    return sum(1 for row in rows if level * 0.998 <= row.low <= threshold)
+
+
+def _level_stop_buffer_bps(snapshot: TechnicalSnapshot) -> float:
+    return min(max(snapshot.atr_bps * 1.15, 35.0), 95.0)
+
+
+def _recent_retest_long(klines: list[Kline], level: float) -> bool:
+    if level <= 0:
+        return False
+    recent = klines[-8:]
+    touched = any(row.low <= level * 1.0025 for row in recent)
+    reclaimed = klines[-1].close >= level * 1.0005
+    return touched and reclaimed
+
+
+def _recent_retest_short(klines: list[Kline], level: float) -> bool:
+    if level <= 0:
+        return False
+    recent = klines[-8:]
+    touched = any(row.high >= level * 0.9975 for row in recent)
+    rejected = klines[-1].close <= level * 0.9995
+    return touched and rejected
+
+
+def _price_risk_bps(side: str, current: float, stop: float) -> float:
+    if current <= 0 or stop <= 0:
+        return 9999.0
+    if side == "long":
+        return ((current / stop) - 1.0) * 10_000.0
+    if side == "short":
+        return ((stop / current) - 1.0) * 10_000.0
+    return 9999.0
+
+
+def _reward_target(
+    side: str,
+    current: float,
+    risk_bps: float,
+    *,
+    min_reward_bps: float,
+    reward_risk: float,
+) -> float:
+    reward_bps = max(risk_bps * reward_risk, min_reward_bps)
+    if side == "long":
+        return current * (1.0 + reward_bps / 10_000.0)
+    return current * (1.0 - reward_bps / 10_000.0)
+
+
+def _not_extreme_chase_long(snapshot: TechnicalSnapshot) -> bool:
+    rsi_ok = snapshot.rsi14 is None or snapshot.rsi14 <= 82.0
+    bb_ok = snapshot.bollinger_position is None or snapshot.bollinger_position <= 1.15
+    return rsi_ok and bb_ok
+
+
+def _not_extreme_chase_short(snapshot: TechnicalSnapshot) -> bool:
+    rsi_ok = snapshot.rsi14 is None or snapshot.rsi14 >= 18.0
+    bb_ok = snapshot.bollinger_position is None or snapshot.bollinger_position >= -0.15
+    return rsi_ok and bb_ok
+
+
 def _is_uptrend(snapshot: TechnicalSnapshot) -> bool:
     return (
         snapshot.enough
@@ -662,6 +1241,15 @@ def _scenario_ko(scenario: str) -> str:
     return {
         "pullback_long": "눌림 롱",
         "pullback_short": "반등 숏",
+        "key_level_breakout_long": "주요레벨 상방돌파 롱",
+        "key_level_breakout_short": "주요레벨 하방이탈 숏",
+        "key_level_breakout_wait_retest": "주요레벨 돌파 재테스트대기",
+        "breakout_retest_long": "상방돌파 재테스트 롱",
+        "breakout_retest_short": "하방이탈 재테스트 숏",
+        "volatility_expansion_long": "상방 변동성확장 롱",
+        "volatility_expansion_short": "하방 변동성확장 숏",
+        "range_reversion_long": "횡보하단 반등 롱",
+        "range_reversion_short": "횡보상단 되돌림 숏",
         "impulse_up_wait_pullback": "상방 임펄스 눌림대기",
         "impulse_down_wait_bounce": "하방 임펄스 반등대기",
         "failed_breakout_short": "상방 실패돌파 숏",
