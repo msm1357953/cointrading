@@ -35,8 +35,12 @@ def dry_run_order_response(intent: OrderIntent) -> dict:
     }
     if intent.price is not None:
         params["price"] = intent.price
+    if intent.stop_price is not None:
+        params["stopPrice"] = intent.stop_price
     if intent.time_in_force:
         params["timeInForce"] = intent.time_in_force
+    if intent.working_type:
+        params["workingType"] = intent.working_type
     if intent.reduce_only:
         params["reduceOnly"] = True
     if intent.client_order_id:

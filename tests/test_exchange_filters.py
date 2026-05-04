@@ -76,6 +76,27 @@ class ExchangeFilterTests(unittest.TestCase):
         self.assertIsNone(intent)
         self.assertIn("below minNotional", reason)
 
+    def test_stop_market_preserves_stop_fields_and_rounds_trigger(self) -> None:
+        filters = SymbolFilters.from_exchange_info(_exchange_info(), "BTCUSDC")
+        intent, reason = filters.normalize_intent(
+            OrderIntent(
+                symbol="BTCUSDC",
+                side="SELL",
+                quantity=0.062345,
+                order_type="STOP_MARKET",
+                stop_price=99.91,
+                working_type="MARK_PRICE",
+                reduce_only=True,
+            )
+        )
+
+        self.assertEqual(reason, "exchange filters ok")
+        assert intent is not None
+        self.assertEqual(intent.quantity, 0.062)
+        self.assertEqual(intent.stop_price, 100.0)
+        self.assertEqual(intent.working_type, "MARK_PRICE")
+        self.assertTrue(intent.reduce_only)
+
 
 if __name__ == "__main__":
     unittest.main()

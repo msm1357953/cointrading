@@ -61,6 +61,11 @@ class SymbolFilters:
             notional = Decimal(str(price)) * Decimal(str(quantity))
         else:
             notional = Decimal("0")
+        stop_price = intent.stop_price
+        if stop_price is not None:
+            stop_price = self.post_only_price(intent.side, float(stop_price))
+            if stop_price <= 0:
+                return None, "stop price rounds to zero"
         if price is not None and self.min_notional > 0 and notional < self.min_notional:
             return None, f"notional {notional} below minNotional {self.min_notional}"
 
@@ -71,7 +76,9 @@ class SymbolFilters:
                 quantity=float(quantity),
                 order_type=intent.order_type,
                 price=price,
+                stop_price=stop_price,
                 time_in_force=intent.time_in_force,
+                working_type=intent.working_type,
                 reduce_only=intent.reduce_only,
                 client_order_id=intent.client_order_id,
             ),

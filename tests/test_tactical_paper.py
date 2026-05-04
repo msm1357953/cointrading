@@ -197,6 +197,59 @@ class TacticalPaperTests(unittest.TestCase):
             self.assertEqual(client.orders, [])
             self.assertEqual(store.recent_strategy_cycles(limit=1), [])
 
+    def test_live_cycle_can_use_early_positive_paper_evidence_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TradingStore(Path(tmp) / "trading.db")
+            for index in range(5):
+                cycle_id = store.insert_strategy_cycle(
+                    strategy="tactical_pullback_long",
+                    execution_mode="paper_tactical",
+                    symbol="SOLUSDC",
+                    side="long",
+                    status="OPEN",
+                    quantity=1.0,
+                    entry_price=100.0,
+                    target_price=101.0,
+                    stop_price=99.0,
+                    entry_order_type="MARKET",
+                    take_profit_bps=100.0,
+                    stop_loss_bps=100.0,
+                    max_hold_seconds=1800,
+                    maker_one_way_bps=0.0,
+                    taker_one_way_bps=4.0,
+                    entry_deadline_ms=2_000,
+                    dry_run=True,
+                    timestamp_ms=1_000 + index,
+                )
+                store.update_strategy_cycle(
+                    cycle_id,
+                    status="CLOSED",
+                    reason="take_profit",
+                    realized_pnl=0.10,
+                    closed_ms=2_000 + index,
+                    timestamp_ms=2_000 + index,
+                )
+            client = FakeLiveTacticalClient()
+            config = TradingConfig(
+                dry_run=False,
+                live_trading_enabled=True,
+                live_strategy_lifecycle_enabled=True,
+                live_one_shot_required=False,
+                tactical_live_early_evidence_enabled=True,
+            )
+
+            result = start_tactical_live_cycle_from_signal(
+                client,
+                store,
+                _signal(decision=RADAR_READY),
+                config,
+                notional=80.0,
+                timestamp_ms=10_000,
+            )
+
+            self.assertEqual(result.action, "entry_submitted")
+            self.assertEqual(len(client.orders), 1)
+
     def test_live_cycle_is_not_managed_by_paper_step(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TradingStore(Path(tmp) / "trading.db")

@@ -90,8 +90,12 @@ class BinanceUSDMClient:
         }
         if intent.price is not None:
             params["price"] = self._format_float(intent.price)
+        if intent.stop_price is not None:
+            params["stopPrice"] = self._format_float(intent.stop_price)
         if intent.time_in_force:
             params["timeInForce"] = intent.time_in_force
+        if intent.working_type:
+            params["workingType"] = intent.working_type
         if intent.reduce_only:
             params["reduceOnly"] = "true"
         if intent.client_order_id:

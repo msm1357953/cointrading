@@ -610,19 +610,50 @@ def _manage_live_entry(
             role="strategy_entry",
             timestamp_ms=timestamp_ms,
         )
+        target_price = _take_profit_price(
+            str(cycle["side"]),
+            summary.avg_price,
+            float(cycle["take_profit_bps"]),
+        )
+        stop_price = _stop_price(
+            str(cycle["side"]),
+            summary.avg_price,
+            float(cycle["stop_loss_bps"]),
+        )
         store.update_strategy_cycle(
             int(cycle["id"]),
             status="OPEN",
             reason="live entry filled; strategy position open",
             quantity=summary.quantity,
             entry_price=summary.avg_price,
-            target_price=_take_profit_price(str(cycle["side"]), summary.avg_price, float(cycle["take_profit_bps"])),
-            stop_price=_stop_price(str(cycle["side"]), summary.avg_price, float(cycle["stop_loss_bps"])),
+            target_price=target_price,
+            stop_price=stop_price,
             opened_ms=timestamp_ms,
             max_hold_deadline_ms=timestamp_ms + _seconds_ms(float(cycle["max_hold_seconds"])),
             last_mid_price=mid,
             timestamp_ms=timestamp_ms,
         )
+        opened_cycle = store.active_strategy_cycle(str(cycle["strategy"]), str(cycle["symbol"]))
+        if opened_cycle is not None:
+            stop_order_id, stop_detail = _submit_live_protective_stop(
+                client,
+                store,
+                opened_cycle,
+                config,
+                stop_price=stop_price,
+                timestamp_ms=timestamp_ms,
+            )
+            if stop_order_id is None:
+                refreshed = store.active_strategy_cycle(str(cycle["strategy"]), str(cycle["symbol"])) or opened_cycle
+                return _submit_live_exit(
+                    client,
+                    store,
+                    refreshed,
+                    config,
+                    reason="protective_stop_submit_failed",
+                    timestamp_ms=timestamp_ms,
+                )
+            return _result(cycle, "entry_filled", f"live strategy position open; {stop_detail}")
         return _result(cycle, "entry_filled", "live strategy position open")
     if exchange_status in {"CANCELED", "EXPIRED", "REJECTED"}:
         reason = f"entry order {exchange_status.lower()}"
@@ -663,7 +694,7 @@ def _manage_live_open(
     mid: float,
     timestamp_ms: int,
 ) -> StrategyLifecycleResult:
-    if str(cycle["status"]) == "EXIT_SUBMITTED" and cycle["exit_order_id"] is not None:
+    if cycle["exit_order_id"] is not None:
         local_order = store.order_by_id(int(cycle["exit_order_id"]))
         if local_order is not None:
             try:
@@ -683,9 +714,29 @@ def _manage_live_open(
             )
             if exchange_status == "FILLED":
                 return _close_live_cycle(client, store, cycle, config, local_order, payload, timestamp_ms)
+            if str(cycle["status"]) == "EXIT_SUBMITTED":
+                return _result(cycle, "exit_waiting", f"live exit order waiting ({exchange_status or 'UNKNOWN'})")
+            if exchange_status in {"CANCELED", "EXPIRED", "REJECTED"}:
+                store.update_strategy_cycle(
+                    int(cycle["id"]),
+                    exit_order_id=None,
+                    reason=f"protective stop {exchange_status.lower()}; local stop still active",
+                    timestamp_ms=timestamp_ms,
+                )
+                cycle = store.active_strategy_cycle(str(cycle["strategy"]), str(cycle["symbol"])) or cycle
 
     side = str(cycle["side"])
     stop, tighten_reason = _tactical_trailing_stop(cycle, config, mid)
+    if cycle["exit_order_id"] is None and not _stop_triggered(side, mid, stop):
+        _submit_live_protective_stop(
+            client,
+            store,
+            cycle,
+            config,
+            stop_price=stop,
+            timestamp_ms=timestamp_ms,
+        )
+        cycle = store.active_strategy_cycle(str(cycle["strategy"]), str(cycle["symbol"])) or cycle
     if tighten_reason:
         store.update_strategy_cycle(
             int(cycle["id"]),
@@ -694,6 +745,16 @@ def _manage_live_open(
             last_mid_price=mid,
             timestamp_ms=timestamp_ms,
         )
+        refreshed = store.active_strategy_cycle(str(cycle["strategy"]), str(cycle["symbol"])) or cycle
+        _replace_live_protective_stop(
+            client,
+            store,
+            refreshed,
+            config,
+            stop_price=stop,
+            timestamp_ms=timestamp_ms,
+        )
+        cycle = store.active_strategy_cycle(str(cycle["strategy"]), str(cycle["symbol"])) or refreshed
     reason = ""
     if _target_filled(side, bid, ask, float(cycle["target_price"])):
         reason = "take_profit"
@@ -756,6 +817,120 @@ def _tactical_trailing_stop(
     return current_stop, ""
 
 
+def _submit_live_protective_stop(
+    client: BinanceUSDMClient,
+    store: TradingStore,
+    cycle: sqlite3.Row,
+    config: TradingConfig,
+    *,
+    stop_price: float,
+    timestamp_ms: int,
+) -> tuple[int | None, str]:
+    intent = OrderIntent(
+        symbol=str(cycle["symbol"]),
+        side="SELL" if str(cycle["side"]) == "long" else "BUY",
+        quantity=float(cycle["quantity"]),
+        order_type="STOP_MARKET",
+        stop_price=stop_price,
+        working_type="MARK_PRICE",
+        reduce_only=True,
+        client_order_id=_client_order_id("protective_stop", str(cycle["symbol"])),
+    )
+    normalized, filter_reason = _normalize_intent(client, intent, config)
+    if normalized is None:
+        detail = f"protective stop blocked: {filter_reason}"
+        store.update_strategy_cycle(int(cycle["id"]), reason=detail, timestamp_ms=timestamp_ms)
+        return None, detail
+    try:
+        response = client.new_order(normalized)
+    except BinanceAPIError as exc:
+        detail = f"protective stop submit error: {exc}"
+        store.update_strategy_cycle(int(cycle["id"]), reason=detail, timestamp_ms=timestamp_ms)
+        return None, detail
+    order_id = store.insert_order_attempt(
+        normalized,
+        status=str(response.get("status", "SUBMITTED")),
+        dry_run=False,
+        reason="protective_stop",
+        response=response,
+        timestamp_ms=timestamp_ms,
+    )
+    store.update_strategy_cycle(
+        int(cycle["id"]),
+        exit_order_id=order_id,
+        reason="exchange protective stop set",
+        timestamp_ms=timestamp_ms,
+    )
+    return order_id, "exchange protective stop set"
+
+
+def _replace_live_protective_stop(
+    client: BinanceUSDMClient,
+    store: TradingStore,
+    cycle: sqlite3.Row,
+    config: TradingConfig,
+    *,
+    stop_price: float,
+    timestamp_ms: int,
+) -> tuple[int | None, str]:
+    cancelled_or_closed = _cancel_existing_live_exit_order(
+        client,
+        store,
+        cycle,
+        config,
+        timestamp_ms=timestamp_ms,
+    )
+    if isinstance(cancelled_or_closed, StrategyLifecycleResult):
+        return None, cancelled_or_closed.detail
+    refreshed = store.active_strategy_cycle(str(cycle["strategy"]), str(cycle["symbol"])) or cycle
+    return _submit_live_protective_stop(
+        client,
+        store,
+        refreshed,
+        config,
+        stop_price=stop_price,
+        timestamp_ms=timestamp_ms,
+    )
+
+
+def _cancel_existing_live_exit_order(
+    client: BinanceUSDMClient,
+    store: TradingStore,
+    cycle: sqlite3.Row,
+    config: TradingConfig,
+    *,
+    timestamp_ms: int,
+) -> StrategyLifecycleResult | None:
+    if cycle["exit_order_id"] is None:
+        return None
+    local_order = store.order_by_id(int(cycle["exit_order_id"]))
+    if local_order is None:
+        store.update_strategy_cycle(int(cycle["id"]), exit_order_id=None, timestamp_ms=timestamp_ms)
+        return None
+    cancel_response = _cancel_live_order(client, store, local_order)
+    if cancel_response is not None:
+        if _order_status_value(cancel_response) == "FILLED":
+            return _close_live_cycle(client, store, cycle, config, local_order, cancel_response, timestamp_ms)
+        store.update_strategy_cycle(int(cycle["id"]), exit_order_id=None, timestamp_ms=timestamp_ms)
+        return None
+    try:
+        payload = _live_order_status(client, local_order)
+    except BinanceAPIError as exc:
+        detail = f"protective stop cancel/status failed: {exc}"
+        store.update_strategy_cycle(int(cycle["id"]), reason=detail, timestamp_ms=timestamp_ms)
+        return _result(cycle, "exit_error", detail)
+    exchange_status = _order_status_value(payload)
+    store.update_order_attempt(
+        int(local_order["id"]),
+        status=exchange_status or str(local_order["status"]),
+        response=payload,
+    )
+    if exchange_status == "FILLED":
+        return _close_live_cycle(client, store, cycle, config, local_order, payload, timestamp_ms)
+    store.update_strategy_cycle(int(cycle["id"]), exit_order_id=None, timestamp_ms=timestamp_ms)
+    return None
+
+
 def _submit_live_exit(
     client: BinanceUSDMClient,
     store: TradingStore,
@@ -765,6 +940,16 @@ def _submit_live_exit(
     reason: str,
     timestamp_ms: int,
 ) -> StrategyLifecycleResult:
+    existing_exit = _cancel_existing_live_exit_order(
+        client,
+        store,
+        cycle,
+        config,
+        timestamp_ms=timestamp_ms,
+    )
+    if isinstance(existing_exit, StrategyLifecycleResult):
+        return existing_exit
+    cycle = store.active_strategy_cycle(str(cycle["strategy"]), str(cycle["symbol"])) or cycle
     intent = OrderIntent(
         symbol=str(cycle["symbol"]),
         side="SELL" if str(cycle["side"]) == "long" else "BUY",

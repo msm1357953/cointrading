@@ -302,7 +302,13 @@ def start_tactical_live_cycle_from_signal(
             "blocked",
             f"live 허용 전술이 아님: {signal.scenario}",
         )
-    paper_gate = _tactical_live_paper_gate(store, config, signal, strategy=strategy)
+    paper_gate = _tactical_live_paper_gate(
+        store,
+        config,
+        signal,
+        strategy=strategy,
+        notional=notional,
+    )
     if paper_gate:
         return TacticalPaperResult(symbol, "blocked", paper_gate)
     if signal.side not in {"long", "short"}:
@@ -484,6 +490,7 @@ def _tactical_live_paper_gate(
     signal: TacticalRadarSignal,
     *,
     strategy: str,
+    notional: float,
 ) -> str:
     required = max(int(config.tactical_live_min_closed_cycles), 0)
     if required <= 0:
@@ -512,14 +519,26 @@ def _tactical_live_paper_gate(
             """,
             (strategy, signal.symbol.upper(), signal.side),
         ).fetchone()
-    count = int(row["count"] or 0)
-    if count < required:
-        return f"전술 live paper 근거 부족: {strategy} {signal.symbol} {signal.side} 종료 {count}/{required}건"
     wins = int(row["wins"] or 0)
     avg_pnl = float(row["avg_pnl"] or 0.0)
     adverse = int(row["adverse"] or 0)
+    count = int(row["count"] or 0)
     win_rate = wins / count if count else 0.0
     adverse_ratio = adverse / count if count else 1.0
+    if count < required:
+        if _early_tactical_evidence_allows(
+            config,
+            count=count,
+            avg_pnl=avg_pnl,
+            win_rate=win_rate,
+            adverse_ratio=adverse_ratio,
+            notional=notional,
+        ):
+            return ""
+        return (
+            f"전술 live paper 근거 부족: {strategy} {signal.symbol} {signal.side} "
+            f"종료 {count}/{required}건"
+        )
     if avg_pnl < config.tactical_live_min_avg_pnl:
         return f"전술 live paper 평균손익 부족: {avg_pnl:.6f} < {config.tactical_live_min_avg_pnl:.6f}"
     if win_rate < config.tactical_live_min_win_rate:
@@ -530,6 +549,30 @@ def _tactical_live_paper_gate(
             f"{adverse_ratio:.1%} > {config.tactical_live_max_adverse_exit_ratio:.1%}"
         )
     return ""
+
+
+def _early_tactical_evidence_allows(
+    config: TradingConfig,
+    *,
+    count: int,
+    avg_pnl: float,
+    win_rate: float,
+    adverse_ratio: float,
+    notional: float,
+) -> bool:
+    if not config.tactical_live_early_evidence_enabled:
+        return False
+    if notional > config.tactical_live_early_max_notional:
+        return False
+    if count < max(int(config.tactical_live_early_min_closed_cycles), 0):
+        return False
+    if avg_pnl < config.tactical_live_early_min_avg_pnl:
+        return False
+    if win_rate < config.tactical_live_early_min_win_rate:
+        return False
+    if adverse_ratio > config.tactical_live_early_max_adverse_exit_ratio:
+        return False
+    return True
 
 
 def _actual_exchange_symbols(client: BinanceUSDMClient) -> tuple[set[str], set[str], str]:

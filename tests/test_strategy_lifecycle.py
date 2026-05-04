@@ -71,7 +71,8 @@ class FakeStrategyClient:
         return row
 
     def account_trades(self, *, symbol, order_id=None, limit=50):
-        if int(order_id) == 1:
+        order_id = int(order_id)
+        if order_id == 1:
             return [
                 {
                     "id": 201,
@@ -83,11 +84,11 @@ class FakeStrategyClient:
                     "realizedPnl": "0",
                 }
             ]
-        if int(order_id) == 2 and self.orders[int(order_id)]["status"] == "FILLED":
+        if order_id > 1 and self.orders[order_id]["status"] == "FILLED":
             return [
                 {
                     "id": 202,
-                    "orderId": 2,
+                    "orderId": order_id,
                     "price": "101.00000000",
                     "qty": "0.25000000",
                     "commission": "0.01000000",
@@ -679,6 +680,13 @@ class StrategyLifecycleTests(unittest.TestCase):
             self.assertEqual(opened.action, "entry_filled")
             cycle = store.active_strategy_cycle("trend_follow", "ETHUSDC")
             assert cycle is not None
+            protective_intent = client.new_order_intents[-1]
+            self.assertEqual(protective_intent.order_type, "STOP_MARKET")
+            self.assertTrue(protective_intent.reduce_only)
+            self.assertIsNotNone(protective_intent.stop_price)
+            self.assertEqual(protective_intent.working_type, "MARK_PRICE")
+            self.assertIsNotNone(cycle["exit_order_id"])
+            protective_order_id = int(cycle["exit_order_id"])
             take_profit = manage_strategy_cycle(
                 client,
                 store,
@@ -690,6 +698,7 @@ class StrategyLifecycleTests(unittest.TestCase):
             )
 
             self.assertEqual(take_profit.action, "take_profit")
+            self.assertEqual(client.orders[protective_order_id]["status"], "CANCELED")
             self.assertTrue(client.new_order_intents[-1].reduce_only)
             self.assertEqual(client.new_order_intents[-1].order_type, "MARKET")
             self.assertIsNone(store.active_strategy_cycle("trend_follow", "ETHUSDC"))
