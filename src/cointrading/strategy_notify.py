@@ -22,6 +22,7 @@ MODE_LABELS = {
     "maker_range": "지정가 평균회귀",
     "taker_breakout": "시장가 축소돌파",
     "paper_tactical": "전술 paper",
+    "live_tactical": "전술 live",
 }
 STRATEGY_FAMILY_LABELS = {
     "maker_post_only": "메이커 스캘핑",

@@ -118,7 +118,12 @@ from cointrading.tactical_radar import (
     tactical_radar_text,
     write_tactical_radar_report,
 )
-from cointrading.tactical_paper import run_tactical_paper_step, tactical_paper_results_text
+from cointrading.tactical_paper import (
+    run_tactical_live_step,
+    run_tactical_paper_step,
+    tactical_live_results_text,
+    tactical_paper_results_text,
+)
 from cointrading.strategies import MovingAverageCrossStrategy
 from cointrading.telegram_bot import (
     TelegramBotState,
@@ -402,6 +407,12 @@ def main(argv: list[str] | None = None) -> None:
     tactical_paper_parser.add_argument("--notional", type=float)
     tactical_paper_parser.add_argument("--db-path", type=Path, default=default_db_path())
 
+    tactical_live_parser = subparsers.add_parser("tactical-live-step")
+    tactical_live_parser.add_argument("--symbols", nargs="+")
+    tactical_live_parser.add_argument("--notional", type=float)
+    tactical_live_parser.add_argument("--db-path", type=Path, default=default_db_path())
+    tactical_live_parser.add_argument("--armed", action="store_true")
+
     subparsers.add_parser("telegram-me")
 
     telegram_send_parser = subparsers.add_parser("telegram-send")
@@ -614,6 +625,8 @@ def main(argv: list[str] | None = None) -> None:
         )
     elif args.command == "tactical-paper-step":
         tactical_paper_step(_active_scalp_symbols(args.symbols), args.notional, args.db_path)
+    elif args.command == "tactical-live-step":
+        tactical_live_step(_active_scalp_symbols(args.symbols), args.notional, args.db_path, args.armed)
     elif args.command == "telegram-me":
         telegram_me()
     elif args.command == "telegram-send":
@@ -1563,6 +1576,28 @@ def tactical_paper_step(
         notional=notional,
     )
     print(tactical_paper_results_text(results, warnings))
+
+
+def tactical_live_step(
+    symbols: list[str],
+    notional: float | None,
+    db_path: Path,
+    armed: bool,
+) -> None:
+    if not armed:
+        print("tactical-live-step: blocked - --armed is required for real orders")
+        return
+    config = TradingConfig.from_env()
+    client = BinanceUSDMClient(config=config)
+    store = TradingStore(db_path)
+    results, warnings = run_tactical_live_step(
+        client,
+        store,
+        config,
+        symbols=symbols,
+        notional=notional,
+    )
+    print(tactical_live_results_text(results, warnings))
 
 
 def _run_meta_backtests(

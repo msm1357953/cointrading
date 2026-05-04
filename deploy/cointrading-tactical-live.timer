@@ -1,0 +1,11 @@
+[Unit]
+Description=Run tactical radar one-shot live bridge every minute
+
+[Timer]
+OnBootSec=270
+OnUnitInactiveSec=60
+AccuracySec=10
+Unit=cointrading-tactical-live.service
+
+[Install]
+WantedBy=timers.target

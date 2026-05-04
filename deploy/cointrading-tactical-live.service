@@ -1,0 +1,18 @@
+[Unit]
+Description=Run tactical radar one-shot live bridge
+
+[Service]
+Type=oneshot
+User=msm1357953_gmail_com
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+Environment=PYTHONUNBUFFERED=1
+Environment=COINTRADING_DRY_RUN=false
+Environment=COINTRADING_TESTNET=false
+Environment=COINTRADING_LIVE_TRADING_ENABLED=true
+Environment=COINTRADING_LIVE_STRATEGY_LIFECYCLE_ENABLED=true
+Environment=COINTRADING_LIVE_ONE_SHOT_REQUIRED=true
+Environment=COINTRADING_LIVE_ONE_SHOT_ENABLED=true
+Environment=COINTRADING_LIVE_ONE_SHOT_NOTIONAL=80
+Environment=COINTRADING_MAX_SINGLE_ORDER_NOTIONAL=80
+TimeoutStartSec=55
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli tactical-live-step --notional 80 --armed
