@@ -543,7 +543,15 @@ def _manage_paper_open(
 ) -> StrategyLifecycleResult:
     side = str(cycle["side"])
     target = float(cycle["target_price"])
-    stop = float(cycle["stop_price"])
+    stop, tighten_reason = _tactical_trailing_stop(cycle, config, mid)
+    if tighten_reason:
+        store.update_strategy_cycle(
+            int(cycle["id"]),
+            stop_price=stop,
+            reason=tighten_reason,
+            last_mid_price=mid,
+            timestamp_ms=timestamp_ms,
+        )
     if _target_filled(side, bid, ask, target):
         return _close_paper_cycle(store, cycle, config, exit_price=target, reason="take_profit", timestamp_ms=timestamp_ms)
     if _stop_triggered(side, mid, stop):
@@ -553,7 +561,7 @@ def _manage_paper_open(
         return _close_paper_cycle(store, cycle, config, exit_price=mid, reason="max_hold_exit", timestamp_ms=timestamp_ms)
     store.update_strategy_cycle(
         int(cycle["id"]),
-        reason="strategy exit waiting",
+        reason=tighten_reason or "strategy exit waiting",
         last_mid_price=mid,
         timestamp_ms=timestamp_ms,
     )
@@ -677,10 +685,19 @@ def _manage_live_open(
                 return _close_live_cycle(client, store, cycle, config, local_order, payload, timestamp_ms)
 
     side = str(cycle["side"])
+    stop, tighten_reason = _tactical_trailing_stop(cycle, config, mid)
+    if tighten_reason:
+        store.update_strategy_cycle(
+            int(cycle["id"]),
+            stop_price=stop,
+            reason=tighten_reason,
+            last_mid_price=mid,
+            timestamp_ms=timestamp_ms,
+        )
     reason = ""
     if _target_filled(side, bid, ask, float(cycle["target_price"])):
         reason = "take_profit"
-    elif _stop_triggered(side, mid, float(cycle["stop_price"])):
+    elif _stop_triggered(side, mid, stop):
         reason = "stop_loss"
     elif cycle["max_hold_deadline_ms"] is not None and timestamp_ms >= int(cycle["max_hold_deadline_ms"]):
         reason = "max_hold_exit"
@@ -689,11 +706,54 @@ def _manage_live_open(
 
     store.update_strategy_cycle(
         int(cycle["id"]),
-        reason="live strategy exit waiting",
+        reason=tighten_reason or "live strategy exit waiting",
         last_mid_price=mid,
         timestamp_ms=timestamp_ms,
     )
     return _result(cycle, "exit_waiting", "live target/stop not hit")
+
+
+def _tactical_trailing_stop(
+    cycle: sqlite3.Row,
+    config: TradingConfig,
+    mid: float,
+) -> tuple[float, str]:
+    current_stop = float(cycle["stop_price"])
+    strategy = str(cycle["strategy"])
+    if not strategy.startswith("tactical_"):
+        return current_stop, ""
+    entry = float(cycle["entry_price"])
+    if entry <= 0 or mid <= 0:
+        return current_stop, ""
+    side = str(cycle["side"])
+    stop_loss_bps = float(cycle["stop_loss_bps"])
+    if stop_loss_bps <= 0:
+        return current_stop, ""
+    if side == "long":
+        profit_bps = ((mid / entry) - 1.0) * 10_000.0
+    elif side == "short":
+        profit_bps = ((entry / mid) - 1.0) * 10_000.0
+    else:
+        return current_stop, ""
+    if profit_bps < stop_loss_bps:
+        return current_stop, ""
+
+    fee_buffer_bps = config.taker_fee_rate * 20_000.0 + 2.0
+    lock_bps = fee_buffer_bps
+    label = "tactical breakeven stop after +1R"
+    if profit_bps >= stop_loss_bps * 1.8:
+        lock_bps = max(fee_buffer_bps, stop_loss_bps * 0.5)
+        label = "tactical trailing stop after +1.8R"
+
+    if side == "long":
+        new_stop = entry * (1.0 + lock_bps / 10_000.0)
+        if new_stop > current_stop and new_stop < mid:
+            return new_stop, label
+    if side == "short":
+        new_stop = entry * (1.0 - lock_bps / 10_000.0)
+        if new_stop < current_stop and new_stop > mid:
+            return new_stop, label
+    return current_stop, ""
 
 
 def _submit_live_exit(

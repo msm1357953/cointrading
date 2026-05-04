@@ -168,6 +168,10 @@ class TradingConfig:
         "breakout_retest_long",
         "breakout_retest_short",
     )
+    tactical_live_min_closed_cycles: int = 30
+    tactical_live_min_avg_pnl: float = 0.0
+    tactical_live_min_win_rate: float = 0.40
+    tactical_live_max_adverse_exit_ratio: float = 0.65
     refined_entry_min_test_count: int = 20
     refined_entry_min_avg_pnl_bps: float = 10.0
     refined_entry_min_full_avg_pnl_bps: float = 5.0
@@ -457,6 +461,22 @@ class TradingConfig:
             tactical_live_scenarios=_get_csv_lower_tuple(
                 "COINTRADING_TACTICAL_LIVE_SCENARIOS",
                 cls.tactical_live_scenarios,
+            ),
+            tactical_live_min_closed_cycles=_get_int(
+                "COINTRADING_TACTICAL_LIVE_MIN_CLOSED_CYCLES",
+                cls.tactical_live_min_closed_cycles,
+            ),
+            tactical_live_min_avg_pnl=_get_float(
+                "COINTRADING_TACTICAL_LIVE_MIN_AVG_PNL",
+                cls.tactical_live_min_avg_pnl,
+            ),
+            tactical_live_min_win_rate=_get_float(
+                "COINTRADING_TACTICAL_LIVE_MIN_WIN_RATE",
+                cls.tactical_live_min_win_rate,
+            ),
+            tactical_live_max_adverse_exit_ratio=_get_float(
+                "COINTRADING_TACTICAL_LIVE_MAX_ADVERSE_EXIT_RATIO",
+                cls.tactical_live_max_adverse_exit_ratio,
             ),
             refined_entry_min_test_count=_get_int(
                 "COINTRADING_REFINED_ENTRY_MIN_TEST_COUNT",

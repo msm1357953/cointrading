@@ -706,14 +706,14 @@ def _major_breakout_long_signal(
     change_2h_bps: float,
     pullback_from_high: float,
 ) -> TacticalRadarSignal:
-    stop = level * (1.0 - _level_stop_buffer_bps(snap15) / 10_000.0)
+    stop = _long_breakout_stop(klines_15m, level, snap15)
     risk_bps = _price_risk_bps("long", current, stop)
     extension_bps = ((current / level) - 1.0) * 10_000.0 if level > 0 else 0.0
-    target = _reward_target("long", current, risk_bps, min_reward_bps=80.0, reward_risk=1.45)
+    target = _reward_target("long", current, risk_bps, min_reward_bps=100.0, reward_risk=1.8)
     retested = _recent_retest_long(klines_15m, level) and current > previous
     trend_ok = _is_uptrend(snap1h) or (snap4h.ema_slow is not None and current >= snap4h.ema_slow)
 
-    if retested and trend_ok and risk_bps <= 220.0:
+    if retested and trend_ok and risk_bps <= 320.0:
         return _signal(
             symbol=symbol,
             decision=RADAR_READY,
@@ -735,7 +735,12 @@ def _major_breakout_long_signal(
             pullback_bps=pullback_from_high,
         )
 
-    if trend_ok and extension_bps <= 140.0 and risk_bps <= 220.0 and _not_extreme_chase_long(snap15):
+    if (
+        trend_ok
+        and extension_bps <= 140.0
+        and risk_bps <= 280.0
+        and _breakout_momentum_ok_long(snap15, current=current, previous=previous, change_2h_bps=change_2h_bps)
+    ):
         return _signal(
             symbol=symbol,
             decision=RADAR_READY,
@@ -798,14 +803,14 @@ def _major_breakout_short_signal(
     change_2h_bps: float,
     bounce_from_low: float,
 ) -> TacticalRadarSignal:
-    stop = level * (1.0 + _level_stop_buffer_bps(snap15) / 10_000.0)
+    stop = _short_breakout_stop(klines_15m, level, snap15)
     risk_bps = _price_risk_bps("short", current, stop)
     extension_bps = ((level / current) - 1.0) * 10_000.0 if current > 0 else 0.0
-    target = _reward_target("short", current, risk_bps, min_reward_bps=80.0, reward_risk=1.45)
+    target = _reward_target("short", current, risk_bps, min_reward_bps=100.0, reward_risk=1.8)
     retested = _recent_retest_short(klines_15m, level) and current < previous
     trend_ok = _is_downtrend(snap1h) or (snap4h.ema_slow is not None and current <= snap4h.ema_slow)
 
-    if retested and trend_ok and risk_bps <= 220.0:
+    if retested and trend_ok and risk_bps <= 320.0:
         return _signal(
             symbol=symbol,
             decision=RADAR_READY,
@@ -827,7 +832,12 @@ def _major_breakout_short_signal(
             pullback_bps=bounce_from_low,
         )
 
-    if trend_ok and extension_bps <= 140.0 and risk_bps <= 220.0 and _not_extreme_chase_short(snap15):
+    if (
+        trend_ok
+        and extension_bps <= 140.0
+        and risk_bps <= 280.0
+        and _breakout_momentum_ok_short(snap15, current=current, previous=previous, change_2h_bps=change_2h_bps)
+    ):
         return _signal(
             symbol=symbol,
             decision=RADAR_READY,
@@ -1093,6 +1103,24 @@ def _level_stop_buffer_bps(snapshot: TechnicalSnapshot) -> float:
     return min(max(snapshot.atr_bps * 1.15, 35.0), 95.0)
 
 
+def _wick_stop_buffer_bps(snapshot: TechnicalSnapshot) -> float:
+    return min(max(snapshot.atr_bps * 0.35, 12.0), 45.0)
+
+
+def _long_breakout_stop(klines: list[Kline], level: float, snapshot: TechnicalSnapshot) -> float:
+    level_stop = level * (1.0 - _level_stop_buffer_bps(snapshot) / 10_000.0)
+    swing_low = min(row.low for row in klines[-8:])
+    swing_stop = swing_low * (1.0 - _wick_stop_buffer_bps(snapshot) / 10_000.0)
+    return min(level_stop, swing_stop)
+
+
+def _short_breakout_stop(klines: list[Kline], level: float, snapshot: TechnicalSnapshot) -> float:
+    level_stop = level * (1.0 + _level_stop_buffer_bps(snapshot) / 10_000.0)
+    swing_high = max(row.high for row in klines[-8:])
+    swing_stop = swing_high * (1.0 + _wick_stop_buffer_bps(snapshot) / 10_000.0)
+    return max(level_stop, swing_stop)
+
+
 def _recent_retest_long(klines: list[Kline], level: float) -> bool:
     if level <= 0:
         return False
@@ -1145,6 +1173,32 @@ def _not_extreme_chase_short(snapshot: TechnicalSnapshot) -> bool:
     rsi_ok = snapshot.rsi14 is None or snapshot.rsi14 >= 18.0
     bb_ok = snapshot.bollinger_position is None or snapshot.bollinger_position >= -0.15
     return rsi_ok and bb_ok
+
+
+def _breakout_momentum_ok_long(
+    snapshot: TechnicalSnapshot,
+    *,
+    current: float,
+    previous: float,
+    change_2h_bps: float,
+) -> bool:
+    if not _not_extreme_chase_long(snapshot):
+        return False
+    bb_ok = snapshot.bollinger_position is None or snapshot.bollinger_position >= 0.35
+    return current > previous and change_2h_bps >= -15.0 and bb_ok
+
+
+def _breakout_momentum_ok_short(
+    snapshot: TechnicalSnapshot,
+    *,
+    current: float,
+    previous: float,
+    change_2h_bps: float,
+) -> bool:
+    if not _not_extreme_chase_short(snapshot):
+        return False
+    bb_ok = snapshot.bollinger_position is None or snapshot.bollinger_position <= 0.65
+    return current < previous and change_2h_bps <= 15.0 and bb_ok
 
 
 def _is_uptrend(snapshot: TechnicalSnapshot) -> bool:

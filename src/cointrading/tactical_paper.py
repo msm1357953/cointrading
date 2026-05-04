@@ -302,6 +302,9 @@ def start_tactical_live_cycle_from_signal(
             "blocked",
             f"live 허용 전술이 아님: {signal.scenario}",
         )
+    paper_gate = _tactical_live_paper_gate(store, config, signal, strategy=strategy)
+    if paper_gate:
+        return TacticalPaperResult(symbol, "blocked", paper_gate)
     if signal.side not in {"long", "short"}:
         return TacticalPaperResult(symbol, "blocked", f"전술 방향이 진입 방향이 아님: {signal.side}")
     if signal.stop_price is None or signal.target_price is None:
@@ -475,6 +478,60 @@ def _is_live_scenario_allowed(config: TradingConfig, signal: TacticalRadarSignal
     return "*" in allowed or signal.scenario.lower() in allowed
 
 
+def _tactical_live_paper_gate(
+    store: TradingStore,
+    config: TradingConfig,
+    signal: TacticalRadarSignal,
+    *,
+    strategy: str,
+) -> str:
+    required = max(int(config.tactical_live_min_closed_cycles), 0)
+    if required <= 0:
+        return ""
+    with store.connect() as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS count,
+                   SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) AS wins,
+                   AVG(realized_pnl) AS avg_pnl,
+                   SUM(COALESCE(realized_pnl, 0)) AS sum_pnl,
+                   SUM(
+                     CASE
+                       WHEN status='STOPPED'
+                         OR reason IN ('stop_loss', 'max_hold_exit')
+                         OR realized_pnl <= 0
+                       THEN 1 ELSE 0
+                     END
+                   ) AS adverse
+            FROM strategy_cycles
+            WHERE dry_run=1
+              AND strategy=?
+              AND symbol=?
+              AND side=?
+              AND realized_pnl IS NOT NULL
+            """,
+            (strategy, signal.symbol.upper(), signal.side),
+        ).fetchone()
+    count = int(row["count"] or 0)
+    if count < required:
+        return f"전술 live paper 근거 부족: {strategy} {signal.symbol} {signal.side} 종료 {count}/{required}건"
+    wins = int(row["wins"] or 0)
+    avg_pnl = float(row["avg_pnl"] or 0.0)
+    adverse = int(row["adverse"] or 0)
+    win_rate = wins / count if count else 0.0
+    adverse_ratio = adverse / count if count else 1.0
+    if avg_pnl < config.tactical_live_min_avg_pnl:
+        return f"전술 live paper 평균손익 부족: {avg_pnl:.6f} < {config.tactical_live_min_avg_pnl:.6f}"
+    if win_rate < config.tactical_live_min_win_rate:
+        return f"전술 live paper 승률 부족: {win_rate:.1%} < {config.tactical_live_min_win_rate:.1%}"
+    if adverse_ratio > config.tactical_live_max_adverse_exit_ratio:
+        return (
+            "전술 live paper 불리한 종료비율 과다: "
+            f"{adverse_ratio:.1%} > {config.tactical_live_max_adverse_exit_ratio:.1%}"
+        )
+    return ""
+
+
 def _actual_exchange_symbols(client: BinanceUSDMClient) -> tuple[set[str], set[str], str]:
     try:
         orders = client._signed_request("GET", "/fapi/v1/openOrders")
@@ -538,7 +595,7 @@ def _max_hold_seconds(signal: TacticalRadarSignal) -> int:
     if "range_reversion" in signal.scenario:
         return 1200
     if "breakout_retest" in signal.scenario:
-        return 3600
+        return 14_400
     if "key_level_breakout" in signal.scenario:
-        return 7200
+        return 21_600
     return 1800

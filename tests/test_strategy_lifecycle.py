@@ -489,6 +489,50 @@ class StrategyLifecycleTests(unittest.TestCase):
             self.assertEqual(store.summary_counts()["strategy_cycles"], 1)
             self.assertEqual(store.summary_counts()["fills"], 2)
 
+    def test_tactical_cycle_moves_stop_to_breakeven_after_one_r(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TradingStore(Path(directory) / "cointrading.sqlite")
+            cycle_id = store.insert_strategy_cycle(
+                strategy="tactical_breakout_retest_long",
+                execution_mode="paper_tactical",
+                symbol="ETHUSDC",
+                side="long",
+                status="OPEN",
+                quantity=0.25,
+                entry_price=100.0,
+                target_price=110.0,
+                stop_price=98.0,
+                entry_order_type="MARKET",
+                take_profit_bps=1000.0,
+                stop_loss_bps=200.0,
+                max_hold_seconds=14_400,
+                maker_one_way_bps=0.0,
+                taker_one_way_bps=5.0,
+                entry_deadline_ms=1_000,
+                dry_run=True,
+                opened_ms=1_000,
+                max_hold_deadline_ms=15_000,
+                timestamp_ms=1_000,
+            )
+            cycle = store.active_strategy_cycle("tactical_breakout_retest_long", "ETHUSDC")
+            assert cycle is not None
+
+            result = manage_strategy_cycle(
+                FakeStrategyClient(),
+                store,
+                cycle,
+                TradingConfig(taker_fee_rate=0.0005),
+                bid=102.0,
+                ask=102.1,
+                timestamp_ms=2_000,
+            )
+
+            self.assertEqual(result.action, "exit_waiting")
+            updated = store.active_strategy_cycle("tactical_breakout_retest_long", "ETHUSDC")
+            assert updated is not None
+            self.assertGreater(float(updated["stop_price"]), 100.0)
+            self.assertEqual(int(updated["id"]), cycle_id)
+
     def test_dry_run_strategy_entry_does_not_call_exchange_new_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TradingStore(Path(directory) / "cointrading.sqlite")
