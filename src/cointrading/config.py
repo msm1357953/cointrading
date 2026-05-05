@@ -201,6 +201,18 @@ class TradingConfig:
     llm_provider: str = "gemini"
     llm_model: str = "gemini-3.1-pro-preview"
     llm_api_key: str = ""
+    # Funding-rate mean-reversion (long-only) strategy.
+    # Edge verified via cointrading.research.funding_carry_backtest on 2026-05-05.
+    funding_carry_enabled: bool = False
+    funding_carry_symbols: tuple[str, ...] = (
+        "BTCUSDC", "ETHUSDC", "SOLUSDC", "XRPUSDC", "DOGEUSDC",
+    )
+    funding_carry_threshold: float = 0.0001  # |funding| trigger; 0.0001 = 0.01%
+    funding_carry_notional: float = 80.0
+    funding_carry_stop_loss_bps: float = 300.0
+    funding_carry_max_hold_seconds: int = 86_400  # 24h
+    funding_carry_check_window_minutes: int = 60
+    funding_carry_live_enabled: bool = False  # third gate; even if dry_run=False & live_trading_enabled=True, must be True for live
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -588,6 +600,31 @@ class TradingConfig:
             llm_provider=_get_str("COINTRADING_LLM_PROVIDER", cls.llm_provider),
             llm_model=_get_str("COINTRADING_LLM_MODEL", cls.llm_model),
             llm_api_key=llm_api_key,
+            funding_carry_enabled=_get_bool(
+                "COINTRADING_FUNDING_CARRY_ENABLED", cls.funding_carry_enabled
+            ),
+            funding_carry_symbols=_get_csv_tuple(
+                "COINTRADING_FUNDING_CARRY_SYMBOLS", cls.funding_carry_symbols
+            ),
+            funding_carry_threshold=_get_float(
+                "COINTRADING_FUNDING_CARRY_THRESHOLD", cls.funding_carry_threshold
+            ),
+            funding_carry_notional=_get_float(
+                "COINTRADING_FUNDING_CARRY_NOTIONAL", cls.funding_carry_notional
+            ),
+            funding_carry_stop_loss_bps=_get_float(
+                "COINTRADING_FUNDING_CARRY_STOP_LOSS_BPS", cls.funding_carry_stop_loss_bps
+            ),
+            funding_carry_max_hold_seconds=_get_int(
+                "COINTRADING_FUNDING_CARRY_MAX_HOLD_SECONDS", cls.funding_carry_max_hold_seconds
+            ),
+            funding_carry_check_window_minutes=_get_int(
+                "COINTRADING_FUNDING_CARRY_CHECK_WINDOW_MINUTES",
+                cls.funding_carry_check_window_minutes,
+            ),
+            funding_carry_live_enabled=_get_bool(
+                "COINTRADING_FUNDING_CARRY_LIVE_ENABLED", cls.funding_carry_live_enabled
+            ),
         )
 
 

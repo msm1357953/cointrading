@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 from dataclasses import replace
+import json
 import math
 from pathlib import Path
 import time
@@ -209,6 +210,16 @@ def main(argv: list[str] | None = None) -> None:
     strategy_engine_parser.add_argument("--symbols", nargs="+")
     strategy_engine_parser.add_argument("--log-path", type=Path, default=default_scalp_log_path())
     strategy_engine_parser.add_argument("--db-path", type=Path, default=default_db_path())
+
+    funding_step_parser = subparsers.add_parser("funding-step")
+    funding_step_parser.add_argument("--json", action="store_true", help="emit JSON result")
+
+    funding_step_notify_parser = subparsers.add_parser("funding-step-notify")
+    funding_step_notify_parser.add_argument(
+        "--state-path",
+        type=Path,
+        default=Path("data/funding_carry_notify_state.json"),
+    )
 
     strategy_evaluate_parser = subparsers.add_parser("strategy-evaluate")
     strategy_evaluate_parser.add_argument("--db-path", type=Path, default=default_db_path())
@@ -464,6 +475,12 @@ def main(argv: list[str] | None = None) -> None:
         scalp_engine_step(_active_scalp_symbols(args.symbols), args.log_path, args.db_path)
     elif args.command == "strategy-engine-step":
         strategy_engine_step(_active_scalp_symbols(args.symbols), args.log_path, args.db_path)
+    elif args.command == "funding-step":
+        funding_step_cmd(emit_json=args.json)
+    elif args.command == "funding-step-notify":
+        from cointrading.funding_carry_notify import run_step_and_notify
+        result = run_step_and_notify(state_path=args.state_path)
+        print(json.dumps(result, indent=2, default=str))
     elif args.command == "strategy-evaluate":
         strategy_evaluate(args.db_path, args.limit)
     elif args.command == "strategy-notify":
@@ -924,6 +941,24 @@ def strategy_evaluate(db_path: Path, limit: int) -> None:
     rows = evaluate_and_store_strategy(store, TradingConfig.from_env())
     print(strategy_evaluation_text(rows, limit=limit))
     print(f"stored {len(rows)} strategy evaluation row(s) into {db_path}")
+
+
+def funding_step_cmd(*, emit_json: bool = False) -> None:
+    from cointrading.funding_lifecycle import run_step_once
+    result = run_step_once()
+    if emit_json:
+        print(json.dumps(result.as_dict(), default=str))
+        return
+    print(f"funding-step ts={result.ts_ms}")
+    print(f"  managed: {len(result.managed)}")
+    for m in result.managed:
+        print(f"    - {m}")
+    print(f"  opened : {len(result.opened)}")
+    for o in result.opened:
+        print(f"    - {o}")
+    print(f"  skipped: {len(result.skipped)}")
+    for s in result.skipped[:10]:
+        print(f"    - {s}")
 
 
 def strategy_notify(

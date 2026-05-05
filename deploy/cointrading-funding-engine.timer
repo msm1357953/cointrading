@@ -1,0 +1,11 @@
+[Unit]
+Description=Funding-carry lifecycle (entry checks + stop / time exit) every minute
+
+[Timer]
+OnBootSec=180
+OnUnitInactiveSec=60
+AccuracySec=10
+Unit=cointrading-funding-engine.service
+
+[Install]
+WantedBy=timers.target
