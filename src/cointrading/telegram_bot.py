@@ -242,6 +242,18 @@ class TelegramCommandProcessor:
         "pause": "pause",
         "재개": "resume",
         "resume": "resume",
+        # Funding-carry mean reversion (active strategy)
+        "펀딩": "funding",
+        "펀비": "funding",
+        "funding": "funding",
+        "펀딩보고": "funding_report",
+        "펀딩결과": "funding_report",
+        "펀비결과": "funding_report",
+        "펀비보고": "funding_report",
+        "펀딩준비": "funding_ready",
+        "펀비준비": "funding_ready",
+        "펀딩설정": "funding_config",
+        "펀비설정": "funding_config",
     }
 
     def __init__(
@@ -315,6 +327,14 @@ class TelegramCommandProcessor:
             return self.orders_text()
         if command == "cycles":
             return self.cycles_text()
+        if command == "funding":
+            return self.funding_text()
+        if command == "funding_report":
+            return self.funding_report_text()
+        if command == "funding_ready":
+            return self.funding_ready_text()
+        if command == "funding_config":
+            return self.funding_config_text()
         if command == "pause":
             self.state.paused = True
             return "정지했습니다. 이후 자동매매 루프는 신규 진입을 거부해야 합니다."
@@ -329,31 +349,29 @@ class TelegramCommandProcessor:
     def help_text(self, chat_id: str) -> str:
         return "\n".join(
             [
-                "사용 가능한 명령어",
+                "■ 일반",
                 "상태 - 봇/거래 모드 확인",
                 "계좌 - Binance 선물 계좌 요약",
-                "위험 - 리스크 한도 확인",
-                "수수료 - BNB 할인과 현재 수수료 확인",
-                "가격 BTCUSDC - 현재 가격 확인",
-                "장세 - 큰 장상태와 허용 전략 확인",
-                "시장상황 - 펀딩, 프리미엄, 미결제약정, 호가 유동성 확인",
-                "레이더 - 지금 가능한 전술 단계 확인. 추격금지/눌림대기/근접/진입가능",
-                "스캘핑 BTCUSDC - 현재 스캘핑 신호와 장 상태 확인",
-                "보고 - 스캘핑 dry-run 결과와 장 상태별 성과 요약",
-                "보고 BTCUSDC - BTCUSDC만 결과 요약",
-                "보고 전체 - 예전 USDT 로그까지 포함",
-                "전략 - 신호 로그 기반 후보평가, live 잠금, 전략 상태머신 요약",
-                "메타 - 장기 데이터 기반 상황판단형 메타전략 결과. 주문은 넣지 않음",
-                "발굴 - 과거 데이터에서 walk-forward로 살아남은 전략 후보 확인",
-                "정제 - 1차 발굴 후보를 다시 흔들어 본 2차 정제 결과",
-                "현재후보 - 정제 후보가 지금 닫힌 봉 조건에도 맞는지 확인",
-                "프로브 - 예전 개별 후보 백테스트 프로브 결과",
-                "진입 ETHUSDC 25 - 전략별 진입 점검. 주문은 넣지 않음",
-                "실전 ETHUSDC 25 - 실전 가능/불가 최종 감독 판정",
+                "위험 - 리스크 한도/런타임 리스크 모드",
+                "수수료 - BNB 할인과 현재 수수료",
+                "가격 BTCUSDC - 현재 가격",
+                "정지 / 재개 - 자동 진입 일시정지/해제",
+                "",
+                "■ 펀딩 평균회귀 전략 (현재 활성)",
+                "펀딩 - 현재 OPEN 페이퍼 사이클 + 시장 펀딩비 현황",
+                "펀딩보고 - 페이퍼 누적 성과 요약 (n, 승률, PnL)",
+                "펀딩준비 - 라이브 게이트 충족 여부 (5+ closed, sum≥0, WR≥40%)",
+                "펀딩설정 - 임계값/노셔널/심볼/SL/보유시간",
+                "",
+                "■ 시장 데이터",
+                "장세 - 매크로 regime 분류 결과",
+                "시장상황 BTCUSDC - 펀딩/프리미엄/OI/스프레드/유동성",
                 "주문 - 최근 dry-run 주문/차단 기록",
-                "포지션 - 스캘핑 상태머신 기록",
-                "정지 - 자동매매 신규 진입 정지",
-                "재개 - 자동매매 신규 진입 재개",
+                "포지션 - 활성 사이클 상태",
+                "",
+                "■ 레거시 (Phase 1에서 비활성화 — 옛 데이터 조회용)",
+                "보고 / 스캘핑 / 전략 / 레이더 / 메타 / 발굴 / 정제 / 현재후보 / 진입 / 실전",
+                f"",
                 f"chat_id: {chat_id}",
             ]
         )
@@ -700,6 +718,149 @@ class TelegramCommandProcessor:
                 f"{cycle['reason'] or ''}{pnl}"
             )
         return "\n".join(lines)
+
+    # ----- Funding-carry strategy (active) -----
+
+    def funding_text(self) -> str:
+        from cointrading.funding_lifecycle import STATUS_OPEN, STRATEGY_NAME
+
+        cfg = self.trading_config
+        store = TradingStore(default_db_path())
+        with store.connect() as connection:
+            open_rows = list(connection.execute(
+                "SELECT * FROM strategy_cycles WHERE strategy=? AND status=? ORDER BY opened_ms DESC",
+                (STRATEGY_NAME, STATUS_OPEN),
+            ))
+
+        lines = [f"■ 펀딩 평균회귀 (active={cfg.funding_carry_enabled})"]
+        if not open_rows:
+            lines.append("OPEN 페이퍼 없음.")
+        else:
+            lines.append(f"OPEN 페이퍼 {len(open_rows)}건:")
+            for row in open_rows:
+                lines.append(
+                    f"  {row['symbol']} entry={float(row['entry_price']):.6f} "
+                    f"stop={float(row['stop_price']):.6f} "
+                    f"opened={kst_from_ms(int(row['opened_ms']))}"
+                )
+
+        lines.append("")
+        lines.append("현재 펀딩비 (5심볼):")
+        for symbol in cfg.funding_carry_symbols:
+            try:
+                resp = self.exchange_client.funding_rate(symbol, limit=1)
+            except (AttributeError, BinanceAPIError):
+                lines.append(f"  {symbol}: API 오류")
+                continue
+            if not resp:
+                lines.append(f"  {symbol}: 데이터 없음")
+                continue
+            rate = float(resp[0]["fundingRate"])
+            mark = "★" if rate <= -cfg.funding_carry_threshold else " "
+            lines.append(f"  {mark} {symbol}: {rate * 100:+.4f}%")
+        lines.append(f"트리거: ≤ -{cfg.funding_carry_threshold * 100:.4f}% (★ 표시)")
+        return "\n".join(lines)
+
+    def funding_report_text(self) -> str:
+        from cointrading.funding_carry_notify import evaluate_live_ready
+        from cointrading.funding_lifecycle import STATUS_CLOSED, STATUS_STOPPED, STRATEGY_NAME
+
+        store = TradingStore(default_db_path())
+        with store.connect() as connection:
+            rows = list(connection.execute(
+                """
+                SELECT symbol, status, realized_pnl FROM strategy_cycles
+                WHERE strategy=? AND status IN (?, ?)
+                """,
+                (STRATEGY_NAME, STATUS_CLOSED, STATUS_STOPPED),
+            ))
+        if not rows:
+            return "■ 펀딩 페이퍼 결과\n아직 닫힌 사이클이 없습니다."
+
+        wins = [r for r in rows if r["realized_pnl"] is not None and r["realized_pnl"] > 0]
+        losses = [r for r in rows if r["realized_pnl"] is not None and r["realized_pnl"] <= 0]
+        sum_pnl = sum(float(r["realized_pnl"] or 0) for r in rows)
+        n = len(rows)
+        wr = len(wins) / n if n else 0.0
+        avg_win = sum(float(r["realized_pnl"]) for r in wins) / len(wins) if wins else 0.0
+        avg_loss = sum(float(r["realized_pnl"]) for r in losses) / len(losses) if losses else 0.0
+
+        per_symbol: dict[str, list[float]] = {}
+        for r in rows:
+            per_symbol.setdefault(r["symbol"], []).append(float(r["realized_pnl"] or 0))
+
+        lines = [
+            "■ 펀딩 페이퍼 결과 (전체)",
+            f"  closed: {n}건 (승 {len(wins)} / 패 {len(losses)})",
+            f"  승률: {wr * 100:.0f}%",
+            f"  평균 승: {avg_win:+.4f}  평균 패: {avg_loss:+.4f}",
+            f"  누적 PnL: {sum_pnl:+.4f} USDC",
+            "",
+            "심볼별:",
+        ]
+        for symbol in sorted(per_symbol):
+            pnls = per_symbol[symbol]
+            lines.append(
+                f"  {symbol}: n={len(pnls)} sum={sum(pnls):+.4f} avg={sum(pnls)/len(pnls):+.4f}"
+            )
+        status = evaluate_live_ready(store)
+        lines.append("")
+        lines.append("라이브 게이트: " + ("✅ 통과" if status.ready else "❌ 미통과"))
+        for r in status.reasons:
+            lines.append(f"  - {r}")
+        return "\n".join(lines)
+
+    def funding_ready_text(self) -> str:
+        from cointrading.funding_carry_notify import (
+            LIVE_READY_MIN_CLOSED,
+            LIVE_READY_MIN_SUM_PNL,
+            LIVE_READY_MIN_WIN_RATE,
+            evaluate_live_ready,
+        )
+
+        store = TradingStore(default_db_path())
+        status = evaluate_live_ready(store)
+        cfg = self.trading_config
+        lines = [
+            "■ 펀딩 라이브 게이트",
+            f"  closed cycles : {status.closed_n} / 필요 ≥{LIVE_READY_MIN_CLOSED}",
+            f"  sum PnL       : {status.sum_pnl:+.4f} USDC / 필요 ≥{LIVE_READY_MIN_SUM_PNL:+.2f}",
+            f"  win rate      : {status.win_rate * 100:.0f}% / 필요 ≥{LIVE_READY_MIN_WIN_RATE * 100:.0f}%",
+            f"  ({status.win_n}W / {status.loss_n}L)",
+            "",
+        ]
+        if status.ready:
+            lines.append("✅ 게이트 통과. 라이브 검토 가능.")
+        else:
+            lines.append("❌ 미충족 항목:")
+            for r in status.reasons:
+                lines.append(f"  - {r}")
+        lines.append("")
+        lines.append("현재 라이브 모드 (3중 게이트):")
+        lines.append(f"  COINTRADING_DRY_RUN={'true' if cfg.dry_run else 'false'}")
+        lines.append(f"  COINTRADING_LIVE_TRADING_ENABLED={'true' if cfg.live_trading_enabled else 'false'}")
+        lines.append(f"  COINTRADING_FUNDING_CARRY_LIVE_ENABLED={'true' if cfg.funding_carry_live_enabled else 'false'}")
+        lines.append("(라이브 진입 코드는 아직 미구현 — 게이트 통과 후 추가 작업 필요)")
+        return "\n".join(lines)
+
+    def funding_config_text(self) -> str:
+        cfg = self.trading_config
+        lines = [
+            "■ 펀딩 전략 설정",
+            f"  활성       : {cfg.funding_carry_enabled}",
+            f"  심볼       : {', '.join(cfg.funding_carry_symbols)}",
+            f"  진입 임계값 : funding ≤ -{cfg.funding_carry_threshold * 100:.4f}%",
+            f"  체크 윈도우 : 펀딩 정산 후 {cfg.funding_carry_check_window_minutes}분 이내",
+            f"  노셔널     : {cfg.funding_carry_notional} USDC",
+            f"  스탑로스   : -{cfg.funding_carry_stop_loss_bps:.0f} bps",
+            f"  보유시간   : {cfg.funding_carry_max_hold_seconds // 3600}시간",
+            "",
+            "정산 시각 (UTC): 00:00, 08:00, 16:00",
+            "(KST: 09:00, 17:00, 01:00 다음날)",
+        ]
+        return "\n".join(lines)
+
+    # ----- end funding -----
 
     def _fee_context(self) -> tuple[bool, float]:
         try:
