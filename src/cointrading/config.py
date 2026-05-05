@@ -209,7 +209,10 @@ class TradingConfig:
     )
     funding_carry_threshold: float = 0.0001  # |funding| trigger; 0.0001 = 0.01%
     funding_carry_notional: float = 80.0
-    funding_carry_stop_loss_bps: float = 300.0
+    # SL widened from 300 to 500 bps after 2026-05-05 backtest grid: tighter SL
+    # cut winners and lowered EV; wider SL gives the 24h reversion room to play
+    # out (stop frequency 26% -> 9%, mean +33 -> +53 bps).
+    funding_carry_stop_loss_bps: float = 500.0
     funding_carry_max_hold_seconds: int = 86_400  # 24h
     funding_carry_check_window_minutes: int = 60
     funding_carry_live_enabled: bool = False  # third gate; even if dry_run=False & live_trading_enabled=True, must be True for live
