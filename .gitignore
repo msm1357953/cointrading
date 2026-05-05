@@ -10,4 +10,5 @@ data/*.json
 data/*.sqlite
 data/*.sqlite-*
 data/binance_history/
+data/lake/
 logs/
