@@ -1,0 +1,11 @@
+[Unit]
+Description=Wick-reversion lifecycle (entry checks + stop / time exit) every minute
+
+[Timer]
+OnBootSec=200
+OnUnitInactiveSec=60
+AccuracySec=10
+Unit=cointrading-wick-engine.service
+
+[Install]
+WantedBy=timers.target

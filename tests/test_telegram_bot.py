@@ -134,7 +134,8 @@ class TelegramCommandTests(unittest.TestCase):
         self.assertIn("봇 상태", reply)
         self.assertIn("mainnet", reply)
         self.assertIn("dry-run", reply)
-        self.assertIn("펀딩 평균회귀 전략", reply)
+        self.assertIn("펀딩 평균회귀", reply)
+        self.assertIn("꼬리 잡기", reply)
 
     def test_pause_and_resume_mutate_state(self) -> None:
         state = TelegramBotState()

@@ -221,6 +221,16 @@ def main(argv: list[str] | None = None) -> None:
         default=Path("data/funding_carry_notify_state.json"),
     )
 
+    wick_step_parser = subparsers.add_parser("wick-step")
+    wick_step_parser.add_argument("--json", action="store_true", help="emit JSON result")
+
+    wick_step_notify_parser = subparsers.add_parser("wick-step-notify")
+    wick_step_notify_parser.add_argument(
+        "--state-path",
+        type=Path,
+        default=Path("data/wick_carry_notify_state.json"),
+    )
+
     strategy_evaluate_parser = subparsers.add_parser("strategy-evaluate")
     strategy_evaluate_parser.add_argument("--db-path", type=Path, default=default_db_path())
     strategy_evaluate_parser.add_argument("--limit", type=int, default=25)
@@ -480,6 +490,26 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "funding-step-notify":
         from cointrading.funding_carry_notify import run_step_and_notify
         result = run_step_and_notify(state_path=args.state_path)
+        print(json.dumps(result, indent=2, default=str))
+    elif args.command == "wick-step":
+        from cointrading.wick_lifecycle import run_step_once
+        result = run_step_once()
+        if args.json:
+            print(json.dumps(result.as_dict(), default=str))
+        else:
+            print(f"wick-step ts={result.ts_ms}")
+            print(f"  managed: {len(result.managed)}")
+            for m in result.managed:
+                print(f"    - {m}")
+            print(f"  opened : {len(result.opened)}")
+            for o in result.opened:
+                print(f"    - {o}")
+            print(f"  skipped: {len(result.skipped)}")
+            for s in result.skipped[:10]:
+                print(f"    - {s}")
+    elif args.command == "wick-step-notify":
+        from cointrading.wick_carry_notify import run_step_and_notify as wick_notify
+        result = wick_notify(state_path=args.state_path)
         print(json.dumps(result, indent=2, default=str))
     elif args.command == "strategy-evaluate":
         strategy_evaluate(args.db_path, args.limit)

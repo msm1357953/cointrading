@@ -200,6 +200,14 @@ class TelegramCommandProcessor:
         "펀비준비": "funding_ready",
         "펀딩설정": "funding_config",
         "펀비설정": "funding_config",
+        # Wick reversion (active strategy)
+        "꼬리": "wick",
+        "wick": "wick",
+        "꼬리잡기": "wick",
+        "꼬리보고": "wick_report",
+        "꼬리결과": "wick_report",
+        "꼬리준비": "wick_ready",
+        "꼬리설정": "wick_config",
     }
 
     def __init__(
@@ -259,6 +267,14 @@ class TelegramCommandProcessor:
             return self.funding_ready_text()
         if command == "funding_config":
             return self.funding_config_text()
+        if command == "wick":
+            return self.wick_text()
+        if command == "wick_report":
+            return self.wick_report_text()
+        if command == "wick_ready":
+            return self.wick_ready_text()
+        if command == "wick_config":
+            return self.wick_config_text()
         if command == "pause":
             self.state.paused = True
             return "정지했습니다. 이후 자동매매 루프는 신규 진입을 거부해야 합니다."
@@ -287,6 +303,12 @@ class TelegramCommandProcessor:
                 "펀딩준비   - 라이브 게이트 (5+ closed, sum≥0, WR≥40%)",
                 "펀딩설정   - 임계값 / 노셔널 / 심볼 / SL / 보유시간",
                 "",
+                "■ 꼬리 잡기 전략 (5분봉)",
+                "꼬리       - OPEN 페이퍼 + 트리거 조건",
+                "꼬리보고   - 페이퍼 누적 성과",
+                "꼬리준비   - 라이브 게이트",
+                "꼬리설정   - wick/drop 임계값 / SL / 보유시간",
+                "",
                 "■ 시장 데이터",
                 "장세       - 매크로 regime 분류",
                 "시장상황 BTCUSDC - 펀딩/프리미엄/OI/스프레드/유동성",
@@ -298,12 +320,15 @@ class TelegramCommandProcessor:
         )
 
     def status_text(self) -> str:
-        from cointrading.funding_carry_notify import evaluate_live_ready
+        from cointrading.funding_carry_notify import evaluate_live_ready as fund_eval
         from cointrading.funding_lifecycle import (
-            STATUS_CLOSED,
-            STATUS_OPEN,
-            STATUS_STOPPED,
-            STRATEGY_NAME,
+            STATUS_CLOSED as F_CLOSED, STATUS_OPEN as F_OPEN,
+            STATUS_STOPPED as F_STOPPED, STRATEGY_NAME as F_NAME,
+        )
+        from cointrading.wick_carry_notify import evaluate_live_ready as wick_eval
+        from cointrading.wick_lifecycle import (
+            STATUS_CLOSED as W_CLOSED, STATUS_OPEN as W_OPEN,
+            STATUS_STOPPED as W_STOPPED, STRATEGY_NAME as W_NAME,
         )
 
         cfg = self.trading_config
@@ -313,18 +338,24 @@ class TelegramCommandProcessor:
         store = TradingStore(default_db_path())
         risk_state = evaluate_runtime_risk(store, cfg)
 
-        with store.connect() as connection:
-            open_n = connection.execute(
-                "SELECT COUNT(*) FROM strategy_cycles WHERE strategy=? AND status=?",
-                (STRATEGY_NAME, STATUS_OPEN),
-            ).fetchone()[0]
-            closed_n = connection.execute(
-                "SELECT COUNT(*) FROM strategy_cycles WHERE strategy=? AND status IN (?, ?)",
-                (STRATEGY_NAME, STATUS_CLOSED, STATUS_STOPPED),
-            ).fetchone()[0]
+        def _counts(strategy: str, statuses_open: tuple, statuses_closed: tuple) -> tuple[int, int]:
+            with store.connect() as connection:
+                open_n = connection.execute(
+                    "SELECT COUNT(*) FROM strategy_cycles WHERE strategy=? AND status=?",
+                    (strategy, statuses_open[0]),
+                ).fetchone()[0]
+                closed_n = connection.execute(
+                    "SELECT COUNT(*) FROM strategy_cycles WHERE strategy=? AND status IN (?, ?)",
+                    (strategy, statuses_closed[0], statuses_closed[1]),
+                ).fetchone()[0]
+            return open_n, closed_n
 
-        ready = evaluate_live_ready(store)
-        live_armed = (not cfg.dry_run) and cfg.live_trading_enabled and cfg.funding_carry_live_enabled
+        f_open, f_closed = _counts(F_NAME, (F_OPEN,), (F_CLOSED, F_STOPPED))
+        w_open, w_closed = _counts(W_NAME, (W_OPEN,), (W_CLOSED, W_STOPPED))
+        f_ready = fund_eval(store)
+        w_ready = wick_eval(store)
+        f_armed = (not cfg.dry_run) and cfg.live_trading_enabled and cfg.funding_carry_live_enabled
+        w_armed = (not cfg.dry_run) and cfg.live_trading_enabled and cfg.wick_carry_live_enabled
 
         return "\n".join(
             [
@@ -336,16 +367,15 @@ class TelegramCommandProcessor:
                 f"  신규 진입   : {'허용' if risk_state.allows_new_entries else '차단'}",
                 f"  기준 자산   : {cfg.initial_equity:.2f} {cfg.equity_asset}",
                 "",
-                "■ 펀딩 평균회귀 전략 (활성 전략)",
-                f"  활성        : {cfg.funding_carry_enabled}",
-                f"  심볼        : {', '.join(cfg.funding_carry_symbols)}",
-                f"  OPEN 페이퍼 : {open_n}건",
-                f"  CLOSED 누적 : {closed_n}건  (승 {ready.win_n} / 패 {ready.loss_n})",
-                f"  누적 PnL    : {ready.sum_pnl:+.4f} USDC",
-                f"  라이브 게이트: {'✅ 통과' if ready.ready else '❌ 미통과'}",
-                f"  라이브 모드 : {'🔴 ARMED' if live_armed else '안전 (페이퍼)'}",
+                "■ 펀딩 평균회귀 (활성 전략 #1)",
+                f"  활성={cfg.funding_carry_enabled}  OPEN {f_open}  CLOSED {f_closed} ({f_ready.win_n}W/{f_ready.loss_n}L)  PnL {f_ready.sum_pnl:+.4f}",
+                f"  라이브 게이트: {'✅' if f_ready.ready else '❌'}  모드: {'🔴 ARMED' if f_armed else '안전 (페이퍼)'}",
                 "",
-                "자세한 정보: '펀딩' / '펀딩보고' / '펀딩준비' / '펀딩설정'",
+                "■ 꼬리 잡기 (활성 전략 #2)",
+                f"  활성={cfg.wick_carry_enabled}  OPEN {w_open}  CLOSED {w_closed} ({w_ready.win_n}W/{w_ready.loss_n}L)  PnL {w_ready.sum_pnl:+.4f}",
+                f"  라이브 게이트: {'✅' if w_ready.ready else '❌'}  모드: {'🔴 ARMED' if w_armed else '안전 (페이퍼)'}",
+                "",
+                "자세한 정보: '펀딩' / '펀딩보고' / '꼬리' / '꼬리보고'",
             ]
         )
 
@@ -809,6 +839,143 @@ class TelegramCommandProcessor:
         return "\n".join(lines)
 
     # ----- end funding -----
+
+    # ----- Wick reversion strategy (active) -----
+
+    def wick_text(self) -> str:
+        from cointrading.wick_lifecycle import STATUS_OPEN as WICK_OPEN, STRATEGY_NAME as WICK_NAME
+
+        cfg = self.trading_config
+        store = TradingStore(default_db_path())
+        with store.connect() as connection:
+            open_rows = list(connection.execute(
+                "SELECT * FROM strategy_cycles WHERE strategy=? AND status=? ORDER BY opened_ms DESC",
+                (WICK_NAME, WICK_OPEN),
+            ))
+        lines = [f"■ 꼬리 잡기 (active={cfg.wick_carry_enabled})"]
+        if not open_rows:
+            lines.append("OPEN 페이퍼 없음.")
+        else:
+            lines.append(f"OPEN 페이퍼 {len(open_rows)}건:")
+            for row in open_rows:
+                lines.append(
+                    f"  {row['symbol']} entry={float(row['entry_price']):.6f} "
+                    f"stop={float(row['stop_price']):.6f} "
+                    f"opened={kst_from_ms(int(row['opened_ms']))}"
+                )
+        lines.append("")
+        lines.append(
+            f"트리거: 5분봉 lower_wick≥{cfg.wick_carry_min_wick_ratio:.2f} + "
+            f"intrabar drop≥{cfg.wick_carry_min_drop_pct * 100:.1f}%"
+        )
+        lines.append(f"보유: {cfg.wick_carry_max_hold_seconds // 3600}h, SL: -{cfg.wick_carry_stop_loss_bps:.0f}bps")
+        return "\n".join(lines)
+
+    def wick_report_text(self) -> str:
+        from cointrading.wick_carry_notify import evaluate_live_ready as wick_eval_ready
+        from cointrading.wick_lifecycle import (
+            STATUS_CLOSED as WICK_CLOSED,
+            STATUS_STOPPED as WICK_STOPPED,
+            STRATEGY_NAME as WICK_NAME,
+        )
+
+        store = TradingStore(default_db_path())
+        with store.connect() as connection:
+            rows = list(connection.execute(
+                """
+                SELECT symbol, status, realized_pnl FROM strategy_cycles
+                WHERE strategy=? AND status IN (?, ?)
+                """,
+                (WICK_NAME, WICK_CLOSED, WICK_STOPPED),
+            ))
+        if not rows:
+            return "■ 꼬리 페이퍼 결과\n아직 닫힌 사이클이 없습니다."
+
+        wins = [r for r in rows if r["realized_pnl"] is not None and r["realized_pnl"] > 0]
+        losses = [r for r in rows if r["realized_pnl"] is not None and r["realized_pnl"] <= 0]
+        sum_pnl = sum(float(r["realized_pnl"] or 0) for r in rows)
+        n = len(rows)
+        wr = len(wins) / n if n else 0.0
+        avg_win = sum(float(r["realized_pnl"]) for r in wins) / len(wins) if wins else 0.0
+        avg_loss = sum(float(r["realized_pnl"]) for r in losses) / len(losses) if losses else 0.0
+
+        per_symbol: dict[str, list[float]] = {}
+        for r in rows:
+            per_symbol.setdefault(r["symbol"], []).append(float(r["realized_pnl"] or 0))
+
+        lines = [
+            "■ 꼬리 페이퍼 결과 (전체)",
+            f"  closed: {n}건 (승 {len(wins)} / 패 {len(losses)})",
+            f"  승률: {wr * 100:.0f}%",
+            f"  평균 승: {avg_win:+.4f}  평균 패: {avg_loss:+.4f}",
+            f"  누적 PnL: {sum_pnl:+.4f} USDC",
+            "",
+            "심볼별:",
+        ]
+        for symbol in sorted(per_symbol):
+            pnls = per_symbol[symbol]
+            lines.append(
+                f"  {symbol}: n={len(pnls)} sum={sum(pnls):+.4f} avg={sum(pnls) / len(pnls):+.4f}"
+            )
+        status = wick_eval_ready(store)
+        lines.append("")
+        lines.append("라이브 게이트: " + ("✅ 통과" if status.ready else "❌ 미통과"))
+        for r in status.reasons:
+            lines.append(f"  - {r}")
+        return "\n".join(lines)
+
+    def wick_ready_text(self) -> str:
+        from cointrading.wick_carry_notify import (
+            LIVE_READY_MIN_CLOSED as WICK_MIN_CLOSED,
+            LIVE_READY_MIN_SUM_PNL as WICK_MIN_SUM,
+            LIVE_READY_MIN_WIN_RATE as WICK_MIN_WR,
+            evaluate_live_ready as wick_eval_ready,
+        )
+
+        store = TradingStore(default_db_path())
+        status = wick_eval_ready(store)
+        cfg = self.trading_config
+        lines = [
+            "■ 꼬리 라이브 게이트",
+            f"  closed cycles : {status.closed_n} / 필요 ≥{WICK_MIN_CLOSED}",
+            f"  sum PnL       : {status.sum_pnl:+.4f} USDC / 필요 ≥{WICK_MIN_SUM:+.2f}",
+            f"  win rate      : {status.win_rate * 100:.0f}% / 필요 ≥{WICK_MIN_WR * 100:.0f}%",
+            f"  ({status.win_n}W / {status.loss_n}L)",
+            "",
+        ]
+        if status.ready:
+            lines.append("✅ 게이트 통과. 라이브 검토 가능.")
+        else:
+            lines.append("❌ 미충족 항목:")
+            for r in status.reasons:
+                lines.append(f"  - {r}")
+        lines.append("")
+        lines.append("현재 라이브 모드 (3중 게이트):")
+        lines.append(f"  COINTRADING_DRY_RUN={'true' if cfg.dry_run else 'false'}")
+        lines.append(f"  COINTRADING_LIVE_TRADING_ENABLED={'true' if cfg.live_trading_enabled else 'false'}")
+        lines.append(f"  COINTRADING_WICK_CARRY_LIVE_ENABLED={'true' if cfg.wick_carry_live_enabled else 'false'}")
+        lines.append("(라이브 진입 코드는 아직 미구현 — 게이트 통과 후 추가 작업 필요)")
+        return "\n".join(lines)
+
+    def wick_config_text(self) -> str:
+        cfg = self.trading_config
+        lines = [
+            "■ 꼬리 전략 설정",
+            f"  활성       : {cfg.wick_carry_enabled}",
+            f"  심볼       : {', '.join(cfg.wick_carry_symbols)}",
+            f"  wick 임계값 : ≥{cfg.wick_carry_min_wick_ratio:.2f}",
+            f"  drop 임계값 : ≥{cfg.wick_carry_min_drop_pct * 100:.1f}% (intrabar (open-low)/open)",
+            f"  fresh 윈도우: 봉 마감 후 {cfg.wick_carry_freshness_seconds}초 이내",
+            f"  cooldown    : 청산 후 {cfg.wick_carry_cooldown_seconds // 60}분 재진입 금지",
+            f"  노셔널     : {cfg.wick_carry_notional} USDC",
+            f"  스탑로스   : -{cfg.wick_carry_stop_loss_bps:.0f} bps",
+            f"  보유시간   : {cfg.wick_carry_max_hold_seconds // 3600}시간",
+            "",
+            "기준봉: 5분봉 마감 직후 체크. 1분 timer 발화.",
+        ]
+        return "\n".join(lines)
+
+    # ----- end wick -----
 
     def _fee_context(self) -> tuple[bool, float]:
         try:

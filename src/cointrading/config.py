@@ -216,6 +216,21 @@ class TradingConfig:
     funding_carry_max_hold_seconds: int = 86_400  # 24h
     funding_carry_check_window_minutes: int = 60
     funding_carry_live_enabled: bool = False  # third gate; even if dry_run=False & live_trading_enabled=True, must be True for live
+    # Wick reversion (long-only) strategy.
+    # Edge verified via cointrading.research.wick_scalp_backtest on 2026-05-05
+    # for 5m bars, lower-wick ratio >= 0.7, intrabar drop >= 1%, hold 2h, SL -3%.
+    wick_carry_enabled: bool = False
+    wick_carry_symbols: tuple[str, ...] = (
+        "BTCUSDC", "ETHUSDC", "SOLUSDC", "XRPUSDC", "DOGEUSDC",
+    )
+    wick_carry_min_wick_ratio: float = 0.7
+    wick_carry_min_drop_pct: float = 0.01  # intrabar (open-low)/open minimum
+    wick_carry_notional: float = 80.0
+    wick_carry_stop_loss_bps: float = 300.0
+    wick_carry_max_hold_seconds: int = 7_200  # 2h
+    wick_carry_cooldown_seconds: int = 600    # 10 min after close before re-entry on same symbol
+    wick_carry_freshness_seconds: int = 360   # trigger bar must have closed within last 6 min
+    wick_carry_live_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -627,6 +642,36 @@ class TradingConfig:
             ),
             funding_carry_live_enabled=_get_bool(
                 "COINTRADING_FUNDING_CARRY_LIVE_ENABLED", cls.funding_carry_live_enabled
+            ),
+            wick_carry_enabled=_get_bool(
+                "COINTRADING_WICK_CARRY_ENABLED", cls.wick_carry_enabled
+            ),
+            wick_carry_symbols=_get_csv_tuple(
+                "COINTRADING_WICK_CARRY_SYMBOLS", cls.wick_carry_symbols
+            ),
+            wick_carry_min_wick_ratio=_get_float(
+                "COINTRADING_WICK_CARRY_MIN_WICK_RATIO", cls.wick_carry_min_wick_ratio
+            ),
+            wick_carry_min_drop_pct=_get_float(
+                "COINTRADING_WICK_CARRY_MIN_DROP_PCT", cls.wick_carry_min_drop_pct
+            ),
+            wick_carry_notional=_get_float(
+                "COINTRADING_WICK_CARRY_NOTIONAL", cls.wick_carry_notional
+            ),
+            wick_carry_stop_loss_bps=_get_float(
+                "COINTRADING_WICK_CARRY_STOP_LOSS_BPS", cls.wick_carry_stop_loss_bps
+            ),
+            wick_carry_max_hold_seconds=_get_int(
+                "COINTRADING_WICK_CARRY_MAX_HOLD_SECONDS", cls.wick_carry_max_hold_seconds
+            ),
+            wick_carry_cooldown_seconds=_get_int(
+                "COINTRADING_WICK_CARRY_COOLDOWN_SECONDS", cls.wick_carry_cooldown_seconds
+            ),
+            wick_carry_freshness_seconds=_get_int(
+                "COINTRADING_WICK_CARRY_FRESHNESS_SECONDS", cls.wick_carry_freshness_seconds
+            ),
+            wick_carry_live_enabled=_get_bool(
+                "COINTRADING_WICK_CARRY_LIVE_ENABLED", cls.wick_carry_live_enabled
             ),
         )
 
