@@ -1,7 +1,5 @@
-import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import ANY, patch
+from unittest.mock import patch
 
 from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.models import Kline
@@ -133,10 +131,10 @@ class TelegramCommandTests(unittest.TestCase):
             exchange_client=FakeExchangeClient(),
         )
         reply = processor.handle_text("123", "/status")
-        self.assertIn("모드: mainnet", reply)
-        self.assertIn("dry-run: on", reply)
-        self.assertIn("초기 기준 자산: 1000.00 USDC", reply)
-        self.assertIn("스캘핑 대상: BTCUSDC, ETHUSDC", reply)
+        self.assertIn("봇 상태", reply)
+        self.assertIn("mainnet", reply)
+        self.assertIn("dry-run", reply)
+        self.assertIn("펀딩 평균회귀 전략", reply)
 
     def test_pause_and_resume_mutate_state(self) -> None:
         state = TelegramBotState()
@@ -197,172 +195,6 @@ class TelegramCommandTests(unittest.TestCase):
         self.assertIn("USDC 심볼 live 준비: 가능", reply)
         self.assertIn("BTCUSDC: maker 0.00bps, taker 3.60bps", reply)
 
-    def test_scalp_command_uses_market_microstructure(self) -> None:
-        processor = TelegramCommandProcessor(
-            TelegramConfig(
-                allowed_chat_ids=frozenset({"123"}),
-                commands_enabled=True,
-            ),
-            TradingConfig(),
-            TelegramBotState(),
-            exchange_client=FakeExchangeClient(),
-        )
-        reply = processor.handle_text("123", "/scalp BTCUSDC")
-        self.assertIn("스캘핑 신호: BTCUSDC", reply)
-        self.assertIn("메이커 왕복 비용: 0.00 bps", reply)
-        self.assertIn("테이커 왕복 비용: 7.20 bps", reply)
-        self.assertIn("BNB 수수료 할인: 적용 중", reply)
-
-    def test_scalp_report_command(self) -> None:
-        processor = TelegramCommandProcessor(
-            TelegramConfig(
-                allowed_chat_ids=frozenset({"123"}),
-                commands_enabled=True,
-            ),
-            TradingConfig(),
-            TelegramBotState(),
-            exchange_client=FakeExchangeClient(),
-        )
-        with (
-            patch("cointrading.telegram_bot.scalp_report_rows_text", return_value="report ok"),
-            patch(
-                "cointrading.telegram_bot._with_recent_order_summary",
-                side_effect=lambda text, store: text,
-            ),
-        ):
-            reply = processor.handle_text("123", "/scalp_report BTCUSDC")
-        self.assertEqual(reply, "report ok")
-
-    def test_strategy_command_uses_full_latest_batch(self) -> None:
-        processor = TelegramCommandProcessor(
-            TelegramConfig(
-                allowed_chat_ids=frozenset({"123"}),
-                commands_enabled=True,
-            ),
-            TradingConfig(),
-            TelegramBotState(),
-            exchange_client=FakeExchangeClient(),
-        )
-        with (
-            patch("cointrading.telegram_bot.TradingStore") as store_cls,
-            patch(
-                "cointrading.telegram_bot.strategy_notification_text",
-                return_value="strategy ok",
-            ) as text_fn,
-        ):
-            store = store_cls.return_value
-            store.latest_strategy_batch.return_value = ["row"]
-            reply = processor.handle_text("123", "전략")
-
-        self.assertEqual(reply, "strategy ok")
-        store.latest_strategy_batch.assert_called_once_with()
-        store.active_strategy_cycles.assert_called_once_with()
-        text_fn.assert_called_once_with(
-            ["row"],
-            reason="수동 조회",
-            limit=8,
-            config=ANY,
-            active_strategy_cycles=store.active_strategy_cycles.return_value,
-        )
-
-    def test_research_command_reads_latest_meta_report(self) -> None:
-        processor = TelegramCommandProcessor(
-            TelegramConfig(
-                allowed_chat_ids=frozenset({"123"}),
-                commands_enabled=True,
-            ),
-            TradingConfig(),
-            TelegramBotState(),
-            exchange_client=FakeExchangeClient(),
-        )
-        with patch(
-            "cointrading.telegram_bot.meta_report_text",
-            return_value="research ok",
-        ) as text_fn:
-            reply = processor.handle_text("123", "메타")
-
-        self.assertEqual(reply, "research ok")
-        text_fn.assert_called_once_with(limit=8)
-
-    def test_strategy_mine_command_reads_latest_report(self) -> None:
-        processor = TelegramCommandProcessor(
-            TelegramConfig(
-                allowed_chat_ids=frozenset({"123"}),
-                commands_enabled=True,
-            ),
-            TradingConfig(),
-            TelegramBotState(),
-            exchange_client=FakeExchangeClient(),
-        )
-        with patch(
-            "cointrading.telegram_bot.strategy_mine_report_text",
-            return_value="mine ok",
-        ) as text_fn:
-            reply = processor.handle_text("123", "발굴")
-
-        self.assertEqual(reply, "mine ok")
-        text_fn.assert_called_once_with(limit=8)
-
-    def test_strategy_refine_command_reads_latest_report(self) -> None:
-        processor = TelegramCommandProcessor(
-            TelegramConfig(
-                allowed_chat_ids=frozenset({"123"}),
-                commands_enabled=True,
-            ),
-            TradingConfig(),
-            TelegramBotState(),
-            exchange_client=FakeExchangeClient(),
-        )
-        with patch(
-            "cointrading.telegram_bot.strategy_refine_report_text",
-            return_value="refine ok",
-        ) as text_fn:
-            reply = processor.handle_text("123", "정제")
-
-        self.assertEqual(reply, "refine ok")
-        text_fn.assert_called_once_with(limit=8)
-
-    def test_refined_entry_command_reads_latest_report(self) -> None:
-        processor = TelegramCommandProcessor(
-            TelegramConfig(
-                allowed_chat_ids=frozenset({"123"}),
-                commands_enabled=True,
-            ),
-            TradingConfig(),
-            TelegramBotState(),
-            exchange_client=FakeExchangeClient(),
-        )
-        with patch(
-            "cointrading.telegram_bot.refined_entry_report_text",
-            return_value="entry ok",
-        ) as text_fn:
-            reply = processor.handle_text("123", "현재후보")
-
-        self.assertEqual(reply, "entry ok")
-        text_fn.assert_called_once_with(limit=8)
-
-    def test_entry_check_command_reports_strategy_setups_without_ordering(self) -> None:
-        processor = TelegramCommandProcessor(
-            TelegramConfig(
-                allowed_chat_ids=frozenset({"123"}),
-                commands_enabled=True,
-            ),
-            TradingConfig(),
-            TelegramBotState(),
-            exchange_client=FakeExchangeClient(),
-        )
-
-        with tempfile.TemporaryDirectory() as directory, patch(
-            "cointrading.telegram_bot.default_db_path",
-            return_value=Path(directory) / "cointrading.sqlite",
-        ):
-            reply = processor.handle_text("123", "진입 ETHUSDC 25")
-
-        self.assertIn("최소 주문 규모", reply)
-        self.assertIn("진입 점검: ETHUSDC", reply)
-        self.assertIn("전략별 판단", reply)
-        self.assertIn("주문은 넣지 않습니다", reply)
-
     def test_market_command_reads_latest_regime_rows(self) -> None:
         processor = TelegramCommandProcessor(
             TelegramConfig(
@@ -395,19 +227,13 @@ class TelegramCommandTests(unittest.TestCase):
             TelegramBotState(),
             exchange_client=FakeExchangeClient(),
         )
-        self.assertIn("현재 상태", processor.handle_text("123", "상태"))
-        with patch("cointrading.telegram_bot.meta_report_text", return_value="research ok"):
-            self.assertEqual(processor.handle_text("123", "리서치"), "research ok")
-        self.assertIn("스캘핑 신호", processor.handle_text("123", "스캘핑 BTCUSDC"))
+        self.assertIn("봇 상태", processor.handle_text("123", "상태"))
         self.assertIn("선물 수수료 상태", processor.handle_text("123", "수수료"))
-        with (
-            patch("cointrading.telegram_bot.scalp_report_rows_text", return_value="report ok"),
-            patch(
-                "cointrading.telegram_bot._with_recent_order_summary",
-                side_effect=lambda text, store: text,
-            ),
-        ):
-            self.assertEqual(processor.handle_text("123", "보고 BTCUSDC"), "report ok")
+        self.assertIn("펀딩 전략 설정", processor.handle_text("123", "펀딩설정"))
+        self.assertIn("펀딩 라이브 게이트", processor.handle_text("123", "펀딩준비"))
+        # Removed-legacy commands return the unknown-command message
+        self.assertIn("알 수 없는", processor.handle_text("123", "스캘핑 BTCUSDC"))
+        self.assertIn("알 수 없는", processor.handle_text("123", "레이더"))
 
 
 if __name__ == "__main__":

@@ -176,58 +176,6 @@ class TelegramCommandProcessor:
         "시장상황": "market_context",
         "컨텍스트": "market_context",
         "market_context": "market_context",
-        "레이더": "tactical_radar",
-        "기회": "tactical_radar",
-        "전술": "tactical_radar",
-        "타이밍레이더": "tactical_radar",
-        "radar": "tactical_radar",
-        "스캘핑": "scalp",
-        "스캘프": "scalp",
-        "신호": "scalp",
-        "scalp": "scalp",
-        "보고": "scalp_report",
-        "요약": "scalp_report",
-        "리포트": "scalp_report",
-        "결과": "scalp_report",
-        "결과보고": "scalp_report",
-        "스캘핑보고": "scalp_report",
-        "스캘프보고": "scalp_report",
-        "전략": "strategy",
-        "전략보고": "strategy",
-        "전략평가": "strategy",
-        "전략후보": "strategy",
-        "후보평가": "strategy",
-        "strategy": "strategy",
-        "메타": "research",
-        "메타전략": "research",
-        "시장판단": "research",
-        "상황판단": "research",
-        "발굴": "strategy_mine",
-        "전략발굴": "strategy_mine",
-        "마이닝": "strategy_mine",
-        "정제": "strategy_refine",
-        "후보정제": "strategy_refine",
-        "refine": "strategy_refine",
-        "현재후보": "refined_entry",
-        "진입후보": "refined_entry",
-        "타이밍": "refined_entry",
-        "entrygate": "refined_entry",
-        "리서치": "research",
-        "연구": "research",
-        "백테스트": "research",
-        "research": "research",
-        "프로브": "probe",
-        "vibe": "probe",
-        "진입": "entry_check",
-        "진입점검": "entry_check",
-        "점검": "entry_check",
-        "프리플라이트": "entry_check",
-        "preflight": "entry_check",
-        "entry": "entry_check",
-        "실전": "live_supervisor",
-        "실전점검": "live_supervisor",
-        "감독": "live_supervisor",
-        "supervisor": "live_supervisor",
         "주문": "orders",
         "주문기록": "orders",
         "orders": "orders",
@@ -235,8 +183,6 @@ class TelegramCommandProcessor:
         "사이클": "cycles",
         "상태머신": "cycles",
         "cycles": "cycles",
-        "scalp_report": "scalp_report",
-        "scalp-report": "scalp_report",
         "정지": "pause",
         "멈춰": "pause",
         "pause": "pause",
@@ -301,28 +247,6 @@ class TelegramCommandProcessor:
             return self.market_text(args)
         if command == "market_context":
             return self.market_context_text(args)
-        if command == "tactical_radar":
-            return self.tactical_radar_text(args)
-        if command == "scalp":
-            return self.scalp_text(args)
-        if command == "scalp_report":
-            return self.scalp_report_text(args)
-        if command == "strategy":
-            return self.strategy_text()
-        if command == "research":
-            return self.research_text()
-        if command == "strategy_mine":
-            return self.strategy_mine_text()
-        if command == "strategy_refine":
-            return self.strategy_refine_text()
-        if command == "refined_entry":
-            return self.refined_entry_text()
-        if command == "probe":
-            return self.probe_text()
-        if command == "entry_check":
-            return self.entry_check_text(args)
-        if command == "live_supervisor":
-            return self.live_supervisor_text(args)
         if command == "orders":
             return self.orders_text()
         if command == "cycles":
@@ -349,55 +273,79 @@ class TelegramCommandProcessor:
     def help_text(self, chat_id: str) -> str:
         return "\n".join(
             [
-                "■ 일반",
-                "상태 - 봇/거래 모드 확인",
-                "계좌 - Binance 선물 계좌 요약",
-                "위험 - 리스크 한도/런타임 리스크 모드",
-                "수수료 - BNB 할인과 현재 수수료",
+                "■ 봇 / 계좌",
+                "상태       - 봇 모드 + 펀딩 전략 현황 한 눈에",
+                "계좌       - Binance 선물 계좌 요약",
+                "위험       - 리스크 한도 / 런타임 리스크 모드",
+                "수수료     - BNB 할인과 현재 수수료",
                 "가격 BTCUSDC - 현재 가격",
                 "정지 / 재개 - 자동 진입 일시정지/해제",
                 "",
-                "■ 펀딩 평균회귀 전략 (현재 활성)",
-                "펀딩 - 현재 OPEN 페이퍼 사이클 + 시장 펀딩비 현황",
-                "펀딩보고 - 페이퍼 누적 성과 요약 (n, 승률, PnL)",
-                "펀딩준비 - 라이브 게이트 충족 여부 (5+ closed, sum≥0, WR≥40%)",
-                "펀딩설정 - 임계값/노셔널/심볼/SL/보유시간",
+                "■ 펀딩 평균회귀 전략",
+                "펀딩       - OPEN 페이퍼 + 5심볼 현재 펀딩비 (★=트리거)",
+                "펀딩보고   - 페이퍼 누적 성과 (n, 승률, PnL, 심볼별)",
+                "펀딩준비   - 라이브 게이트 (5+ closed, sum≥0, WR≥40%)",
+                "펀딩설정   - 임계값 / 노셔널 / 심볼 / SL / 보유시간",
                 "",
                 "■ 시장 데이터",
-                "장세 - 매크로 regime 분류 결과",
+                "장세       - 매크로 regime 분류",
                 "시장상황 BTCUSDC - 펀딩/프리미엄/OI/스프레드/유동성",
-                "주문 - 최근 dry-run 주문/차단 기록",
-                "포지션 - 활성 사이클 상태",
+                "주문       - 최근 주문/차단 기록",
+                "포지션     - 활성 사이클",
                 "",
-                "■ 레거시 (Phase 1에서 비활성화 — 옛 데이터 조회용)",
-                "보고 / 스캘핑 / 전략 / 레이더 / 메타 / 발굴 / 정제 / 현재후보 / 진입 / 실전",
-                f"",
                 f"chat_id: {chat_id}",
             ]
         )
 
     def status_text(self) -> str:
-        mode = "testnet" if self.trading_config.testnet else "mainnet"
-        dry_run = "on" if self.trading_config.dry_run else "off"
-        paused = "yes" if self.state.paused else "no"
-        risk_state = evaluate_runtime_risk(
-            TradingStore(default_db_path()),
-            self.trading_config,
+        from cointrading.funding_carry_notify import evaluate_live_ready
+        from cointrading.funding_lifecycle import (
+            STATUS_CLOSED,
+            STATUS_OPEN,
+            STATUS_STOPPED,
+            STRATEGY_NAME,
         )
+
+        cfg = self.trading_config
+        mode = "testnet" if cfg.testnet else "mainnet"
+        dry_run = "on" if cfg.dry_run else "off"
+        paused = "yes" if self.state.paused else "no"
+        store = TradingStore(default_db_path())
+        risk_state = evaluate_runtime_risk(store, cfg)
+
+        with store.connect() as connection:
+            open_n = connection.execute(
+                "SELECT COUNT(*) FROM strategy_cycles WHERE strategy=? AND status=?",
+                (STRATEGY_NAME, STATUS_OPEN),
+            ).fetchone()[0]
+            closed_n = connection.execute(
+                "SELECT COUNT(*) FROM strategy_cycles WHERE strategy=? AND status IN (?, ?)",
+                (STRATEGY_NAME, STATUS_CLOSED, STATUS_STOPPED),
+            ).fetchone()[0]
+
+        ready = evaluate_live_ready(store)
+        live_armed = (not cfg.dry_run) and cfg.live_trading_enabled and cfg.funding_carry_live_enabled
+
         return "\n".join(
             [
-                "현재 상태",
-                f"모드: {mode}",
-                f"dry-run: {dry_run}",
-                f"정지 상태: {paused}",
-                f"위험모드: {risk_mode_ko(risk_state.mode)}",
-                f"신규 진입: {'허용' if risk_state.allows_new_entries else '차단'}",
-                "초기 기준 자산: "
-                f"{self.trading_config.initial_equity:.2f} {self.trading_config.equity_asset}",
-                f"스캘핑 대상: {', '.join(self.trading_config.scalp_symbols)}",
-                "전략 상태머신: "
-                f"{'켜짐' if self.trading_config.strategy_lifecycle_enabled else '꺼짐'} "
-                f"(live {'켜짐' if self.trading_config.live_strategy_lifecycle_enabled else '꺼짐'})",
+                "■ 봇 상태",
+                f"  모드        : {mode}",
+                f"  dry-run     : {dry_run}",
+                f"  일시정지    : {paused}",
+                f"  위험모드    : {risk_mode_ko(risk_state.mode)}",
+                f"  신규 진입   : {'허용' if risk_state.allows_new_entries else '차단'}",
+                f"  기준 자산   : {cfg.initial_equity:.2f} {cfg.equity_asset}",
+                "",
+                "■ 펀딩 평균회귀 전략 (활성 전략)",
+                f"  활성        : {cfg.funding_carry_enabled}",
+                f"  심볼        : {', '.join(cfg.funding_carry_symbols)}",
+                f"  OPEN 페이퍼 : {open_n}건",
+                f"  CLOSED 누적 : {closed_n}건  (승 {ready.win_n} / 패 {ready.loss_n})",
+                f"  누적 PnL    : {ready.sum_pnl:+.4f} USDC",
+                f"  라이브 게이트: {'✅ 통과' if ready.ready else '❌ 미통과'}",
+                f"  라이브 모드 : {'🔴 ARMED' if live_armed else '안전 (페이퍼)'}",
+                "",
+                "자세한 정보: '펀딩' / '펀딩보고' / '펀딩준비' / '펀딩설정'",
             ]
         )
 
