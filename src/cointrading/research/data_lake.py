@@ -41,6 +41,10 @@ from cointrading.research.funding_carry import (
 DEFAULT_INTERVALS = ("1m", "5m", "15m", "1h", "4h")
 OI_API_URL = "https://fapi.binance.com/futures/data/openInterestHist"
 OI_PERIOD = "5m"  # binance allows 5m/15m/30m/1h/2h/4h/6h/12h/1d
+LS_TOP_POS_URL = "https://fapi.binance.com/futures/data/topLongShortPositionRatio"
+LS_TOP_ACC_URL = "https://fapi.binance.com/futures/data/topLongShortAccountRatio"
+LS_GLOBAL_URL = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
+TAKER_URL = "https://fapi.binance.com/futures/data/takerlongshortRatio"
 
 
 def lake_root() -> Path:
@@ -266,6 +270,247 @@ def load_oi(
     return df.reset_index(drop=True)
 
 
+# ---------- /futures/data ratio endpoints (LS, taker) — Binance limits: ~30 days ----------
+
+
+def _fetch_ratio_window(url: str, symbol: str, period: str, start_ms: int, end_ms: int,
+                       timeout: float = 30.0) -> list[dict]:
+    full_url = (
+        f"{url}?symbol={symbol}&period={period}&startTime={start_ms}&endTime={end_ms}&limit=500"
+    )
+    request = Request(full_url, headers={"User-Agent": "cointrading-research/0.1"})
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read())
+    except HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")[:200]
+        except Exception:
+            pass
+        raise HistoricalDataError(
+            f"ratio fetch failed (HTTP {exc.code}): {full_url} body={body!r}"
+        ) from exc
+    except URLError as exc:
+        raise HistoricalDataError(f"ratio fetch failed (network): {full_url}") from exc
+    return list(payload) if isinstance(payload, list) else []
+
+
+def _build_ratio_parquet(
+    *,
+    symbol: str,
+    period: str,
+    api_url: str,
+    out_path: Path,
+    start: date,
+    end: date,
+    record_to_row,  # callable(record) -> dict
+    force: bool = False,
+) -> Path:
+    if out_path.exists() and not force:
+        return out_path
+    _ensure_dir(out_path)
+    start_ms = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(datetime(end.year, end.month, end.day, 23, 59, 59, tzinfo=timezone.utc).timestamp() * 1000)
+    window_ms = 7 * 24 * 3600 * 1000  # 7-day windows are safer
+    all_rows: dict[int, dict] = {}
+    cursor = end_ms
+    while cursor > start_ms:
+        win_start = max(start_ms, cursor - window_ms)
+        records = _fetch_ratio_window(api_url, symbol, period, win_start, cursor)
+        if not records:
+            break
+        for rec in records:
+            t = int(rec["timestamp"])
+            if t in all_rows:
+                continue
+            all_rows[t] = record_to_row(rec)
+        oldest = min(int(r["timestamp"]) for r in records)
+        if oldest >= cursor:
+            break
+        cursor = oldest - 1
+        time.sleep(0.1)
+        if cursor <= start_ms:
+            break
+    if not all_rows:
+        raise HistoricalDataError(
+            f"no ratio data for {symbol} from {api_url} (Binance may limit to ~30 days)"
+        )
+    df = pd.DataFrame(sorted(all_rows.values(), key=lambda r: r["timestamp"]))
+    df["timestamp_dt"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    df.to_parquet(out_path, index=False)
+    return out_path
+
+
+def ls_top_position_path(symbol: str, period: str = "5m") -> Path:
+    return lake_root() / "ls_top_position" / f"{symbol.upper()}_{period}.parquet"
+
+
+def ls_global_account_path(symbol: str, period: str = "5m") -> Path:
+    return lake_root() / "ls_global_account" / f"{symbol.upper()}_{period}.parquet"
+
+
+def taker_volume_path(symbol: str, period: str = "5m") -> Path:
+    return lake_root() / "taker_volume" / f"{symbol.upper()}_{period}.parquet"
+
+
+def build_ls_top_position_parquet(
+    *, symbol: str, period: str = "5m", start: date, end: date, force: bool = False
+) -> Path:
+    return _build_ratio_parquet(
+        symbol=symbol, period=period, api_url=LS_TOP_POS_URL,
+        out_path=ls_top_position_path(symbol, period),
+        start=start, end=end, force=force,
+        record_to_row=lambda r: {
+            "timestamp": int(r["timestamp"]),
+            "ls_top_pos_ratio": float(r["longShortRatio"]),
+            "long_pos_pct": float(r["longAccount"]),
+            "short_pos_pct": float(r["shortAccount"]),
+        },
+    )
+
+
+def build_ls_global_account_parquet(
+    *, symbol: str, period: str = "5m", start: date, end: date, force: bool = False
+) -> Path:
+    return _build_ratio_parquet(
+        symbol=symbol, period=period, api_url=LS_GLOBAL_URL,
+        out_path=ls_global_account_path(symbol, period),
+        start=start, end=end, force=force,
+        record_to_row=lambda r: {
+            "timestamp": int(r["timestamp"]),
+            "ls_global_acc_ratio": float(r["longShortRatio"]),
+            "long_acc_pct": float(r["longAccount"]),
+            "short_acc_pct": float(r["shortAccount"]),
+        },
+    )
+
+
+def build_taker_volume_parquet(
+    *, symbol: str, period: str = "5m", start: date, end: date, force: bool = False
+) -> Path:
+    return _build_ratio_parquet(
+        symbol=symbol, period=period, api_url=TAKER_URL,
+        out_path=taker_volume_path(symbol, period),
+        start=start, end=end, force=force,
+        record_to_row=lambda r: {
+            "timestamp": int(r["timestamp"]),
+            "taker_buy_sell_ratio": float(r["buySellRatio"]),
+            "taker_buy_vol": float(r["buyVol"]),
+            "taker_sell_vol": float(r["sellVol"]),
+        },
+    )
+
+
+def _load_ratio(path: Path, *, start, end) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"missing lake file: {path}")
+    df = pd.read_parquet(path)
+    if start is not None:
+        s = parse_yyyy_mm_dd(start) if isinstance(start, str) else start
+        s_ms = int(datetime(s.year, s.month, s.day, tzinfo=timezone.utc).timestamp() * 1000)
+        df = df[df["timestamp"] >= s_ms]
+    if end is not None:
+        e = parse_yyyy_mm_dd(end) if isinstance(end, str) else end
+        e_ms = int(datetime(e.year, e.month, e.day, 23, 59, 59, tzinfo=timezone.utc).timestamp() * 1000)
+        df = df[df["timestamp"] <= e_ms]
+    return df.reset_index(drop=True)
+
+
+def load_ls_top_position(symbol: str, *, period="5m", start=None, end=None) -> pd.DataFrame:
+    return _load_ratio(ls_top_position_path(symbol, period), start=start, end=end)
+
+
+def load_ls_global_account(symbol: str, *, period="5m", start=None, end=None) -> pd.DataFrame:
+    return _load_ratio(ls_global_account_path(symbol, period), start=start, end=end)
+
+
+def load_taker_volume(symbol: str, *, period="5m", start=None, end=None) -> pd.DataFrame:
+    return _load_ratio(taker_volume_path(symbol, period), start=start, end=end)
+
+
+# ---------- Incremental capture (for live data accumulation on VM) ----------
+
+
+def _append_ratio_records(out_path: Path, new_rows: list[dict]) -> int:
+    """Merge new rows into existing parquet by `timestamp`, dedupe, write back.
+    Returns number of rows actually appended."""
+    if not new_rows:
+        return 0
+    new_df = pd.DataFrame(new_rows)
+    if "timestamp_dt" not in new_df.columns:
+        new_df["timestamp_dt"] = pd.to_datetime(new_df["timestamp"], unit="ms", utc=True)
+
+    if out_path.exists():
+        existing = pd.read_parquet(out_path)
+        before = len(existing)
+        combined = pd.concat([existing, new_df], ignore_index=True)
+        combined = combined.drop_duplicates("timestamp", keep="last")
+        combined = combined.sort_values("timestamp").reset_index(drop=True)
+        added = len(combined) - before
+    else:
+        _ensure_dir(out_path)
+        combined = new_df.drop_duplicates("timestamp").sort_values("timestamp").reset_index(drop=True)
+        added = len(combined)
+
+    combined.to_parquet(out_path, index=False)
+    return added
+
+
+def capture_recent_ratios(
+    *,
+    symbols: tuple[str, ...] = DEFAULT_SYMBOLS,
+    period: str = "5m",
+    lookback_hours: int = 24,
+) -> dict[str, int]:
+    """Fetch the last `lookback_hours` of LS-top/LS-global/taker data for each
+    symbol and merge into the lake. Designed to be run as a recurring cron
+    (e.g., hourly) so the lake accumulates its own multi-month history that
+    can later be analysed without the Binance ~30-day API constraint.
+    """
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    start_ms = now_ms - lookback_hours * 3_600_000
+    summary: dict[str, int] = {}
+
+    endpoints = [
+        ("ls_top_pos", LS_TOP_POS_URL, ls_top_position_path,
+         lambda r: {
+             "timestamp": int(r["timestamp"]),
+             "ls_top_pos_ratio": float(r["longShortRatio"]),
+             "long_pos_pct": float(r["longAccount"]),
+             "short_pos_pct": float(r["shortAccount"]),
+         }),
+        ("ls_global", LS_GLOBAL_URL, ls_global_account_path,
+         lambda r: {
+             "timestamp": int(r["timestamp"]),
+             "ls_global_acc_ratio": float(r["longShortRatio"]),
+             "long_acc_pct": float(r["longAccount"]),
+             "short_acc_pct": float(r["shortAccount"]),
+         }),
+        ("taker", TAKER_URL, taker_volume_path,
+         lambda r: {
+             "timestamp": int(r["timestamp"]),
+             "taker_buy_sell_ratio": float(r["buySellRatio"]),
+             "taker_buy_vol": float(r["buyVol"]),
+             "taker_sell_vol": float(r["sellVol"]),
+         }),
+    ]
+
+    for symbol in symbols:
+        for name, url, path_fn, row_fn in endpoints:
+            key = f"{symbol}/{name}"
+            try:
+                records = _fetch_ratio_window(url, symbol, period, start_ms, now_ms)
+            except HistoricalDataError as exc:
+                summary[key] = -1
+                continue
+            rows = [row_fn(r) for r in records]
+            added = _append_ratio_records(path_fn(symbol, period), rows)
+            summary[key] = added
+            time.sleep(0.05)  # be polite to API
+    return summary
+
+
 # ---------- Aligned dataset (the main analysis interface) ----------
 
 
@@ -341,10 +586,38 @@ def build_aligned_dataset(
             df = pd.merge_asof(df.sort_values("open_time"), oi_df.sort_values("open_time"),
                                on="open_time", direction="backward")
             df = df.rename(columns={"sum_open_interest": "oi"})
-            # OI 1-hour change
             df["oi_change_1h"] = df["oi"].pct_change(periods=bars_per_24h // 24)
         except FileNotFoundError:
             pass
+
+    # Optional: top-trader long/short position ratio
+    try:
+        ls_top = load_ls_top_position(symbol, start=start, end=end).rename(columns={"timestamp": "open_time"})
+        ls_top = ls_top[["open_time", "ls_top_pos_ratio", "long_pos_pct", "short_pos_pct"]]
+        df = pd.merge_asof(df.sort_values("open_time"), ls_top.sort_values("open_time"),
+                           on="open_time", direction="backward")
+    except FileNotFoundError:
+        pass
+
+    try:
+        ls_glob = load_ls_global_account(symbol, start=start, end=end).rename(columns={"timestamp": "open_time"})
+        ls_glob = ls_glob[["open_time", "ls_global_acc_ratio"]]
+        df = pd.merge_asof(df.sort_values("open_time"), ls_glob.sort_values("open_time"),
+                           on="open_time", direction="backward")
+    except FileNotFoundError:
+        pass
+
+    try:
+        taker = load_taker_volume(symbol, start=start, end=end).rename(columns={"timestamp": "open_time"})
+        taker = taker[["open_time", "taker_buy_sell_ratio"]]
+        df = pd.merge_asof(df.sort_values("open_time"), taker.sort_values("open_time"),
+                           on="open_time", direction="backward")
+    except FileNotFoundError:
+        pass
+
+    # Smart-money divergence: top traders vs all traders
+    if "ls_top_pos_ratio" in df.columns and "ls_global_acc_ratio" in df.columns:
+        df["smart_money_divergence"] = df["ls_top_pos_ratio"] - df["ls_global_acc_ratio"]
 
     return df
 

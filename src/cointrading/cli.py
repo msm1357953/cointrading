@@ -231,6 +231,10 @@ def main(argv: list[str] | None = None) -> None:
         default=Path("data/wick_carry_notify_state.json"),
     )
 
+    ratio_capture_parser = subparsers.add_parser("ratio-capture")
+    ratio_capture_parser.add_argument("--lookback-hours", type=int, default=24)
+    ratio_capture_parser.add_argument("--period", default="5m")
+
     strategy_evaluate_parser = subparsers.add_parser("strategy-evaluate")
     strategy_evaluate_parser.add_argument("--db-path", type=Path, default=default_db_path())
     strategy_evaluate_parser.add_argument("--limit", type=int, default=25)
@@ -510,6 +514,10 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "wick-step-notify":
         from cointrading.wick_carry_notify import run_step_and_notify as wick_notify
         result = wick_notify(state_path=args.state_path)
+        print(json.dumps(result, indent=2, default=str))
+    elif args.command == "ratio-capture":
+        from cointrading.research.data_lake import capture_recent_ratios
+        result = capture_recent_ratios(lookback_hours=args.lookback_hours, period=args.period)
         print(json.dumps(result, indent=2, default=str))
     elif args.command == "strategy-evaluate":
         strategy_evaluate(args.db_path, args.limit)

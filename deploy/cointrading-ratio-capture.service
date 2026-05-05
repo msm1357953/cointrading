@@ -1,0 +1,10 @@
+[Unit]
+Description=Capture LS ratio + taker volume into local data lake (research only)
+
+[Service]
+Type=oneshot
+User=msm1357953_gmail_com
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+Environment=PYTHONUNBUFFERED=1
+TimeoutStartSec=120
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli ratio-capture --lookback-hours 24

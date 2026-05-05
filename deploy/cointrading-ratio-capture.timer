@@ -1,0 +1,11 @@
+[Unit]
+Description=Capture LS ratio + taker volume hourly (research data accumulation)
+
+[Timer]
+OnBootSec=300
+OnUnitInactiveSec=3600
+AccuracySec=60
+Unit=cointrading-ratio-capture.service
+
+[Install]
+WantedBy=timers.target
