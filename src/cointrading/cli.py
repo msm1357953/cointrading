@@ -235,6 +235,13 @@ def main(argv: list[str] | None = None) -> None:
     ratio_capture_parser.add_argument("--lookback-hours", type=int, default=24)
     ratio_capture_parser.add_argument("--period", default="5m")
 
+    cba_parser = subparsers.add_parser("consecutive-bar-alert")
+    cba_parser.add_argument("--symbols", nargs="*", default=["BTCUSDC"])
+    cba_parser.add_argument("--interval", default="15m")
+    cba_parser.add_argument("--thresholds", nargs="*", type=int, default=[6, 7])
+    cba_parser.add_argument("--state-path", type=Path,
+                            default=Path("data/consecutive_bar_alert_state.json"))
+
     strategy_evaluate_parser = subparsers.add_parser("strategy-evaluate")
     strategy_evaluate_parser.add_argument("--db-path", type=Path, default=default_db_path())
     strategy_evaluate_parser.add_argument("--limit", type=int, default=25)
@@ -518,6 +525,13 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "ratio-capture":
         from cointrading.research.data_lake import capture_recent_ratios
         result = capture_recent_ratios(lookback_hours=args.lookback_hours, period=args.period)
+        print(json.dumps(result, indent=2, default=str))
+    elif args.command == "consecutive-bar-alert":
+        from cointrading.consecutive_bar_alert import run_check
+        result = run_check(
+            symbols=tuple(args.symbols), interval=args.interval,
+            thresholds=tuple(args.thresholds), state_path=args.state_path,
+        )
         print(json.dumps(result, indent=2, default=str))
     elif args.command == "strategy-evaluate":
         strategy_evaluate(args.db_path, args.limit)

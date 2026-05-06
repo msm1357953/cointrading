@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for consecutive same-direction bars every 5 minutes
+
+[Timer]
+OnBootSec=240
+OnUnitInactiveSec=300
+AccuracySec=15
+Unit=cointrading-consecutive-bar-alert.service
+
+[Install]
+WantedBy=timers.target
