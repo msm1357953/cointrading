@@ -208,6 +208,13 @@ class TelegramCommandProcessor:
         "꼬리결과": "wick_report",
         "꼬리준비": "wick_ready",
         "꼬리설정": "wick_config",
+        # Consecutive-bar auto-execution toggle
+        "자동": "auto_on",
+        "auto": "auto_on",
+        "수동": "auto_off",
+        "manual": "auto_off",
+        "자동상태": "auto_status",
+        "오토상태": "auto_status",
     }
 
     def __init__(
@@ -275,6 +282,12 @@ class TelegramCommandProcessor:
             return self.wick_ready_text()
         if command == "wick_config":
             return self.wick_config_text()
+        if command == "auto_on":
+            return self.auto_on_text()
+        if command == "auto_off":
+            return self.auto_off_text()
+        if command == "auto_status":
+            return self.auto_status_text()
         if command == "pause":
             self.state.paused = True
             return "정지했습니다. 이후 자동매매 루프는 신규 진입을 거부해야 합니다."
@@ -308,6 +321,11 @@ class TelegramCommandProcessor:
                 "꼬리보고   - 페이퍼 누적 성과",
                 "꼬리준비   - 라이브 게이트",
                 "꼬리설정   - wick/drop 임계값 / SL / 보유시간",
+                "",
+                "■ 자동 진입 (연속봉 패턴, 라이브)",
+                "자동       - 자동 진입 ON (5x 격리, 노셔널 500 USDC)",
+                "수동       - 자동 진입 OFF (알림만)",
+                "자동상태   - 모드 + 일 손익 + 안전장치 상태",
                 "",
                 "■ 시장 데이터",
                 "장세       - 매크로 regime 분류",
@@ -976,6 +994,89 @@ class TelegramCommandProcessor:
         return "\n".join(lines)
 
     # ----- end wick -----
+
+    # ----- Consecutive-bar AUTO toggle -----
+
+    def auto_on_text(self) -> str:
+        from cointrading.consecutive_auto_lifecycle import load_state, save_state
+        cfg = self.trading_config
+        state = load_state()
+        if not (not cfg.dry_run and cfg.live_trading_enabled):
+            return (
+                "❌ 자동 진입 켜기 실패\n"
+                "라이브 환경 미준비 (DRY_RUN, LIVE_TRADING_ENABLED 확인 필요)."
+            )
+        state.auto_mode = True
+        state.paused_reason = ""
+        save_state(state)
+        notional = cfg.initial_equity * cfg.consecutive_auto_margin_pct * cfg.consecutive_auto_leverage
+        return "\n".join([
+            "🤖 자동 진입 ON",
+            f"  심볼: {cfg.consecutive_auto_symbol}",
+            f"  트리거: {cfg.consecutive_auto_threshold}봉 연속 (도지 {cfg.consecutive_auto_max_doji_per_run}개 허용)",
+            f"  레버리지: {cfg.consecutive_auto_leverage}x ISOLATED",
+            f"  노셔널: {notional:.0f} USDC (마진 {cfg.consecutive_auto_margin_pct*100:.0f}% × {cfg.consecutive_auto_leverage}x)",
+            f"  스탑: 직전 run 고저 ± {cfg.consecutive_auto_sl_buffer_bps:.0f} bps",
+            f"  익절: 1:{cfg.consecutive_auto_tp_rr:.1f} RR (대칭)",
+            f"  타임아웃: {cfg.consecutive_auto_time_exit_minutes}분",
+            "",
+            "안전장치 (자동으로 OFF되는 조건):",
+            f"  • 일 손실 ≥ {cfg.consecutive_auto_daily_loss_pct*100:.0f}% (-{cfg.initial_equity*cfg.consecutive_auto_daily_loss_pct:.0f} USDC)",
+            f"  • 연속 패배 ≥ {cfg.consecutive_auto_max_consecutive_losses}회",
+            f"  • 일 거래 ≥ {cfg.consecutive_auto_max_trades_per_day}건",
+            "",
+            "'수동' 입력 시 즉시 OFF.",
+        ])
+
+    def auto_off_text(self) -> str:
+        from cointrading.consecutive_auto_lifecycle import load_state, save_state
+        state = load_state()
+        was_on = state.auto_mode
+        state.auto_mode = False
+        state.paused_reason = "manual off"
+        save_state(state)
+        if was_on:
+            return "✅ 자동 진입 OFF (수동 모드). 이후 알림만 옴."
+        return "ℹ️ 이미 수동 모드. 알림만 발송 중."
+
+    def auto_status_text(self) -> str:
+        from cointrading.consecutive_auto_lifecycle import (
+            load_state, safeguard_block_reason, _kst_today_str,
+        )
+        from cointrading.storage import now_ms as _now_ms
+        cfg = self.trading_config
+        state = load_state()
+        block = safeguard_block_reason(state, cfg)
+        live_armed = (not cfg.dry_run) and cfg.live_trading_enabled
+        today = _kst_today_str(_now_ms())
+        notional = cfg.initial_equity * cfg.consecutive_auto_margin_pct * cfg.consecutive_auto_leverage
+        lines = [
+            "🤖 자동 진입 상태",
+            f"  모드      : {'ON' if state.auto_mode else 'OFF'}",
+            f"  라이브 환경: {'✅ 준비됨' if live_armed else '❌ 미준비 (DRY_RUN/LIVE_TRADING_ENABLED)'}",
+        ]
+        if state.paused_reason:
+            lines.append(f"  일시정지 사유: {state.paused_reason}")
+        lines += [
+            "",
+            f"  KST 날짜  : {state.daily_kst_date or today}",
+            f"  일 손익   : {state.daily_realized_pnl:+.4f} USDC",
+            f"  일 거래수 : {state.daily_trade_count}건",
+            f"  연속 패배 : {state.consecutive_losses}회",
+        ]
+        if block and state.auto_mode:
+            lines.append(f"  ⚠️ 다음 진입 차단: {block}")
+        lines += [
+            "",
+            f"  설정: {cfg.consecutive_auto_symbol} {cfg.consecutive_auto_interval} "
+            f"{cfg.consecutive_auto_threshold}봉 {cfg.consecutive_auto_leverage}x "
+            f"노셔널 {notional:.0f} USDC",
+            "",
+            "'자동' / '수동' 으로 토글.",
+        ]
+        return "\n".join(lines)
+
+    # ----- end auto -----
 
     def _fee_context(self) -> tuple[bool, float]:
         try:

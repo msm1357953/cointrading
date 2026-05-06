@@ -231,6 +231,23 @@ class TradingConfig:
     wick_carry_cooldown_seconds: int = 600    # 10 min after close before re-entry on same symbol
     wick_carry_freshness_seconds: int = 360   # trigger bar must have closed within last 6 min
     wick_carry_live_enabled: bool = False
+    # Consecutive-bar auto-execution (telegram '자동' toggles on; ALWAYS gated
+    # by dry_run=False AND live_trading_enabled=True AND auto-mode state file).
+    # Documented as EV-negative on raw signal; safeguards bound the loss.
+    consecutive_auto_symbol: str = "BTCUSDC"
+    consecutive_auto_interval: str = "15m"
+    consecutive_auto_threshold: int = 6
+    consecutive_auto_doji_body_ratio: float = 0.15
+    consecutive_auto_max_doji_per_run: int = 1
+    consecutive_auto_leverage: int = 5
+    consecutive_auto_margin_pct: float = 0.10           # 10% of capital
+    consecutive_auto_sl_buffer_bps: float = 10.0        # buffer past run high/low
+    consecutive_auto_tp_rr: float = 1.0                 # 1:1 RR (TP distance == SL distance)
+    consecutive_auto_time_exit_minutes: int = 60
+    consecutive_auto_daily_loss_pct: float = 0.03       # auto-OFF after -3% capital today
+    consecutive_auto_max_consecutive_losses: int = 3    # auto-OFF after 3 losses in a row
+    consecutive_auto_max_trades_per_day: int = 5
+    consecutive_auto_freshness_seconds: int = 360       # trigger bar must be fresh
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -672,6 +689,51 @@ class TradingConfig:
             ),
             wick_carry_live_enabled=_get_bool(
                 "COINTRADING_WICK_CARRY_LIVE_ENABLED", cls.wick_carry_live_enabled
+            ),
+            consecutive_auto_symbol=_get_str(
+                "COINTRADING_CONSECUTIVE_AUTO_SYMBOL", cls.consecutive_auto_symbol
+            ).upper() or cls.consecutive_auto_symbol,
+            consecutive_auto_interval=_get_str(
+                "COINTRADING_CONSECUTIVE_AUTO_INTERVAL", cls.consecutive_auto_interval
+            ) or cls.consecutive_auto_interval,
+            consecutive_auto_threshold=_get_int(
+                "COINTRADING_CONSECUTIVE_AUTO_THRESHOLD", cls.consecutive_auto_threshold
+            ),
+            consecutive_auto_doji_body_ratio=_get_float(
+                "COINTRADING_CONSECUTIVE_AUTO_DOJI_BODY_RATIO", cls.consecutive_auto_doji_body_ratio
+            ),
+            consecutive_auto_max_doji_per_run=_get_int(
+                "COINTRADING_CONSECUTIVE_AUTO_MAX_DOJI_PER_RUN", cls.consecutive_auto_max_doji_per_run
+            ),
+            consecutive_auto_leverage=_get_int(
+                "COINTRADING_CONSECUTIVE_AUTO_LEVERAGE", cls.consecutive_auto_leverage
+            ),
+            consecutive_auto_margin_pct=_get_float(
+                "COINTRADING_CONSECUTIVE_AUTO_MARGIN_PCT", cls.consecutive_auto_margin_pct
+            ),
+            consecutive_auto_sl_buffer_bps=_get_float(
+                "COINTRADING_CONSECUTIVE_AUTO_SL_BUFFER_BPS", cls.consecutive_auto_sl_buffer_bps
+            ),
+            consecutive_auto_tp_rr=_get_float(
+                "COINTRADING_CONSECUTIVE_AUTO_TP_RR", cls.consecutive_auto_tp_rr
+            ),
+            consecutive_auto_time_exit_minutes=_get_int(
+                "COINTRADING_CONSECUTIVE_AUTO_TIME_EXIT_MINUTES", cls.consecutive_auto_time_exit_minutes
+            ),
+            consecutive_auto_daily_loss_pct=_get_float(
+                "COINTRADING_CONSECUTIVE_AUTO_DAILY_LOSS_PCT", cls.consecutive_auto_daily_loss_pct
+            ),
+            consecutive_auto_max_consecutive_losses=_get_int(
+                "COINTRADING_CONSECUTIVE_AUTO_MAX_CONSECUTIVE_LOSSES",
+                cls.consecutive_auto_max_consecutive_losses,
+            ),
+            consecutive_auto_max_trades_per_day=_get_int(
+                "COINTRADING_CONSECUTIVE_AUTO_MAX_TRADES_PER_DAY",
+                cls.consecutive_auto_max_trades_per_day,
+            ),
+            consecutive_auto_freshness_seconds=_get_int(
+                "COINTRADING_CONSECUTIVE_AUTO_FRESHNESS_SECONDS",
+                cls.consecutive_auto_freshness_seconds,
             ),
         )
 

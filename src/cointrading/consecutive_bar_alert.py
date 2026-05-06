@@ -202,6 +202,17 @@ def run_check(
     state_path = state_path or default_state_path()
     state = _load_state(state_path)
 
+    # Lazy import of the auto engine so the alerter does not pull pandas etc.
+    # at module import time (the alerter timer fires on the VM independently).
+    from cointrading.consecutive_auto_lifecycle import (
+        ConsecutiveAutoEngine,
+        load_state as load_auto_state,
+        save_state as save_auto_state,
+    )
+    from cointrading.storage import TradingStore as _TradingStore
+    auto_state = load_auto_state()
+    auto_engine: ConsecutiveAutoEngine | None = None
+
     client = BinanceUSDMClient(config=cfg)
 
     tclient: TelegramClient | None = None
@@ -259,6 +270,7 @@ def run_check(
                                "alerted": False, "reason": "already alerted on this bar"}
             continue
 
+        # Telegram alert (always, regardless of auto mode)
         if tclient is not None:
             text = _format_alert(symbol, interval, run, klines[:-1])
             try:
@@ -266,6 +278,30 @@ def run_check(
                 sent += 1
             except Exception as exc:  # noqa: BLE001 — never block the engine on telegram
                 logger.warning("consecutive_bar_alert: send failed for %s: %s", symbol, exc)
+
+        # Auto-execution: only on the configured auto symbol, when run.n >=
+        # consecutive_auto_threshold AND auto mode is on AND safeguards pass.
+        auto_action: dict | None = None
+        if (
+            symbol == cfg.consecutive_auto_symbol
+            and run.n >= cfg.consecutive_auto_threshold
+            and auto_state.auto_mode
+        ):
+            if auto_engine is None:
+                auto_engine = ConsecutiveAutoEngine(
+                    config=cfg, storage=_TradingStore(),
+                    client=client,
+                )
+            outcome = auto_engine.maybe_open(run=run, klines=klines, state=auto_state)
+            auto_action = {"action": outcome.action, "detail": outcome.detail,
+                           "cycle_id": outcome.cycle_id}
+            if outcome.action == "opened" and tclient is not None:
+                # Send a separate auto-trade confirmation
+                try:
+                    tclient.send_message(_format_auto_open(symbol, outcome))
+                    sent += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("auto_open notify failed: %s", exc)
 
         sym_state.update({
             "last_alerted_bar_open_time_ms": run.bar.open_time,
@@ -275,13 +311,59 @@ def run_check(
         state[symbol] = sym_state
         summary[symbol] = {"run_n": run.n, "direction": run.direction,
                            "alerted": True, "threshold": target_n}
+        if auto_action is not None:
+            summary[symbol]["auto"] = auto_action
 
+    # Always step the auto engine to manage existing OPEN cycles (SL/TP/time)
+    if auto_engine is None:
+        auto_engine = ConsecutiveAutoEngine(
+            config=cfg, storage=_TradingStore(),
+            client=client,
+        )
+    manage_results = auto_engine.manage_open_cycles(auto_state)
+    if manage_results and tclient is not None:
+        for r in manage_results:
+            if r["action"] in ("stopped", "closed_tp", "closed_time"):
+                try:
+                    tclient.send_message(_format_auto_close(r))
+                    sent += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("auto_close notify failed: %s", exc)
+
+    save_auto_state(auto_state)
     _save_state(state_path, state)
     return {
         "ts_ms": int(datetime.now(timezone.utc).timestamp() * 1000),
         "telegram_sent": sent,
         "symbols": summary,
+        "auto_state": auto_state.to_dict(),
+        "manage": manage_results,
     }
+
+
+def _format_auto_open(symbol: str, outcome) -> str:
+    e = outcome.extra
+    arrow = "🔺 SHORT" if e.get("side") == "short" else "🔻 LONG"
+    return (
+        f"🤖 자동 진입 — {symbol}\n"
+        f"  방향: {arrow}\n"
+        f"  진입가: {e.get('entry'):.2f}\n"
+        f"  SL: {e.get('sl'):.2f}  TP: {e.get('tp'):.2f}\n"
+        f"  노셔널: {e.get('notional'):.0f} USDC ({e.get('leverage')}x ISOLATED)\n"
+        f"  근거: {e.get('run_direction')} {e.get('run_n')}봉 연속\n"
+        f"  cycle_id: {outcome.cycle_id}"
+    )
+
+
+def _format_auto_close(r: dict) -> str:
+    icon = {"stopped": "🛑", "closed_tp": "✅", "closed_time": "⏱"}.get(r["action"], "ℹ️")
+    label = {"stopped": "STOP", "closed_tp": "TP 익절", "closed_time": "시간 청산"}.get(r["action"], r["action"])
+    pnl = r.get("pnl", 0)
+    return (
+        f"{icon} 자동 {label}\n"
+        f"  exit: {r.get('exit', 0):.2f}\n"
+        f"  PnL: {pnl:+.4f} USDC"
+    )
 
 
 def main(argv: list[str] | None = None) -> None:

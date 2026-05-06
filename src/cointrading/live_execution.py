@@ -185,17 +185,60 @@ def submit_protective_stop(
     return StopSubmitResult(order_id, "exchange protective stop set")
 
 
-def cancel_protective_stop(
+def submit_take_profit_market(
     *,
     client: BinanceUSDMClient,
     store: TradingStore,
-    cycle: Any,
+    config: TradingConfig,
+    symbol: str,
+    side: str,         # the cycle side: "long" or "short"
+    quantity: float,
+    tp_price: float,
+    strategy_label: str,
+    timestamp_ms: int,
+) -> StopSubmitResult:
+    """Reduce-only TAKE_PROFIT_MARKET on MARK_PRICE. Side is opposite to the
+    cycle side (long cycle → SELL TP; short cycle → BUY TP)."""
+    order_side = "SELL" if side == "long" else "BUY"
+    intent = OrderIntent(
+        symbol=symbol,
+        side=order_side,
+        quantity=quantity,
+        order_type="TAKE_PROFIT_MARKET",
+        stop_price=tp_price,
+        working_type="MARK_PRICE",
+        reduce_only=True,
+        client_order_id=client_order_id(f"tp_{strategy_label}", symbol),
+    )
+    normalized, reason = normalize_market_intent(client, intent, config)
+    if normalized is None:
+        store.insert_order_attempt(
+            intent, status="BLOCKED", dry_run=False, reason=reason,
+            timestamp_ms=timestamp_ms,
+        )
+        return StopSubmitResult(None, f"take-profit blocked: {reason}")
+    try:
+        response = client.new_order(normalized)
+    except BinanceAPIError as exc:
+        detail = f"take-profit submit failed: {exc}"
+        store.insert_order_attempt(
+            normalized, status="ERROR", dry_run=False, reason=detail,
+            timestamp_ms=timestamp_ms,
+        )
+        return StopSubmitResult(None, detail)
+    order_id = store.insert_order_attempt(
+        normalized, status=str(response.get("status", "SUBMITTED")),
+        dry_run=False, reason="take_profit", response=response,
+        timestamp_ms=timestamp_ms,
+    )
+    return StopSubmitResult(order_id, "take-profit set")
+
+
+def cancel_local_order(
+    *, client: BinanceUSDMClient, store: TradingStore, local_order_id: int,
 ) -> tuple[bool, str]:
-    """Cancel the protective STOP referenced by cycle.exit_order_id.
-    Returns (cancelled_or_already_gone, detail)."""
-    if cycle["exit_order_id"] is None:
-        return True, "no protective stop"
-    local_order = store.order_by_id(int(cycle["exit_order_id"]))
+    """Cancel an order by its local DB id. Returns (cancelled_or_already_gone, detail)."""
+    local_order = store.order_by_id(int(local_order_id))
     if local_order is None:
         return True, "no local order record"
     response_json = local_order["response_json"]
@@ -212,13 +255,25 @@ def cancel_protective_stop(
             order_id=exchange_order_id,
             orig_client_order_id=str(local_order["client_order_id"]) if not exchange_order_id else None,
         )
-        return True, "protective stop cancelled"
+        return True, "cancelled"
     except BinanceAPIError as exc:
         msg = str(exc)
-        # -2011 = unknown order (already filled/cancelled). Treat as already gone.
         if "Unknown order" in msg or "-2011" in msg:
-            return True, "protective stop already gone"
-        return False, f"protective stop cancel failed: {exc}"
+            return True, "already gone"
+        return False, f"cancel failed: {exc}"
+
+
+def cancel_protective_stop(
+    *,
+    client: BinanceUSDMClient,
+    store: TradingStore,
+    cycle: Any,
+) -> tuple[bool, str]:
+    """Cancel the protective STOP referenced by cycle.exit_order_id."""
+    if cycle["exit_order_id"] is None:
+        return True, "no protective stop"
+    return cancel_local_order(client=client, store=store,
+                              local_order_id=int(cycle["exit_order_id"]))
 
 
 def submit_live_market_close(

@@ -111,6 +111,26 @@ class BinanceUSDMClient:
             }
         return self._signed_request("POST", "/fapi/v1/order", params=params)
 
+    def set_leverage(self, *, symbol: str, leverage: int) -> dict[str, Any]:
+        params = {"symbol": symbol, "leverage": int(leverage)}
+        if self.config.dry_run:
+            return {"dryRun": True, "endpoint": "/fapi/v1/leverage", "params": params}
+        return self._signed_request("POST", "/fapi/v1/leverage", params=params)
+
+    def set_margin_type(self, *, symbol: str, margin_type: str) -> dict[str, Any]:
+        """margin_type in {'ISOLATED', 'CROSSED'}. Returns API response.
+        Binance returns code -4046 if the margin type is already set; treat as success."""
+        params = {"symbol": symbol, "marginType": margin_type.upper()}
+        if self.config.dry_run:
+            return {"dryRun": True, "endpoint": "/fapi/v1/marginType", "params": params}
+        try:
+            return self._signed_request("POST", "/fapi/v1/marginType", params=params)
+        except BinanceAPIError as exc:
+            # -4046 "No need to change margin type" — already set, treat as ok
+            if "-4046" in str(exc) or "No need to change margin type" in str(exc):
+                return {"already_set": True, "marginType": margin_type.upper()}
+            raise
+
     def order_status(
         self,
         *,
