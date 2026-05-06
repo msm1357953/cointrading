@@ -164,6 +164,13 @@ class TelegramCommandProcessor:
         "수수료": "fees",
         "fee": "fees",
         "fees": "fees",
+        "bnb": "bnb_status",
+        "bnb상태": "bnb_status",
+        "비엔비": "bnb_status",
+        "비엔비상태": "bnb_status",
+        "bnb보충": "bnb_topup",
+        "비엔비보충": "bnb_topup",
+        "수수료보충": "bnb_topup",
         "가격": "price",
         "price": "price",
         "시장": "market",
@@ -254,6 +261,12 @@ class TelegramCommandProcessor:
             return self.risk_text()
         if command == "fees":
             return self.fees_text(args)
+        if command == "bnb_status":
+            if args and args[0].lower() in {"보충", "충전", "topup", "refill"}:
+                return self.bnb_topup_text(args[1:])
+            return self.bnb_status_text()
+        if command == "bnb_topup":
+            return self.bnb_topup_text(args)
         if command == "account":
             return self.account_text()
         if command == "price":
@@ -307,6 +320,8 @@ class TelegramCommandProcessor:
                 "계좌       - Binance 선물 계좌 요약",
                 "위험       - 리스크 한도 / 런타임 리스크 모드",
                 "수수료     - BNB 할인과 현재 수수료",
+                "BNB        - BNB 수수료 연료 상태",
+                "BNB보충 15 - 선물 USDC로 BNB 보충",
                 "가격 BTCUSDC - 현재 가격",
                 "정지 / 재개 - 자동 진입 일시정지/해제",
                 "",
@@ -449,6 +464,32 @@ class TelegramCommandProcessor:
                 taker *= 0.90
             lines.append(f"{symbol}: maker {maker:.2f}bps, taker {taker:.2f}bps")
         return "\n".join(lines)
+
+    def bnb_status_text(self) -> str:
+        from cointrading.bnb_fee_manager import bnb_fee_status_text
+
+        return bnb_fee_status_text(
+            client=self.exchange_client,
+            config=self.trading_config,
+        )
+
+    def bnb_topup_text(self, args: list[str]) -> str:
+        from cointrading.bnb_fee_manager import ensure_bnb_fee_balance
+
+        quote_amount = None
+        for arg in args:
+            try:
+                quote_amount = float(arg)
+                break
+            except ValueError:
+                continue
+        result = ensure_bnb_fee_balance(
+            client=self.exchange_client,
+            config=self.trading_config,
+            quote_amount_usdc=quote_amount,
+            force=True,
+        )
+        return "\n".join(["■ BNB 보충", result.to_text()])
 
     def price_text(self, args: list[str]) -> str:
         symbol = args[0].upper() if args else self.trading_config.scalp_symbols[0]

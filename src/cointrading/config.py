@@ -248,6 +248,18 @@ class TradingConfig:
     consecutive_auto_max_consecutive_losses: int = 3    # auto-OFF after 3 losses in a row
     consecutive_auto_max_trades_per_day: int = 5
     consecutive_auto_freshness_seconds: int = 360       # trigger bar must be fresh
+    # BNB fee-discount fuel manager. This is intentionally separate from
+    # strategy logic: it only buys/transfers small BNB amounts for fee payment.
+    bnb_fee_topup_enabled: bool = False
+    bnb_fee_topup_live_enabled: bool = False
+    bnb_fee_topup_before_auto_entry: bool = True
+    bnb_fee_topup_required_for_live: bool = False
+    bnb_fee_topup_symbol: str = "BNBUSDC"
+    bnb_fee_topup_min_bnb: float = 0.003
+    bnb_fee_topup_target_bnb: float = 0.02
+    bnb_fee_topup_min_quote_usdc: float = 5.0
+    bnb_fee_topup_max_quote_usdc: float = 20.0
+    bnb_fee_topup_daily_quote_limit_usdc: float = 40.0
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -734,6 +746,41 @@ class TradingConfig:
             consecutive_auto_freshness_seconds=_get_int(
                 "COINTRADING_CONSECUTIVE_AUTO_FRESHNESS_SECONDS",
                 cls.consecutive_auto_freshness_seconds,
+            ),
+            bnb_fee_topup_enabled=_get_bool(
+                "COINTRADING_BNB_FEE_TOPUP_ENABLED", cls.bnb_fee_topup_enabled
+            ),
+            bnb_fee_topup_live_enabled=_get_bool(
+                "COINTRADING_BNB_FEE_TOPUP_LIVE_ENABLED", cls.bnb_fee_topup_live_enabled
+            ),
+            bnb_fee_topup_before_auto_entry=_get_bool(
+                "COINTRADING_BNB_FEE_TOPUP_BEFORE_AUTO_ENTRY",
+                cls.bnb_fee_topup_before_auto_entry,
+            ),
+            bnb_fee_topup_required_for_live=_get_bool(
+                "COINTRADING_BNB_FEE_TOPUP_REQUIRED_FOR_LIVE",
+                cls.bnb_fee_topup_required_for_live,
+            ),
+            bnb_fee_topup_symbol=_get_str(
+                "COINTRADING_BNB_FEE_TOPUP_SYMBOL", cls.bnb_fee_topup_symbol
+            ).upper() or cls.bnb_fee_topup_symbol,
+            bnb_fee_topup_min_bnb=_get_float(
+                "COINTRADING_BNB_FEE_TOPUP_MIN_BNB", cls.bnb_fee_topup_min_bnb
+            ),
+            bnb_fee_topup_target_bnb=_get_float(
+                "COINTRADING_BNB_FEE_TOPUP_TARGET_BNB", cls.bnb_fee_topup_target_bnb
+            ),
+            bnb_fee_topup_min_quote_usdc=_get_float(
+                "COINTRADING_BNB_FEE_TOPUP_MIN_QUOTE_USDC",
+                cls.bnb_fee_topup_min_quote_usdc,
+            ),
+            bnb_fee_topup_max_quote_usdc=_get_float(
+                "COINTRADING_BNB_FEE_TOPUP_MAX_QUOTE_USDC",
+                cls.bnb_fee_topup_max_quote_usdc,
+            ),
+            bnb_fee_topup_daily_quote_limit_usdc=_get_float(
+                "COINTRADING_BNB_FEE_TOPUP_DAILY_QUOTE_LIMIT_USDC",
+                cls.bnb_fee_topup_daily_quote_limit_usdc,
             ),
         )
 

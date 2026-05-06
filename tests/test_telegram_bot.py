@@ -196,6 +196,46 @@ class TelegramCommandTests(unittest.TestCase):
         self.assertIn("USDC 심볼 live 준비: 가능", reply)
         self.assertIn("BTCUSDC: maker 0.00bps, taker 3.60bps", reply)
 
+    def test_bnb_status_command(self) -> None:
+        processor = TelegramCommandProcessor(
+            TelegramConfig(
+                allowed_chat_ids=frozenset({"123"}),
+                commands_enabled=True,
+            ),
+            TradingConfig(
+                dry_run=False,
+                testnet=False,
+                bnb_fee_topup_enabled=True,
+                bnb_fee_topup_live_enabled=True,
+            ),
+            TelegramBotState(),
+            exchange_client=FakeExchangeClient(),
+        )
+        reply = processor.handle_text("123", "BNB")
+        self.assertIn("BNB 수수료 연료", reply)
+        self.assertIn("선물 BNB", reply)
+        self.assertIn("BNB보충", reply)
+
+    def test_bnb_topup_command_reports_dry_run_lock(self) -> None:
+        processor = TelegramCommandProcessor(
+            TelegramConfig(
+                allowed_chat_ids=frozenset({"123"}),
+                commands_enabled=True,
+            ),
+            TradingConfig(
+                dry_run=True,
+                testnet=False,
+                bnb_fee_topup_enabled=True,
+                bnb_fee_topup_live_enabled=True,
+                bnb_fee_topup_target_bnb=0.2,
+            ),
+            TelegramBotState(),
+            exchange_client=FakeExchangeClient(),
+        )
+        reply = processor.handle_text("123", "BNB 보충 15")
+        self.assertIn("BNB 보충", reply)
+        self.assertIn("dry_run", reply)
+
     def test_market_command_reads_latest_regime_rows(self) -> None:
         processor = TelegramCommandProcessor(
             TelegramConfig(

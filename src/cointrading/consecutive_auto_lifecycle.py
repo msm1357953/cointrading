@@ -259,6 +259,24 @@ class ConsecutiveAutoEngine:
     ) -> StepOutcome:
         cfg = self.config
         symbol = cfg.consecutive_auto_symbol
+        bnb_topup_summary: dict | None = None
+
+        if cfg.bnb_fee_topup_before_auto_entry:
+            from cointrading.bnb_fee_manager import ensure_bnb_fee_balance
+            topup = ensure_bnb_fee_balance(client=self.client, config=cfg)
+            if topup.action != "disabled":
+                bnb_topup_summary = {
+                    "ok": topup.ok,
+                    "action": topup.action,
+                    "message": topup.message,
+                    "quote_amount_usdc": topup.quote_amount_usdc,
+                    "transferred_bnb": topup.transferred_bnb,
+                    "futures_bnb_available": topup.futures_bnb_available,
+                }
+            if not topup.ok:
+                logger.warning("consecutive_auto: BNB top-up check failed: %s", topup.message)
+                if cfg.bnb_fee_topup_required_for_live:
+                    return StepOutcome("blocked", f"BNB fee top-up failed: {topup.message}")
 
         # Set leverage + isolated margin (idempotent — Binance returns
         # -4046 if already set, our client handles that)
@@ -360,6 +378,7 @@ class ConsecutiveAutoEngine:
                 "leverage": cfg.consecutive_auto_leverage,
                 "notional": notional, "margin_pct": cfg.consecutive_auto_margin_pct,
                 "capital_at_entry": capital,
+                "bnb_topup": bnb_topup_summary,
                 "next_bar_close_ms": next_bar_close_ms,
                 "live": True,
             },
@@ -426,6 +445,7 @@ class ConsecutiveAutoEngine:
                 "sl_loss_bps": sl_loss_bps, "tp_gain_bps": tp_gain_bps,
                 "notional": notional, "leverage": cfg.consecutive_auto_leverage,
                 "capital": capital,
+                "bnb_topup": bnb_topup_summary,
                 "run_n": run.n, "run_direction": run.direction,
                 "next_bar_close_ms": next_bar_close_ms,
             },

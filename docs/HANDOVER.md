@@ -195,7 +195,7 @@ Active commands (Korean):
 - `펀딩` / `펀딩보고` / `펀딩준비` / `펀딩설정`
 - `꼬리` / `꼬리보고` / `꼬리준비` / `꼬리설정`
 - `장세`, `시장상황 BTCUSDC`, `주문`, `포지션`
-- `계좌`, `위험`, `수수료`, `가격`
+- `계좌`, `위험`, `수수료`, `BNB`, `BNB 보충`, `가격`
 - `정지` / `재개`
 
 Auto alerts come from `funding_carry_notify.py` and
@@ -229,7 +229,26 @@ COINTRADING_WICK_CARRY_MIN_DROP_PCT=0.01
 COINTRADING_WICK_CARRY_STOP_LOSS_BPS=300
 COINTRADING_WICK_CARRY_MAX_HOLD_SECONDS=7200
 COINTRADING_WICK_CARRY_LIVE_ENABLED=false      # third gate
+
+# BNB fee-fuel manager (fee discount support, not a strategy)
+COINTRADING_BNB_FEE_TOPUP_ENABLED=false
+COINTRADING_BNB_FEE_TOPUP_LIVE_ENABLED=false
+COINTRADING_BNB_FEE_TOPUP_BEFORE_AUTO_ENTRY=true
+COINTRADING_BNB_FEE_TOPUP_REQUIRED_FOR_LIVE=false
+COINTRADING_BNB_FEE_TOPUP_SYMBOL=BNBUSDC
+COINTRADING_BNB_FEE_TOPUP_MIN_BNB=0.003
+COINTRADING_BNB_FEE_TOPUP_TARGET_BNB=0.02
+COINTRADING_BNB_FEE_TOPUP_MIN_QUOTE_USDC=5
+COINTRADING_BNB_FEE_TOPUP_MAX_QUOTE_USDC=20
+COINTRADING_BNB_FEE_TOPUP_DAILY_QUOTE_LIMIT_USDC=40
 ```
+
+BNB fee top-up flow: USD-M futures USDC → spot USDC → spot `BNBUSDC`
+market buy → USD-M futures BNB. It only executes on mainnet when both top-up
+flags are true and `COINTRADING_DRY_RUN=false`. Telegram commands: `BNB` for
+status, `BNB 보충` / `BNB보충 15` for manual refill. `consecutive_auto` calls
+the same manager before live entry; failure is non-blocking unless
+`COINTRADING_BNB_FEE_TOPUP_REQUIRED_FOR_LIVE=true`.
 
 ## 9. Code map
 
@@ -239,6 +258,7 @@ src/cointrading/
   storage.py                     # SQLite schema + query helpers
   exchange/binance_usdm.py       # public + signed REST client
   exchange_filters.py            # tick / step / minNotional normalisation
+  bnb_fee_manager.py             # small BNB top-up for fee discount fuel
   models.py                      # Kline, OrderIntent, etc.
 
   funding_lifecycle.py           # Strategy 1 engine (paper + live)

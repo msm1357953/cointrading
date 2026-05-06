@@ -353,6 +353,16 @@ def _format_auto_open(symbol: str, outcome) -> str:
         from datetime import datetime, timezone
         ts = datetime.fromtimestamp(next_close_ms / 1000, tz=timezone.utc).astimezone()
         bar_close_str = f"  강제청산 (15봉 마감): {ts:%H:%M:%S}\n"
+    bnb_line = ""
+    bnb = e.get("bnb_topup")
+    if bnb:
+        if bnb.get("action") == "topped_up":
+            bnb_line = (
+                f"  BNB 보충: {bnb.get('quote_amount_usdc', 0):.2f} USDC → "
+                f"{bnb.get('transferred_bnb', 0):.8f} BNB\n"
+            )
+        elif bnb.get("action") not in ("sufficient", "disabled"):
+            bnb_line = f"  BNB 보충: {bnb.get('action')} ({bnb.get('message')})\n"
     return (
         f"🤖 자동 진입 — {symbol}\n"
         f"  방향: {arrow}\n"
@@ -362,6 +372,7 @@ def _format_auto_open(symbol: str, outcome) -> str:
         f"  RR: 1:{rr:.2f}\n"
         f"  노셔널: {e.get('notional'):.0f} USDC ({e.get('leverage')}x ISOLATED)\n"
         f"  자본 기준: {e.get('capital', 0):.0f} USDC\n"
+        f"{bnb_line}"
         f"{bar_close_str}"
         f"  근거: {e.get('run_direction')} {e.get('run_n')}봉 연속\n"
         f"  cycle_id: {outcome.cycle_id}"

@@ -12,7 +12,7 @@ from cointrading.storage import TradingStore, now_ms
 
 
 def _insert_closed_cycle(storage: TradingStore, *, status: str, realized_pnl: float) -> None:
-    storage.insert_strategy_cycle(
+    cycle_id = storage.insert_strategy_cycle(
         strategy=STRATEGY_NAME,
         execution_mode="taker_market",
         symbol="SOLUSDC",
@@ -32,9 +32,8 @@ def _insert_closed_cycle(storage: TradingStore, *, status: str, realized_pnl: fl
         dry_run=True,
         reason="test",
     )
-    cycles = storage.recent_strategy_cycles(limit=1)
     storage.update_strategy_cycle(
-        int(cycles[0]["id"]),
+        cycle_id,
         status=status,
         closed_ms=now_ms(),
         realized_pnl=realized_pnl,

@@ -21,6 +21,8 @@ class BinanceAPIError(RuntimeError):
 class BinanceUSDMClient:
     MAINNET_BASE_URL = "https://fapi.binance.com"
     TESTNET_BASE_URL = "https://demo-fapi.binance.com"
+    SPOT_MAINNET_BASE_URL = "https://api.binance.com"
+    SPOT_TESTNET_BASE_URL = "https://testnet.binance.vision"
 
     def __init__(
         self,
@@ -37,6 +39,9 @@ class BinanceUSDMClient:
         self.timeout = timeout
         self.base_url = (
             self.TESTNET_BASE_URL if self.config.testnet else self.MAINNET_BASE_URL
+        )
+        self.spot_base_url = (
+            self.SPOT_TESTNET_BASE_URL if self.config.testnet else self.SPOT_MAINNET_BASE_URL
         )
 
     def server_time(self) -> dict[str, Any]:
@@ -80,6 +85,72 @@ class BinanceUSDMClient:
 
     def multi_assets_margin(self) -> dict[str, Any]:
         return self._signed_request("GET", "/fapi/v1/multiAssetsMargin")
+
+    def api_key_permissions(self) -> dict[str, Any]:
+        return self._signed_request(
+            "GET", "/sapi/v1/account/apiRestrictions", base_url=self.SPOT_MAINNET_BASE_URL
+        )
+
+    def spot_account(self) -> dict[str, Any]:
+        return self._signed_request("GET", "/api/v3/account", base_url=self.spot_base_url)
+
+    def spot_book_ticker(self, symbol: str) -> dict[str, Any]:
+        return self._request(
+            "GET", "/api/v3/ticker/bookTicker",
+            {"symbol": symbol.upper()},
+            base_url=self.spot_base_url,
+        )
+
+    def spot_market_order_quote(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quote_order_qty: float,
+        response_type: str = "FULL",
+    ) -> dict[str, Any]:
+        params = {
+            "symbol": symbol.upper(),
+            "side": side.upper(),
+            "type": "MARKET",
+            "quoteOrderQty": self._format_float(quote_order_qty),
+            "newOrderRespType": response_type,
+        }
+        if self.config.dry_run:
+            return {"dryRun": True, "endpoint": "/api/v3/order", "params": params}
+        return self._signed_request("POST", "/api/v3/order", params=params, base_url=self.spot_base_url)
+
+    def universal_transfer_history(
+        self,
+        *,
+        transfer_type: str,
+        size: int = 10,
+    ) -> dict[str, Any]:
+        return self._signed_request(
+            "GET",
+            "/sapi/v1/asset/transfer",
+            {"type": transfer_type, "size": int(size)},
+            base_url=self.SPOT_MAINNET_BASE_URL,
+        )
+
+    def universal_transfer(
+        self,
+        *,
+        transfer_type: str,
+        asset: str,
+        amount: float,
+    ) -> dict[str, Any]:
+        params = {
+            "type": transfer_type,
+            "asset": asset.upper(),
+            "amount": self._format_float(amount),
+        }
+        if self.config.dry_run:
+            return {"dryRun": True, "endpoint": "/sapi/v1/asset/transfer", "params": params}
+        return self._signed_request(
+            "POST", "/sapi/v1/asset/transfer", params=params,
+            base_url=self.SPOT_MAINNET_BASE_URL,
+        )
 
     def new_order(self, intent: OrderIntent) -> dict[str, Any]:
         params: dict[str, Any] = {
@@ -201,6 +272,8 @@ class BinanceUSDMClient:
         method: str,
         path: str,
         params: dict[str, Any] | None = None,
+        *,
+        base_url: str | None = None,
     ) -> dict[str, Any]:
         if not self.api_key or not self.api_secret:
             raise BinanceAPIError("BINANCE_API_KEY and BINANCE_API_SECRET are required")
@@ -214,7 +287,10 @@ class BinanceUSDMClient:
             hashlib.sha256,
         ).hexdigest()
         signed_params["signature"] = signature
-        return self._request(method, path, params=signed_params, signed=True)
+        return self._request(
+            method, path, params=signed_params, signed=True,
+            base_url=base_url,
+        )
 
     def _request(
         self,
@@ -222,9 +298,11 @@ class BinanceUSDMClient:
         path: str,
         params: dict[str, Any] | None = None,
         signed: bool = False,
+        *,
+        base_url: str | None = None,
     ) -> Any:
         query = urlencode(params or {})
-        url = f"{self.base_url}{path}"
+        url = f"{base_url or self.base_url}{path}"
         if query:
             url = f"{url}?{query}"
         request = Request(url, method=method.upper())
