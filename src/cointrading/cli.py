@@ -235,6 +235,11 @@ def main(argv: list[str] | None = None) -> None:
     ratio_capture_parser.add_argument("--lookback-hours", type=int, default=24)
     ratio_capture_parser.add_argument("--period", default="5m")
 
+    trade_monitor_parser = subparsers.add_parser("trade-monitor")
+    trade_monitor_parser.add_argument("--state-path", type=Path,
+                                      default=Path("data/live_trade_monitor_state.json"))
+    trade_monitor_parser.add_argument("--lookback-minutes", type=int, default=60)
+
     cba_parser = subparsers.add_parser("consecutive-bar-alert")
     cba_parser.add_argument("--symbols", nargs="*", default=["BTCUSDC"])
     cba_parser.add_argument("--interval", default="15m")
@@ -532,6 +537,11 @@ def main(argv: list[str] | None = None) -> None:
             symbols=tuple(args.symbols), interval=args.interval,
             thresholds=tuple(args.thresholds), state_path=args.state_path,
         )
+        print(json.dumps(result, indent=2, default=str))
+    elif args.command == "trade-monitor":
+        from cointrading.live_trade_monitor import run_monitor
+        result = run_monitor(state_path=args.state_path,
+                             lookback_minutes_first_run=args.lookback_minutes)
         print(json.dumps(result, indent=2, default=str))
     elif args.command == "strategy-evaluate":
         strategy_evaluate(args.db_path, args.limit)

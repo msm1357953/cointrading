@@ -111,6 +111,27 @@ class BinanceUSDMClient:
             }
         return self._signed_request("POST", "/fapi/v1/order", params=params)
 
+    def income_history(
+        self,
+        *,
+        symbol: str | None = None,
+        income_type: str | None = None,
+        start_time: int | None = None,
+        end_time: int | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": int(limit)}
+        if symbol:
+            params["symbol"] = symbol
+        if income_type:
+            params["incomeType"] = income_type
+        if start_time is not None:
+            params["startTime"] = int(start_time)
+        if end_time is not None:
+            params["endTime"] = int(end_time)
+        result = self._signed_request("GET", "/fapi/v1/income", params=params)
+        return list(result) if isinstance(result, list) else []
+
     def set_leverage(self, *, symbol: str, leverage: int) -> dict[str, Any]:
         params = {"symbol": symbol, "leverage": int(leverage)}
         if self.config.dry_run:

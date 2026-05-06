@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll Binance income every minute and notify Telegram on new fills
+
+[Timer]
+OnBootSec=120
+OnUnitInactiveSec=60
+AccuracySec=10
+Unit=cointrading-trade-monitor.service
+
+[Install]
+WantedBy=timers.target
