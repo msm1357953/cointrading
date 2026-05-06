@@ -52,7 +52,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SYMBOLS = ("BTCUSDC",)
 DEFAULT_INTERVAL = "15m"
-DEFAULT_THRESHOLDS = (6, 7)
+# N=5 has the strongest raw signal (+2.4 bps gross, WR 55% on 16-month
+# 15m sample). N=6 and N=7 fire later when the mean reversion edge has
+# already faded — included as confirmation tiers, not primary triggers.
+DEFAULT_THRESHOLDS = (5, 6, 7)
 
 
 def default_state_path() -> Path:
@@ -108,7 +111,7 @@ def _save_state(path: Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True))
 
 
-def _format_alert(symbol: str, interval: str, run: RunResult, threshold: int,
+def _format_alert(symbol: str, interval: str, run: RunResult,
                   recent_bars: list[Kline]) -> str:
     arrow = "🔻 음봉" if run.direction == "down" else "🔺 양봉"
     side_hint = "→ 역추세 롱 후보" if run.direction == "down" else "→ 역추세 숏 후보"
@@ -205,7 +208,7 @@ def run_check(
             continue
 
         if tclient is not None:
-            text = _format_alert(symbol, interval, run, target_n, klines[:-1])
+            text = _format_alert(symbol, interval, run, klines[:-1])
             try:
                 tclient.send_message(text)
                 sent += 1

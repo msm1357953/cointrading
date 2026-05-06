@@ -7,4 +7,4 @@ User=msm1357953_gmail_com
 WorkingDirectory=/home/msm1357953_gmail_com/cointrading
 Environment=PYTHONUNBUFFERED=1
 TimeoutStartSec=55
-ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli consecutive-bar-alert --symbols BTCUSDC --interval 15m --thresholds 6 7
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli consecutive-bar-alert --symbols BTCUSDC --interval 15m --thresholds 5 6 7

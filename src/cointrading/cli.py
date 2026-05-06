@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> None:
     cba_parser = subparsers.add_parser("consecutive-bar-alert")
     cba_parser.add_argument("--symbols", nargs="*", default=["BTCUSDC"])
     cba_parser.add_argument("--interval", default="15m")
-    cba_parser.add_argument("--thresholds", nargs="*", type=int, default=[6, 7])
+    cba_parser.add_argument("--thresholds", nargs="*", type=int, default=[5, 6, 7])
     cba_parser.add_argument("--state-path", type=Path,
                             default=Path("data/consecutive_bar_alert_state.json"))
 
