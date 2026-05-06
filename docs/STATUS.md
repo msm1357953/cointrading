@@ -105,6 +105,7 @@
 - 2026-05-05: Telegram interface cleanup. Removed all 11 legacy command alias groups (`레이더`, `스캘핑`, `보고`, `전략`, `메타`, `발굴`, `정제`, `현재후보`, `프로브`, `진입`, `실전` and variants). The `상태` command was rewritten to surface both active strategies' state at a glance: paper open count, closed count, win/loss, sum PnL, live readiness, live-armed flag.
 - 2026-05-05: Handover document `docs/HANDOVER.md` written so the next agent (or session) can pick up without re-deriving context. Captures owner profile, strategy state, failed hypotheses, live promotion workflow, and the rule "agent SSHes and edits .env on owner's behalf — owner does not run shell commands."
 - 2026-05-07: BNB fee-fuel manager added. The bot can now check futures BNB fuel, top it up by moving USDC from USD-M futures to spot, buying BNB on spot, and transferring BNB back to USD-M futures. It is capped by env limits and only executes when `COINTRADING_BNB_FEE_TOPUP_ENABLED=true`, `COINTRADING_BNB_FEE_TOPUP_LIVE_ENABLED=true`, `COINTRADING_DRY_RUN=false`, and mainnet mode are all set. Telegram commands `BNB`, `BNB 보충`, and `BNB보충 15` were added; consecutive-auto checks BNB fuel before live entry. Full local suite: 190/190 passing.
+- 2026-05-07: BNB fee-fuel target changed from a fixed tiny reserve to a dynamic reserve sized from current futures USDC balance, auto margin/leverage, max trades per day, round-trip taker fee, and a buffer multiplier. This keeps BNB fuel proportional to actual auto-trade size instead of the earlier 80 USDC experiment scale.
 
 ## Next Work Packets
 

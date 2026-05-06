@@ -54,6 +54,15 @@ class FakeExchangeClient:
             "askQty": "8",
         }
 
+    def spot_book_ticker(self, symbol: str):
+        return {
+            "symbol": symbol,
+            "bidPrice": "649.00",
+            "bidQty": "10",
+            "askPrice": "650.00",
+            "askQty": "8",
+        }
+
     def order_book(self, symbol: str, limit: int = 20):
         return {
             "bids": [["100.00", "20"], ["99.99", "10"]],

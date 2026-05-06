@@ -103,6 +103,53 @@ class BnbFeeTopupResult:
         return "\n".join(lines)
 
 
+@dataclass
+class BnbTargetEstimate:
+    target_bnb: float
+    estimated_auto_notional_usdc: float
+    estimated_daily_fee_usdc: float
+    bnb_ask_price: float
+
+
+def estimate_bnb_target(
+    *,
+    config: TradingConfig,
+    futures_usdc_available: float,
+    bnb_ask_price: float,
+    planned_notional_usdc: float | None = None,
+) -> BnbTargetEstimate:
+    static_target = max(config.bnb_fee_topup_target_bnb, config.bnb_fee_topup_min_bnb)
+    target = static_target
+    estimated_notional = 0.0
+    estimated_daily_fee = 0.0
+    if config.bnb_fee_topup_dynamic_target_enabled and bnb_ask_price > 0:
+        estimated_notional = planned_notional_usdc
+        if estimated_notional is None or estimated_notional <= 0:
+            estimated_notional = (
+                futures_usdc_available
+                * config.consecutive_auto_margin_pct
+                * config.consecutive_auto_leverage
+            )
+        estimated_daily_fee = (
+            estimated_notional
+            * 2.0
+            * config.taker_fee_rate
+            * 0.90
+            * config.consecutive_auto_max_trades_per_day
+            * config.bnb_fee_topup_fee_buffer_multiplier
+        )
+        dynamic_target = estimated_daily_fee / bnb_ask_price
+        target = max(static_target, dynamic_target)
+    max_target = max(config.bnb_fee_topup_max_target_bnb, static_target)
+    target = min(target, max_target)
+    return BnbTargetEstimate(
+        target_bnb=target,
+        estimated_auto_notional_usdc=estimated_notional,
+        estimated_daily_fee_usdc=estimated_daily_fee,
+        bnb_ask_price=bnb_ask_price,
+    )
+
+
 def futures_asset_balance(client: BinanceUSDMClient, asset: str) -> float:
     balances = client.account_balance()
     target = asset.upper()
@@ -141,6 +188,16 @@ def bnb_fee_status_text(
         usdc = futures_asset_balance(client, "USDC")
     except (AttributeError, BinanceAPIError):
         usdc = 0.0
+    try:
+        ticker = client.spot_book_ticker(config.bnb_fee_topup_symbol)
+        ask = float(ticker["askPrice"])
+    except (AttributeError, BinanceAPIError, KeyError, ValueError):
+        ask = 0.0
+    target = estimate_bnb_target(
+        config=config,
+        futures_usdc_available=usdc,
+        bnb_ask_price=ask,
+    )
     return "\n".join([
         "■ BNB 수수료 연료",
         f"  BNB 할인 설정     : {'켜짐' if fee_burn else '꺼짐'}",
@@ -148,7 +205,9 @@ def bnb_fee_status_text(
         f"  실제 매수/이체    : {'허용' if config.bnb_fee_topup_live_enabled and not config.dry_run and not config.testnet else '잠김'}",
         f"  보충 심볼         : {config.bnb_fee_topup_symbol}",
         f"  선물 BNB          : {bnb:.8f}",
-        f"  보충 기준/목표    : {config.bnb_fee_topup_min_bnb:.8f} / {config.bnb_fee_topup_target_bnb:.8f} BNB",
+        f"  보충 목표         : {target.target_bnb:.8f} BNB",
+        f"  산정 기준         : 예상 노셔널 {target.estimated_auto_notional_usdc:.2f} USDC, "
+        f"하루 수수료 {target.estimated_daily_fee_usdc:.2f} USDC",
         f"  선물 USDC         : {usdc:.4f}",
         f"  1회/일 한도       : {config.bnb_fee_topup_max_quote_usdc:.2f} / {config.bnb_fee_topup_daily_quote_limit_usdc:.2f} USDC",
         f"  오늘 보충 사용액  : {state.daily_quote_spent_usdc:.4f} USDC",
@@ -199,13 +258,34 @@ def ensure_bnb_fee_balance(
         return BnbFeeTopupResult(False, "error", f"선물 잔고 확인 실패: {exc}",
                                  bnb_target=target_bnb)
 
-    threshold = target_bnb if force else config.bnb_fee_topup_min_bnb
+    try:
+        ticker = client.spot_book_ticker(config.bnb_fee_topup_symbol)
+        ask = float(ticker["askPrice"])
+    except (AttributeError, BinanceAPIError, KeyError, ValueError) as exc:
+        return BnbFeeTopupResult(False, "error", f"BNB spot 호가 확인 실패: {exc}",
+                                 futures_bnb_available=futures_bnb,
+                                 futures_usdc_available=futures_usdc,
+                                 bnb_target=target_bnb)
+    if ask <= 0:
+        return BnbFeeTopupResult(False, "error", "BNB ask price가 비정상입니다.",
+                                 futures_bnb_available=futures_bnb,
+                                 futures_usdc_available=futures_usdc,
+                                 bnb_target=target_bnb)
+
+    target = estimate_bnb_target(
+        config=config,
+        futures_usdc_available=futures_usdc,
+        bnb_ask_price=ask,
+    )
+    target_bnb = target.target_bnb
+    threshold = target_bnb if (force or config.bnb_fee_topup_dynamic_target_enabled) else config.bnb_fee_topup_min_bnb
     if futures_bnb >= threshold:
         return BnbFeeTopupResult(
             True, "sufficient", "선물 BNB 잔고가 충분합니다.",
             futures_bnb_available=futures_bnb,
             futures_usdc_available=futures_usdc,
             bnb_target=target_bnb,
+            bnb_ask_price=ask,
         )
 
     if not config.bnb_fee_topup_live_enabled or config.dry_run:
@@ -215,6 +295,7 @@ def ensure_bnb_fee_balance(
             futures_bnb_available=futures_bnb,
             futures_usdc_available=futures_usdc,
             bnb_target=target_bnb,
+            bnb_ask_price=ask,
         )
 
     try:
@@ -223,17 +304,20 @@ def ensure_bnb_fee_balance(
         return BnbFeeTopupResult(False, "error", f"API 권한 확인 실패: {exc}",
                                  futures_bnb_available=futures_bnb,
                                  futures_usdc_available=futures_usdc,
-                                 bnb_target=target_bnb)
+                                 bnb_target=target_bnb,
+                                 bnb_ask_price=ask)
     if not permissions.get("permitsUniversalTransfer"):
         return BnbFeeTopupResult(False, "blocked", "API에 Universal Transfer 권한이 없습니다.",
                                  futures_bnb_available=futures_bnb,
                                  futures_usdc_available=futures_usdc,
-                                 bnb_target=target_bnb)
+                                 bnb_target=target_bnb,
+                                 bnb_ask_price=ask)
     if not permissions.get("enableSpotAndMarginTrading"):
         return BnbFeeTopupResult(False, "blocked", "API에 Spot trading 권한이 없습니다.",
                                  futures_bnb_available=futures_bnb,
                                  futures_usdc_available=futures_usdc,
-                                 bnb_target=target_bnb)
+                                 bnb_target=target_bnb,
+                                 bnb_ask_price=ask)
 
     try:
         existing_spot_bnb = spot_asset_free(client, "BNB")
@@ -254,6 +338,7 @@ def ensure_bnb_fee_balance(
                 futures_bnb_available=futures_bnb,
                 futures_usdc_available=futures_usdc,
                 bnb_target=target_bnb,
+                bnb_ask_price=ask,
             )
         futures_bnb += transfer_existing
         if futures_bnb >= threshold:
@@ -263,21 +348,8 @@ def ensure_bnb_fee_balance(
                 futures_usdc_available=futures_usdc,
                 bnb_target=target_bnb,
                 transferred_bnb=transfer_existing,
+                bnb_ask_price=ask,
             )
-
-    try:
-        ticker = client.spot_book_ticker(config.bnb_fee_topup_symbol)
-        ask = float(ticker["askPrice"])
-    except (AttributeError, BinanceAPIError, KeyError, ValueError) as exc:
-        return BnbFeeTopupResult(False, "error", f"BNB spot 호가 확인 실패: {exc}",
-                                 futures_bnb_available=futures_bnb,
-                                 futures_usdc_available=futures_usdc,
-                                 bnb_target=target_bnb)
-    if ask <= 0:
-        return BnbFeeTopupResult(False, "error", "BNB ask price가 비정상입니다.",
-                                 futures_bnb_available=futures_bnb,
-                                 futures_usdc_available=futures_usdc,
-                                 bnb_target=target_bnb)
 
     if quote_amount_usdc is None:
         needed_bnb = max(0.0, target_bnb - futures_bnb)

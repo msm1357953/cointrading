@@ -257,9 +257,12 @@ class TradingConfig:
     bnb_fee_topup_symbol: str = "BNBUSDC"
     bnb_fee_topup_min_bnb: float = 0.003
     bnb_fee_topup_target_bnb: float = 0.02
+    bnb_fee_topup_dynamic_target_enabled: bool = True
+    bnb_fee_topup_fee_buffer_multiplier: float = 1.5
+    bnb_fee_topup_max_target_bnb: float = 1.0
     bnb_fee_topup_min_quote_usdc: float = 5.0
-    bnb_fee_topup_max_quote_usdc: float = 20.0
-    bnb_fee_topup_daily_quote_limit_usdc: float = 40.0
+    bnb_fee_topup_max_quote_usdc: float = 100.0
+    bnb_fee_topup_daily_quote_limit_usdc: float = 200.0
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
@@ -769,6 +772,18 @@ class TradingConfig:
             ),
             bnb_fee_topup_target_bnb=_get_float(
                 "COINTRADING_BNB_FEE_TOPUP_TARGET_BNB", cls.bnb_fee_topup_target_bnb
+            ),
+            bnb_fee_topup_dynamic_target_enabled=_get_bool(
+                "COINTRADING_BNB_FEE_TOPUP_DYNAMIC_TARGET_ENABLED",
+                cls.bnb_fee_topup_dynamic_target_enabled,
+            ),
+            bnb_fee_topup_fee_buffer_multiplier=_get_float(
+                "COINTRADING_BNB_FEE_TOPUP_FEE_BUFFER_MULTIPLIER",
+                cls.bnb_fee_topup_fee_buffer_multiplier,
+            ),
+            bnb_fee_topup_max_target_bnb=_get_float(
+                "COINTRADING_BNB_FEE_TOPUP_MAX_TARGET_BNB",
+                cls.bnb_fee_topup_max_target_bnb,
             ),
             bnb_fee_topup_min_quote_usdc=_get_float(
                 "COINTRADING_BNB_FEE_TOPUP_MIN_QUOTE_USDC",

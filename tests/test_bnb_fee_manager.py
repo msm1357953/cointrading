@@ -92,7 +92,7 @@ class BnbFeeManagerTests(unittest.TestCase):
 
     def test_sufficient_does_nothing(self) -> None:
         client = FakeBnbClient()
-        client.futures_bnb = 0.004
+        client.futures_bnb = 0.03
         result = ensure_bnb_fee_balance(client=client, config=_cfg())
         self.assertTrue(result.ok)
         self.assertEqual(result.action, "sufficient")

@@ -238,9 +238,12 @@ COINTRADING_BNB_FEE_TOPUP_REQUIRED_FOR_LIVE=false
 COINTRADING_BNB_FEE_TOPUP_SYMBOL=BNBUSDC
 COINTRADING_BNB_FEE_TOPUP_MIN_BNB=0.003
 COINTRADING_BNB_FEE_TOPUP_TARGET_BNB=0.02
+COINTRADING_BNB_FEE_TOPUP_DYNAMIC_TARGET_ENABLED=true
+COINTRADING_BNB_FEE_TOPUP_FEE_BUFFER_MULTIPLIER=1.5
+COINTRADING_BNB_FEE_TOPUP_MAX_TARGET_BNB=1.0
 COINTRADING_BNB_FEE_TOPUP_MIN_QUOTE_USDC=5
-COINTRADING_BNB_FEE_TOPUP_MAX_QUOTE_USDC=20
-COINTRADING_BNB_FEE_TOPUP_DAILY_QUOTE_LIMIT_USDC=40
+COINTRADING_BNB_FEE_TOPUP_MAX_QUOTE_USDC=100
+COINTRADING_BNB_FEE_TOPUP_DAILY_QUOTE_LIMIT_USDC=200
 ```
 
 BNB fee top-up flow: USD-M futures USDC → spot USDC → spot `BNBUSDC`
@@ -248,7 +251,10 @@ market buy → USD-M futures BNB. It only executes on mainnet when both top-up
 flags are true and `COINTRADING_DRY_RUN=false`. Telegram commands: `BNB` for
 status, `BNB 보충` / `BNB보충 15` for manual refill. `consecutive_auto` calls
 the same manager before live entry; failure is non-blocking unless
-`COINTRADING_BNB_FEE_TOPUP_REQUIRED_FOR_LIVE=true`.
+`COINTRADING_BNB_FEE_TOPUP_REQUIRED_FOR_LIVE=true`. With dynamic target on,
+the BNB target scales from current futures USDC balance × auto margin pct ×
+auto leverage × max trades per day × round-trip taker fee × buffer, so it does
+not stay stuck at the small static fallback target.
 
 ## 9. Code map
 
