@@ -56,6 +56,13 @@ DEFAULT_INTERVAL = "15m"
 # 15m sample). N=6 and N=7 fire later when the mean reversion edge has
 # already faded — included as confirmation tiers, not primary triggers.
 DEFAULT_THRESHOLDS = (5, 6, 7)
+# A bar with body / range below this ratio is treated as a doji and is
+# transparent inside a run — it doesn't break direction nor count toward
+# the directional length.
+DEFAULT_DOJI_BODY_RATIO = 0.15
+# How many doji bars can sit inside a run before we treat it as broken.
+# 1 = a single doji can interrupt 5 down bars and the run still counts.
+DEFAULT_MAX_DOJI_PER_RUN = 1
 
 
 def default_state_path() -> Path:
@@ -65,36 +72,74 @@ def default_state_path() -> Path:
 @dataclass
 class RunResult:
     bar: Kline
-    n: int
-    direction: str  # "up" | "down"
+    n: int               # directional bars in the run (excludes doji)
+    direction: str       # "up" | "down"
+    doji_count: int = 0  # how many doji-like bars are nested in the run
 
 
-def detect_run(klines: list[Kline]) -> RunResult | None:
-    """Walk backward from the most recent CLOSED bar to count the run.
+def _bar_direction(bar: Kline, doji_body_ratio: float) -> str:
+    """Return 'up', 'down', or 'doji'. A small-body bar counts as doji."""
+    if bar.open <= 0 or bar.high <= bar.low:
+        return "doji"
+    rng = bar.high - bar.low
+    if rng <= 0:
+        return "doji"
+    body = abs(bar.close - bar.open)
+    if body / rng < doji_body_ratio:
+        return "doji"
+    return "up" if bar.close > bar.open else "down"
 
-    Caller passes the result of `client.klines(..., limit=L)` where L is
-    larger than the maximum threshold we care about. We assume the LAST
-    element of the response may still be forming, so the most-recent
-    closed bar is the second-to-last entry.
+
+def detect_run(
+    klines: list[Kline],
+    *,
+    doji_body_ratio: float = DEFAULT_DOJI_BODY_RATIO,
+    max_doji_per_run: int = DEFAULT_MAX_DOJI_PER_RUN,
+) -> RunResult | None:
+    """Walk backward from the most recent CLOSED bar to count a directional run.
+
+    Doji-like bars (body / range below `doji_body_ratio`) are treated as
+    transparent: they don't break the run and don't add to the directional
+    count. Up to `max_doji_per_run` doji are allowed inside the run before
+    it's considered broken.
+
+    `klines` is the raw response from `client.klines(..., limit=L)`. We
+    assume the last element may still be forming, so the most-recent
+    CLOSED bar is the second-to-last entry.
     """
     if len(klines) < 3:
         return None
-    closed = klines[:-1]  # drop the partial bar
-    last = closed[-1]
-    if last.open == 0:
+    closed = klines[:-1]
+    if not closed:
         return None
-    last_dir = "up" if last.close > last.open else ("down" if last.close < last.open else "doji")
-    if last_dir == "doji":
+
+    # Direction = the most recent CLOSED non-doji bar's direction.
+    direction: str | None = None
+    for bar in reversed(closed):
+        d = _bar_direction(bar, doji_body_ratio)
+        if d != "doji":
+            direction = d
+            break
+    if direction is None:
         return None
-    n = 1
-    for bar in reversed(closed[:-1]):
-        if bar.open == 0:
+
+    n_directional = 0
+    doji_count = 0
+    for bar in reversed(closed):
+        d = _bar_direction(bar, doji_body_ratio)
+        if d == direction:
+            n_directional += 1
+        elif d == "doji":
+            if doji_count >= max_doji_per_run:
+                break
+            doji_count += 1
+        else:
             break
-        bar_dir = "up" if bar.close > bar.open else ("down" if bar.close < bar.open else "doji")
-        if bar_dir != last_dir:
-            break
-        n += 1
-    return RunResult(bar=last, n=n, direction=last_dir)
+
+    if n_directional == 0:
+        return None
+    return RunResult(bar=closed[-1], n=n_directional,
+                     direction=direction, doji_count=doji_count)
 
 
 def _load_state(path: Path) -> dict:
@@ -117,21 +162,28 @@ def _format_alert(symbol: str, interval: str, run: RunResult,
     side_hint = "→ 역추세 롱 후보" if run.direction == "down" else "→ 역추세 숏 후보"
     last = run.bar
     pct_change = (last.close - last.open) / last.open * 100 if last.open else 0
+    title = f"연속 {run.n}봉"
+    if run.doji_count > 0:
+        title += f" (+ 도지 {run.doji_count})"
     lines = [
-        f"⚠️ {symbol} {interval} 연속 {run.n}봉 ({arrow}) {side_hint}",
+        f"⚠️ {symbol} {interval} {title} ({arrow}) {side_hint}",
         f"  최근 종가: {last.close:.2f}  ({pct_change:+.2f}%)",
         "",
         "최근 봉 (오래된 → 최신):",
     ]
-    for bar in recent_bars[-min(run.n, 10):]:
+    show = recent_bars[-min(run.n + run.doji_count, 10):]
+    for bar in show:
         if bar.open <= 0:
             continue
+        d = _bar_direction(bar, DEFAULT_DOJI_BODY_RATIO)
+        marker = "🔺" if d == "up" else ("🔻" if d == "down" else "·")
         delta = (bar.close - bar.open) / bar.open * 100
         ts = datetime.fromtimestamp(bar.open_time / 1000, tz=timezone.utc).astimezone()
-        lines.append(f"  {ts:%H:%M}  {bar.open:.2f} → {bar.close:.2f}  ({delta:+.2f}%)")
+        lines.append(f"  {marker} {ts:%H:%M}  {bar.open:.2f} → {bar.close:.2f}  ({delta:+.2f}%)")
     lines.append("")
     lines.append("ℹ️ 데이터: N=5 down→long mean +2.4 bps WR 55% (raw),")
     lines.append("   N=7 mean −1.2 bps WR 52%. 거래비용 13bps 차감 후 EV−.")
+    lines.append("   도지(작은 몸통) 1개까지 끼어도 같은 흐름으로 봄.")
     lines.append("   판단은 너의 몫. 자동 진입 안 함.")
     return "\n".join(lines)
 

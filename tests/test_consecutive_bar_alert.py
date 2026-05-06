@@ -52,14 +52,68 @@ class DetectRunTests(unittest.TestCase):
         self.assertEqual(run.n, 3)
         self.assertEqual(run.direction, "up")
 
-    def test_doji_not_counted(self) -> None:
+    def test_doji_does_not_break_run(self) -> None:
+        """A single doji nested inside down bars should not break the run."""
         bars = [
-            _bar(0, o=100, c=99),
-            _bar(1, o=100, c=100),  # doji — terminal
+            _bar(0, o=100, c=99),    # down
+            _bar(1, o=99,  c=98),    # down
+            _bar(2, o=98,  c=98),    # doji (body=0)
+            _bar(3, o=98,  c=97),    # down
+            _bar(4, o=97,  c=96),    # down
         ]
-        partial = _bar(2, o=100, c=100)
+        partial = _bar(5, o=96, c=96)
         run = detect_run(bars + [partial])
-        self.assertIsNone(run)
+        self.assertIsNotNone(run)
+        self.assertEqual(run.direction, "down")
+        self.assertEqual(run.n, 4)          # 4 directional bars
+        self.assertEqual(run.doji_count, 1)  # 1 doji bridging them
+
+    def test_two_doji_breaks_run(self) -> None:
+        """With max_doji_per_run=1 (default), the second doji terminates the run.
+        The first doji counts (still inside the run); the older down bar is excluded."""
+        bars = [
+            _bar(0, o=100, c=99),    # down — should NOT be in run (cut off)
+            _bar(1, o=99,  c=99),    # doji 2 (oldest of the two) — breaks
+            _bar(2, o=99,  c=99),    # doji 1 — first doji counts
+            _bar(3, o=99,  c=98),    # down
+            _bar(4, o=98,  c=97),    # down
+        ]
+        partial = _bar(5, o=97, c=97)
+        run = detect_run(bars + [partial])
+        self.assertEqual(run.direction, "down")
+        self.assertEqual(run.n, 2)
+        self.assertEqual(run.doji_count, 1)
+
+    def test_doji_terminal_bar_uses_prior_direction(self) -> None:
+        """If the most recent closed bar is itself doji, direction comes from
+        the most recent non-doji prior bar."""
+        bars = [
+            _bar(0, o=100, c=99),    # down
+            _bar(1, o=99,  c=99),    # doji (terminal)
+        ]
+        partial = _bar(2, o=99, c=99)
+        run = detect_run(bars + [partial])
+        self.assertIsNotNone(run)
+        self.assertEqual(run.direction, "down")
+        self.assertEqual(run.n, 1)
+        self.assertEqual(run.doji_count, 1)
+
+    def test_small_body_treated_as_doji(self) -> None:
+        """A bar with body < 15% of range should be classified as doji."""
+        # range=10, body=1 -> body_ratio 0.1 < 0.15 default -> doji
+        small_body_up = Kline(open_time=2, open=100, high=105, low=95,
+                              close=101, volume=10, close_time=2 + 900_000 - 1)
+        bars = [
+            _bar(0, o=100, c=99, span_ms=900_000),
+            _bar(1, o=99, c=98, span_ms=900_000),
+            small_body_up,             # technically up but body too small -> doji
+            _bar(3, o=98, c=97, span_ms=900_000),
+        ]
+        partial = _bar(4, o=97, c=97, span_ms=900_000)
+        run = detect_run(bars + [partial])
+        self.assertEqual(run.direction, "down")
+        self.assertEqual(run.n, 3)           # 3 down bars
+        self.assertEqual(run.doji_count, 1)  # the small-body up counts as doji
 
     def test_too_few_bars(self) -> None:
         self.assertIsNone(detect_run([]))
