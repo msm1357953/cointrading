@@ -344,12 +344,25 @@ def run_check(
 def _format_auto_open(symbol: str, outcome) -> str:
     e = outcome.extra
     arrow = "🔺 SHORT" if e.get("side") == "short" else "🔻 LONG"
+    sl_bps = e.get("sl_loss_bps", 0) or 0
+    tp_bps = e.get("tp_gain_bps", 0) or 0
+    rr = (tp_bps / sl_bps) if sl_bps > 0 else 0
+    next_close_ms = e.get("next_bar_close_ms")
+    bar_close_str = ""
+    if next_close_ms:
+        from datetime import datetime, timezone
+        ts = datetime.fromtimestamp(next_close_ms / 1000, tz=timezone.utc).astimezone()
+        bar_close_str = f"  강제청산 (15봉 마감): {ts:%H:%M:%S}\n"
     return (
         f"🤖 자동 진입 — {symbol}\n"
         f"  방향: {arrow}\n"
         f"  진입가: {e.get('entry'):.2f}\n"
-        f"  SL: {e.get('sl'):.2f}  TP: {e.get('tp'):.2f}\n"
+        f"  SL: {e.get('sl'):.2f}  ({sl_bps:.0f} bps)\n"
+        f"  TP: {e.get('tp'):.2f}  ({tp_bps:.0f} bps)  ← 직전봉 시작가\n"
+        f"  RR: 1:{rr:.2f}\n"
         f"  노셔널: {e.get('notional'):.0f} USDC ({e.get('leverage')}x ISOLATED)\n"
+        f"  자본 기준: {e.get('capital', 0):.0f} USDC\n"
+        f"{bar_close_str}"
         f"  근거: {e.get('run_direction')} {e.get('run_n')}봉 연속\n"
         f"  cycle_id: {outcome.cycle_id}"
     )

@@ -1009,16 +1009,16 @@ class TelegramCommandProcessor:
         state.auto_mode = True
         state.paused_reason = ""
         save_state(state)
-        notional = cfg.initial_equity * cfg.consecutive_auto_margin_pct * cfg.consecutive_auto_leverage
         return "\n".join([
             "🤖 자동 진입 ON",
             f"  심볼: {cfg.consecutive_auto_symbol}",
             f"  트리거: {cfg.consecutive_auto_threshold}봉 연속 (도지 {cfg.consecutive_auto_max_doji_per_run}개 허용)",
             f"  레버리지: {cfg.consecutive_auto_leverage}x ISOLATED",
-            f"  노셔널: {notional:.0f} USDC (마진 {cfg.consecutive_auto_margin_pct*100:.0f}% × {cfg.consecutive_auto_leverage}x)",
+            f"  노셔널: 진입 시점 USDC 잔고 × {cfg.consecutive_auto_margin_pct*100:.0f}% × {cfg.consecutive_auto_leverage}x",
+            "         (예: 잔고 $20,000이면 노셔널 $10,000)",
             f"  스탑: 직전 run 고저 ± {cfg.consecutive_auto_sl_buffer_bps:.0f} bps",
-            f"  익절: 1:{cfg.consecutive_auto_tp_rr:.1f} RR (대칭)",
-            f"  타임아웃: {cfg.consecutive_auto_time_exit_minutes}분",
+            f"  익절: 직전 봉의 시작가 (절대 가격 타겟)",
+            f"  강제청산: max({cfg.consecutive_auto_time_exit_minutes}분, 진입 봉의 마감)",
             "",
             "안전장치 (자동으로 OFF되는 조건):",
             f"  • 일 손실 ≥ {cfg.consecutive_auto_daily_loss_pct*100:.0f}% (-{cfg.initial_equity*cfg.consecutive_auto_daily_loss_pct:.0f} USDC)",

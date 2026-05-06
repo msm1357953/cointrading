@@ -91,6 +91,13 @@ class FakeAutoClient:
             self.cancels.append(order_id)
         return {"status": "CANCELED"}
 
+    def account_balance(self):
+        # 1000 USDC available — matches the test config's initial_equity
+        return [
+            {"asset": "USDC", "balance": "1000.0", "availableBalance": "1000.0"},
+            {"asset": "BNB", "balance": "0.0", "availableBalance": "0.0"},
+        ]
+
 
 def _config(**overrides) -> TradingConfig:
     base = replace(
@@ -232,12 +239,19 @@ class AutoEngineTests(unittest.TestCase):
         self.assertAlmostEqual(cycle["entry_price"], 100.04)
         # SL at run_low (= 93.5) * (1 - 0.001) = 93.4065
         self.assertAlmostEqual(cycle["stop_price"], 93.5 * 0.999, places=4)
-        # TP at entry + (entry - sl) since RR=1
-        sl_dist = 100.04 - 93.5 * 0.999
-        self.assertAlmostEqual(cycle["target_price"], 100.04 + sl_dist, places=4)
+        # TP = open of bar BEFORE the trigger bar (prior_bar_open).
+        # In _down_run_klines the prior bar (closed[-2]) had open = 96.0
+        # (i=4 in the loop: open = 100 - 4 = 96).
+        self.assertAlmostEqual(cycle["target_price"], 96.0, places=4)
         # Leverage + margin type were set
         self.assertEqual(self.client.set_leverage_calls, [("BTCUSDC", 5)])
         self.assertEqual(self.client.set_margin_calls, [("BTCUSDC", "ISOLATED")])
+        # max_hold_deadline is the EARLIER of (now + 60min, next 15m boundary)
+        # — typically the 15m boundary fires first.
+        import time
+        now_ms = int(time.time() * 1000)
+        self.assertLess(cycle["max_hold_deadline_ms"], now_ms + 60 * 60_000 + 1)
+        self.assertLessEqual(cycle["max_hold_deadline_ms"] - now_ms, 60 * 60_000)
 
     def test_block_when_auto_off(self) -> None:
         klines = self._down_run_klines()
@@ -286,7 +300,10 @@ class TelegramAutoToggleTests(unittest.TestCase):
                 on = p.handle_text("1", "자동")
                 self.assertIn("자동 진입 ON", on)
                 self.assertIn("5x ISOLATED", on)
-                self.assertIn("500 USDC", on)
+                # Notional now scales with current account balance, not a fixed config value
+                self.assertIn("진입 시점 USDC 잔고", on)
+                self.assertIn("직전 봉의 시작가", on)  # new TP description
+                self.assertIn("강제청산", on)             # new bar-end force-close
 
                 # status now ON
                 s2 = p.handle_text("1", "자동상태")

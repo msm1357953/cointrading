@@ -162,18 +162,26 @@ class RunExtents:
     run_high: float
     run_low: float
     last_close: float
+    prior_bar_open: float  # open of the bar IMMEDIATELY BEFORE the trigger bar — used as TP target
 
 
 def compute_run_extents(klines: list[Kline], run: RunResult) -> RunExtents:
     """Look at the last (run.n + run.doji_count) closed bars to find the
-    run's high and low for structural stop placement."""
+    run's high and low for structural stop placement, plus the open of the
+    bar immediately before the trigger bar (used as the take-profit target)."""
     closed = klines[:-1]  # drop partial
     span = run.n + run.doji_count
     span = max(1, min(span, len(closed)))
     run_bars = closed[-span:]
     run_high = max(b.high for b in run_bars)
     run_low = min(b.low for b in run_bars)
-    return RunExtents(run_high=run_high, run_low=run_low, last_close=closed[-1].close)
+    # Trigger bar = closed[-1]; the "prior bar" = closed[-2] (one before trigger)
+    prior_bar_open = closed[-2].open if len(closed) >= 2 else closed[-1].open
+    return RunExtents(
+        run_high=run_high, run_low=run_low,
+        last_close=closed[-1].close,
+        prior_bar_open=prior_bar_open,
+    )
 
 
 # ----------------------- Engine -----------------------
@@ -272,11 +280,15 @@ class ConsecutiveAutoEngine:
         if mid <= 0:
             return StepOutcome("error", "non-positive mid")
 
-        notional = cfg.initial_equity * cfg.consecutive_auto_margin_pct * cfg.consecutive_auto_leverage
+        # Sizing now uses CURRENT futures-wallet USDC, not initial_equity from config.
+        # This way the auto-mode scales with the account: a $21k balance opens
+        # 5x bigger positions than a $1k balance, all bounded by the leverage
+        # bracket cap that Binance enforces.
+        capital = self._current_capital_usdc()
+        notional = capital * cfg.consecutive_auto_margin_pct * cfg.consecutive_auto_leverage
         intended_qty = notional / mid
 
         # ---- Entry ----
-        side_sign = 1 if side == "long" else -1
         if side == "long":
             entry_result = submit_live_market_long(
                 client=self.client, store=self.storage, config=cfg,
@@ -293,28 +305,39 @@ class ConsecutiveAutoEngine:
         avg_entry = entry_result.avg_price
         actual_qty = entry_result.executed_qty
 
-        # ---- Structural SL / TP prices ----
+        # ---- Structural SL ----
         buf = cfg.consecutive_auto_sl_buffer_bps / 10_000.0
         if side == "long":
             sl_price = extents.run_low * (1.0 - buf)
             sl_distance = max(0.0, avg_entry - sl_price)
-            tp_price = avg_entry + sl_distance * cfg.consecutive_auto_tp_rr
-            sl_loss_bps = sl_distance / avg_entry * 10_000.0 if avg_entry > 0 else 0
         else:
             sl_price = extents.run_high * (1.0 + buf)
             sl_distance = max(0.0, sl_price - avg_entry)
-            tp_price = avg_entry - sl_distance * cfg.consecutive_auto_tp_rr
-            sl_loss_bps = sl_distance / avg_entry * 10_000.0 if avg_entry > 0 else 0
+        sl_loss_bps = sl_distance / avg_entry * 10_000.0 if avg_entry > 0 else 0.0
 
-        # ---- Persist cycle row ----
-        max_hold_seconds = cfg.consecutive_auto_time_exit_minutes * 60
-        max_hold_deadline_ms = now_ms + max_hold_seconds * 1000
+        # ---- TP at the OPEN of the bar BEFORE the trigger bar ----
+        tp_price = float(extents.prior_bar_open)
+        tp_distance = max(0.0, abs(tp_price - avg_entry))
+        tp_gain_bps = tp_distance / avg_entry * 10_000.0 if avg_entry > 0 else 0.0
+
+        # ---- Persist cycle row + force-close at the next 15m bar boundary ----
+        # In addition to the configured time-exit (e.g., 60 min), force-close
+        # at the close of the bar we're entering DURING. This caps any single
+        # auto-trade to "one bar's worth of waiting" at most.
+        cfg_time_exit_ms = cfg.consecutive_auto_time_exit_minutes * 60 * 1000
+        bar_minutes = {"5m": 5, "15m": 15, "1h": 60, "4h": 240}.get(
+            cfg.consecutive_auto_interval, 15
+        )
+        bar_ms = bar_minutes * 60 * 1000
+        next_bar_close_ms = ((now_ms // bar_ms) + 1) * bar_ms
+        max_hold_deadline_ms = min(now_ms + cfg_time_exit_ms, next_bar_close_ms)
+        max_hold_seconds = max(1, int((max_hold_deadline_ms - now_ms) / 1000))
         cycle_id = self.storage.insert_strategy_cycle(
             strategy=STRATEGY_NAME, execution_mode=EXECUTION_MODE,
             symbol=symbol, side=side, status=STATUS_OPEN,
             quantity=actual_qty, entry_price=avg_entry,
             target_price=tp_price, stop_price=sl_price,
-            entry_order_type="MARKET", take_profit_bps=sl_loss_bps * cfg.consecutive_auto_tp_rr,
+            entry_order_type="MARKET", take_profit_bps=tp_gain_bps,
             stop_loss_bps=sl_loss_bps,
             max_hold_seconds=max_hold_seconds,
             maker_one_way_bps=cfg.maker_fee_rate * 10_000.0,
@@ -330,9 +353,14 @@ class ConsecutiveAutoEngine:
                 "run_direction": run.direction, "run_n": run.n,
                 "run_doji_count": run.doji_count,
                 "run_high": extents.run_high, "run_low": extents.run_low,
+                "prior_bar_open": extents.prior_bar_open,
                 "tp_price": tp_price, "sl_price": sl_price,
+                "tp_gain_bps": tp_gain_bps, "sl_loss_bps": sl_loss_bps,
+                "rr_ratio": (tp_gain_bps / sl_loss_bps) if sl_loss_bps > 0 else None,
                 "leverage": cfg.consecutive_auto_leverage,
                 "notional": notional, "margin_pct": cfg.consecutive_auto_margin_pct,
+                "capital_at_entry": capital,
+                "next_bar_close_ms": next_bar_close_ms,
                 "live": True,
             },
             timestamp_ms=now_ms,
@@ -395,10 +423,31 @@ class ConsecutiveAutoEngine:
             cycle_id=cycle_id,
             extra={
                 "side": side, "entry": avg_entry, "sl": sl_price, "tp": tp_price,
+                "sl_loss_bps": sl_loss_bps, "tp_gain_bps": tp_gain_bps,
                 "notional": notional, "leverage": cfg.consecutive_auto_leverage,
+                "capital": capital,
                 "run_n": run.n, "run_direction": run.direction,
+                "next_bar_close_ms": next_bar_close_ms,
             },
         )
+
+    def _current_capital_usdc(self) -> float:
+        """Read the current futures-wallet USDC available balance.
+        Falls back to config.initial_equity if the API call fails or returns 0."""
+        try:
+            balances = self.client.account_balance()
+        except BinanceAPIError as exc:
+            logger.warning("consecutive_auto: account_balance failed, using initial_equity: %s", exc)
+            return self.config.initial_equity
+        for b in balances:
+            if b.get("asset") == "USDC":
+                avail = float(b.get("availableBalance") or 0)
+                bal = float(b.get("balance") or 0)
+                if avail > 0:
+                    return avail
+                if bal > 0:
+                    return bal
+        return self.config.initial_equity
 
     def _submit_market_short(
         self, *, symbol: str, quantity: float, now_ms: int,
