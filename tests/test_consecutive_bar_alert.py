@@ -160,24 +160,22 @@ class RunCheckTests(unittest.TestCase):
                 state_path=self.state_path,
                 config=self.cfg, telegram_config=self.tcfg,
             )
+
+            self.assertEqual(result["telegram_sent"], 1)
+            self.assertEqual(result["symbols"]["BTCUSDC"]["alerted"], True)
+            self.assertEqual(result["symbols"]["BTCUSDC"]["threshold"], 7)
+            self.assertIn("연속 7봉", self.fake.sent[0])
+            self.assertIn("음봉", self.fake.sent[0])
+
+            # Re-running should NOT re-alert (latch on same bar)
+            result2 = run_check(
+                symbols=("BTCUSDC",), thresholds=(6, 7),
+                state_path=self.state_path,
+                config=self.cfg, telegram_config=self.tcfg,
+            )
+            self.assertEqual(result2["telegram_sent"], 0)
         finally:
             mod.BinanceUSDMClient = orig_client_factory
-
-        self.assertEqual(result["telegram_sent"], 1)
-        self.assertEqual(result["symbols"]["BTCUSDC"]["alerted"], True)
-        self.assertEqual(result["symbols"]["BTCUSDC"]["threshold"], 7)
-        self.assertIn("연속 7봉", self.fake.sent[0])
-        self.assertIn("음봉", self.fake.sent[0])
-
-        # Re-running should NOT re-alert (latch on same bar)
-        result2 = run_check(
-            symbols=("BTCUSDC",), thresholds=(6, 7),
-            state_path=self.state_path,
-            config=self.cfg, telegram_config=self.tcfg,
-        )
-        self.assertEqual(result2["telegram_sent"], 0)
-        # restore
-        mod.BinanceUSDMClient = orig_client_factory
 
     def test_alert_fires_on_six_then_seven(self) -> None:
         self._patch_telegram(None)

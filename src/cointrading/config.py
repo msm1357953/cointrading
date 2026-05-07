@@ -236,7 +236,7 @@ class TradingConfig:
     # Documented as EV-negative on raw signal; safeguards bound the loss.
     consecutive_auto_symbol: str = "BTCUSDC"
     consecutive_auto_interval: str = "15m"
-    consecutive_auto_threshold: int = 6
+    consecutive_auto_threshold: int = 7
     consecutive_auto_doji_body_ratio: float = 0.15
     consecutive_auto_max_doji_per_run: int = 1
     consecutive_auto_leverage: int = 5
