@@ -1903,6 +1903,7 @@ def _grid_action_label(action: str) -> str:
         "active_side_lock": "방향잠금",
         "risk_halt": "위험차단",
         "soft_filter": "소프트차단",
+        "time_blackout": "시간차단",
         "entry_submitted": "진입주문",
         "entry_wait": "대기",
     }.get(action, action)
@@ -1911,7 +1912,7 @@ def _grid_action_label(action: str) -> str:
 def _grid_action_tone(action: str) -> str:
     if action == "entry_submitted":
         return "good"
-    if action in {"risk_halt", "soft_filter", "safeguard", "active_side_lock", "observe_error"}:
+    if action in {"risk_halt", "soft_filter", "safeguard", "time_blackout", "active_side_lock", "observe_error"}:
         return "warn"
     return "muted"
 

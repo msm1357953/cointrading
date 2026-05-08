@@ -297,6 +297,9 @@ class TradingConfig:
     grid_max_consecutive_losses: int = 3
     grid_loss_cooldown_seconds: int = 1800
     grid_max_orders_per_day: int = 12
+    grid_time_blackout_enabled: bool = True
+    grid_time_blackout_ny_windows: tuple[str, ...] = ("09:25-10:30",)
+    grid_time_blackout_kst_windows: tuple[str, ...] = ()
     grid_overheat_15m_return_pct: float = 0.0070
     grid_overheat_1h_return_pct: float = 0.0130
     grid_atr_spike_multiple: float = 2.5
@@ -968,6 +971,18 @@ class TradingConfig:
             ),
             grid_max_orders_per_day=_get_int(
                 "COINTRADING_GRID_MAX_ORDERS_PER_DAY", cls.grid_max_orders_per_day
+            ),
+            grid_time_blackout_enabled=_get_bool(
+                "COINTRADING_GRID_TIME_BLACKOUT_ENABLED",
+                cls.grid_time_blackout_enabled,
+            ),
+            grid_time_blackout_ny_windows=_get_csv_lower_tuple(
+                "COINTRADING_GRID_TIME_BLACKOUT_NY_WINDOWS",
+                cls.grid_time_blackout_ny_windows,
+            ),
+            grid_time_blackout_kst_windows=_get_csv_lower_tuple(
+                "COINTRADING_GRID_TIME_BLACKOUT_KST_WINDOWS",
+                cls.grid_time_blackout_kst_windows,
             ),
             grid_overheat_15m_return_pct=_get_float(
                 "COINTRADING_GRID_OVERHEAT_15M_RETURN_PCT",

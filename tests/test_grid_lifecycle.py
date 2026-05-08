@@ -2,10 +2,12 @@ import tempfile
 import time
 import unittest
 from dataclasses import replace
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 
 from cointrading.config import TelegramConfig, TradingConfig
+from cointrading import grid_lifecycle as grid_mod
 from cointrading.grid_lifecycle import (
     MODE_LONG,
     MODE_STOPPED,
@@ -15,6 +17,7 @@ from cointrading.grid_lifecycle import (
     STATUS_OPEN,
     STRATEGY_NAME,
     _kst_today_str,
+    _time_blackout_reason,
     grid_recommendation_text,
     load_state,
     save_state,
@@ -45,6 +48,7 @@ def _cfg(**overrides) -> TradingConfig:
         maker_fee_rate=0.0,
         taker_fee_rate=0.0004,
         orderflow_guard_enabled=False,
+        grid_time_blackout_enabled=False,
         grid_position_filter_enabled=False,
         grid_liquidity_filter_enabled=False,
     )
@@ -360,6 +364,46 @@ class GridEngineTests(unittest.TestCase):
 
         self.assertEqual(len(result.opened), 3)
         self.assertFalse(any(item.get("action") == "daily_stop" for item in result.risk))
+
+    def test_us_open_time_blackout_blocks_and_cancels_pending_entries(self) -> None:
+        self.cfg = _cfg(
+            grid_max_layers=1,
+            grid_entry_order_ttl_seconds=3600,
+            grid_time_blackout_enabled=True,
+            grid_time_blackout_ny_windows=("09:25-10:30",),
+        )
+        orig_now = grid_mod._now_ms
+        try:
+            grid_mod._now_ms = lambda: int(datetime(2026, 5, 8, 13, 20, tzinfo=timezone.utc).timestamp() * 1000)
+            save_state(GridState(mode=MODE_LONG), self.state)
+            first = self._engine().step()
+            self.assertEqual(len(first.opened), 1)
+
+            grid_mod._now_ms = lambda: int(datetime(2026, 5, 8, 13, 30, tzinfo=timezone.utc).timestamp() * 1000)
+            blocked = self._engine().step()
+        finally:
+            grid_mod._now_ms = orig_now
+
+        self.assertEqual(blocked.opened, [])
+        self.assertEqual(blocked.skipped[0]["reason"], "time_blackout")
+        self.assertTrue(any(item.get("action") == "time_blackout_cancel" for item in blocked.risk))
+        cycle = self.store.recent_strategy_cycles(limit=1)[0]
+        self.assertEqual(cycle["status"], "STOPPED")
+        self.assertEqual(cycle["reason"], "time_blackout")
+        self.assertEqual(len(self.client.cancels), 1)
+
+    def test_time_blackout_uses_ny_timezone_for_dst(self) -> None:
+        self.cfg = _cfg(
+            grid_time_blackout_enabled=True,
+            grid_time_blackout_ny_windows=("09:25-10:30",),
+        )
+        may_dst = int(datetime(2026, 5, 8, 13, 30, tzinfo=timezone.utc).timestamp() * 1000)
+        winter_standard = int(datetime(2026, 1, 8, 14, 30, tzinfo=timezone.utc).timestamp() * 1000)
+        outside = int(datetime(2026, 5, 8, 12, 30, tzinfo=timezone.utc).timestamp() * 1000)
+
+        self.assertIn("NY 09:25-10:30", _time_blackout_reason(may_dst, self.cfg))
+        self.assertIn("NY 09:25-10:30", _time_blackout_reason(winter_standard, self.cfg))
+        self.assertEqual(_time_blackout_reason(outside, self.cfg), "")
 
     def test_manual_long_soft_blocks_when_price_is_near_range_top(self) -> None:
         self.cfg = _cfg(

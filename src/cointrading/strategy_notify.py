@@ -97,6 +97,7 @@ REASON_LABELS = {
     "paper_basket_tp_synced": "평단 기준 목표가 재계산",
     "entry_reanchored": "현재가 기준 실전 재주문",
     "entry_reanchor_submit_failed": "실전 재주문 실패",
+    "time_blackout": "시간대 위험 차단",
     "entry_timeout": "진입 대기 시간초과",
     "take_profit": "목표가 도달",
     "stop_loss": "손절 조건",

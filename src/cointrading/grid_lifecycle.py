@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.exchange.binance_usdm import BinanceAPIError, BinanceUSDMClient
@@ -52,6 +53,8 @@ MODE_LONG = "LONG"
 MODE_SHORT = "SHORT"
 MODE_AUTO = "AUTO"
 ACTIVE_MODES = {MODE_LONG, MODE_SHORT, MODE_AUTO}
+KST_TZ = ZoneInfo("Asia/Seoul")
+NY_TZ = ZoneInfo("America/New_York")
 
 
 def default_state_path() -> Path:
@@ -324,6 +327,23 @@ class MakerGridEngine:
                 intended_side=self._effective_side_for_state(state, market),
                 action="safeguard",
                 reason=block,
+            )
+            save_state(state, self.state_path)
+            return result
+
+        time_block = _time_blackout_reason(ts, self.config)
+        if time_block:
+            cancelled = self._cancel_pending_entries(ts, "time_blackout")
+            if cancelled:
+                result.risk.append({"action": "time_blackout_cancel", "cancelled": cancelled})
+            result.skipped.append({"reason": "time_blackout", "detail": time_block})
+            self._record_decision(
+                state=state,
+                market=market,
+                result=result,
+                intended_side=self._effective_side_for_state(state, market),
+                action="time_blackout",
+                reason=time_block,
             )
             save_state(state, self.state_path)
             return result
@@ -1553,6 +1573,46 @@ def _orderflow_confirmation_text(state: GridState, config: TradingConfig) -> str
     )
 
 
+def _time_blackout_reason(ts_ms: int, config: TradingConfig) -> str:
+    if not config.grid_time_blackout_enabled:
+        return ""
+    dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+    ny = dt.astimezone(NY_TZ)
+    for window in config.grid_time_blackout_ny_windows:
+        if _time_window_contains(ny.hour, ny.minute, window):
+            return (
+                f"시간대 차단: NY {window} "
+                f"(미국 정규장 오픈 전후 고변동 구간, 현재 KST {dt.astimezone(KST_TZ).strftime('%H:%M')})"
+            )
+    kst = dt.astimezone(KST_TZ)
+    for window in config.grid_time_blackout_kst_windows:
+        if _time_window_contains(kst.hour, kst.minute, window):
+            return f"시간대 차단: KST {window}"
+    return ""
+
+
+def _time_window_contains(hour: int, minute: int, window: str) -> bool:
+    try:
+        start, end = [part.strip() for part in window.split("-", 1)]
+        start_minute = _parse_hhmm(start)
+        end_minute = _parse_hhmm(end)
+    except ValueError:
+        return False
+    current = hour * 60 + minute
+    if start_minute <= end_minute:
+        return start_minute <= current < end_minute
+    return current >= start_minute or current < end_minute
+
+
+def _parse_hhmm(value: str) -> int:
+    hour_text, minute_text = value.split(":", 1)
+    hour = int(hour_text)
+    minute = int(minute_text)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(value)
+    return hour * 60 + minute
+
+
 def _auto_side(klines_15m: list[Kline], klines_1h: list[Kline]) -> str | None:
     ret_15m_4 = _return_from_klines(klines_15m, bars=4)
     ret_1h_3 = _return_from_klines(klines_1h, bars=3)
@@ -1978,6 +2038,10 @@ def step_result_notification_text(result: StepResult) -> str:
         elif action == "orderflow_danger_cancel":
             lines.append(
                 f"- 호가창 위험 확정: 미체결 진입 주문 {int(item.get('cancelled', 0))}개 취소"
+            )
+        elif action == "time_blackout_cancel":
+            lines.append(
+                f"- 시간대 위험 차단: 미체결 진입 주문 {int(item.get('cancelled', 0))}개 취소"
             )
         elif action.startswith("grid_"):
             lines.append(

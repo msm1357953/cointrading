@@ -212,6 +212,10 @@ Maker-grid implementation notes:
 - Filled grid layers are managed as a basket. TP is recalculated from the
   quantity-weighted average entry, not from each layer's original entry.
 - The dashboard grid/paper tables show both per-layer entry and basket average.
+- Time-risk guard is enabled by default for NY `09:25-10:30` because the local
+  5m lake showed US cash-market open is the real high-risk window; KST 21:00
+  4h-boundary was not elevated. The guard blocks/cancels pending entries only;
+  already-open positions continue to be managed by the normal grid risk logic.
 
 Auto alerts come from `funding_carry_notify.py` and
 `wick_carry_notify.py`:
@@ -266,6 +270,9 @@ COINTRADING_GRID_LIVE_ENABLED=false
 COINTRADING_GRID_SYMBOL=BTCUSDC
 COINTRADING_GRID_LEVERAGE=20
 COINTRADING_GRID_LAYER_NOTIONAL_PCT=0.05
+COINTRADING_GRID_TIME_BLACKOUT_ENABLED=true
+COINTRADING_GRID_TIME_BLACKOUT_NY_WINDOWS=09:25-10:30
+COINTRADING_GRID_TIME_BLACKOUT_KST_WINDOWS=
 COINTRADING_GRID_MAX_LAYER_NOTIONAL=1000
 COINTRADING_GRID_MAX_LAYERS=3
 COINTRADING_GRID_ENTRY_ORDER_TTL_SECONDS=600
