@@ -1,7 +1,14 @@
 import unittest
 
 from cointrading.config import TradingConfig
-from cointrading.dashboard import _cycle_table_rows, _dashboard_limit, _is_authorized, _page
+from cointrading.dashboard import (
+    _cycle_table_rows,
+    _dashboard_limit,
+    _grid_decision_action_label,
+    _grid_decision_action_tone,
+    _is_authorized,
+    _page,
+)
 
 
 class DashboardTests(unittest.TestCase):
@@ -73,6 +80,16 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(_dashboard_limit({"limit": ["500"]}), 500)
         self.assertEqual(_dashboard_limit({"limit": ["5000"]}), 1000)
         self.assertEqual(_dashboard_limit({"limit": ["bad"]}), 200)
+
+    def test_grid_decision_labels_stopped_mode_separately(self) -> None:
+        row = {"action": "observe", "reason": "mode_stopped"}
+        self.assertEqual(_grid_decision_action_label(row), "정지")
+        self.assertEqual(_grid_decision_action_tone(row), "warn")
+
+    def test_grid_decision_labels_auto_wait_separately(self) -> None:
+        row = {"action": "observe", "reason": "AUTO mode has no clear side"}
+        self.assertEqual(_grid_decision_action_label(row), "자동대기")
+        self.assertEqual(_grid_decision_action_tone(row), "muted")
 
     def test_cycle_rows_show_current_price_and_unrealized_pnl(self) -> None:
         rows = _cycle_table_rows(

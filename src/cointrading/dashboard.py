@@ -570,8 +570,8 @@ def _grid_status_summary_html(*, config: TradingConfig, grid_decisions, strategy
     if latest is not None:
         side = str(_row_get(latest, "intended_side") or _row_get(latest, "effective_side") or "")
         action = str(_row_get(latest, "action", ""))
-        latest_text = f"{_grid_action_label(action)} / {_side_label(side)}"
-        latest_tone = _grid_action_tone(action)
+        latest_text = f"{_grid_decision_action_label(latest)} / {_side_label(side)}"
+        latest_tone = _grid_decision_action_tone(latest)
         price_text = _fmt_price(_row_get(latest, "mid")) or "n/a"
         gap_text = _fmt_price(_row_get(latest, "gap_usdc")) or gap_text
         tp_text = _fmt_price(_row_get(latest, "take_profit_usdc")) or tp_text
@@ -723,24 +723,30 @@ def _grid_paper_summary_html(rows) -> str:
         if str(row["action"]) in {"risk_halt", "soft_filter", "safeguard", "active_side_lock"}
     ]
     entries = [row for row in recent if str(row["action"]) == "entry_submitted"]
+    stopped = [
+        row for row in recent
+        if str(row["action"]) == "observe" and str(row["reason"] or "") == "mode_stopped"
+    ]
     observe = [
         row for row in recent
         if str(row["action"]) in {"observe", "entry_wait", "auto_wait", "live_gate_locked"}
+        and row not in stopped
     ]
     long_danger = int(latest["orderflow_long_danger_count"] or 0)
     short_danger = int(latest["orderflow_short_danger_count"] or 0)
     price = _fmt_price(latest["mid"])
     latest_text = (
-        f"{_grid_action_label(str(latest['action']))}"
+        f"{_grid_decision_action_label(latest)}"
         f" / {_side_label(str(latest['intended_side'] or latest['effective_side'] or ''))}"
     )
     return "\n".join(
         [
-            _metric_html("최근 판단", latest_text, _grid_action_tone(str(latest["action"]))),
+            _metric_html("최근 판단", latest_text, _grid_decision_action_tone(latest)),
             _metric_html("현재가", price or "n/a", "muted"),
             _metric_html("최근 진입시도", str(len(entries)), "good" if entries else "muted"),
             _metric_html("최근 차단", str(len(blocked)), "warn" if blocked else "good"),
-            _metric_html("최근 관찰", str(len(observe)), "muted"),
+            _metric_html("최근 정지", str(len(stopped)), "warn" if stopped else "good"),
+            _metric_html("최근 대기", str(len(observe)), "muted"),
             _metric_html("호가 DANGER", f"롱 {long_danger} / 숏 {short_danger}", "warn" if long_danger or short_danger else "good"),
         ]
     )
@@ -752,7 +758,7 @@ def _grid_decision_rows_html(rows) -> str:
         f"<td>{escape(kst_from_ms(int(row['timestamp_ms'])))}</td>"
         f"<td>{escape(str(row['mode']))}</td>"
         f"<td>{escape(_side_label(str(row['intended_side'] or row['effective_side'] or '대기')))}</td>"
-        f"<td><span class=\"pill {_tone_class(_grid_action_tone(str(row['action'])))}\">{escape(_grid_action_label(str(row['action'])))}</span></td>"
+        f"<td><span class=\"pill {_tone_class(_grid_decision_action_tone(row))}\">{escape(_grid_decision_action_label(row))}</span></td>"
         f"<td>{_fmt_price(row['mid'])}</td>"
         f"<td>{_fmt_price(row['gap_usdc'])}</td>"
         f"<td>{_fmt_price(row['take_profit_usdc'])}</td>"
@@ -1909,6 +1915,16 @@ def _grid_action_label(action: str) -> str:
     }.get(action, action)
 
 
+def _grid_decision_action_label(row) -> str:
+    action = str(_row_get(row, "action", ""))
+    reason = str(_row_get(row, "reason", "") or "")
+    if action == "observe" and reason == "mode_stopped":
+        return "정지"
+    if action == "observe" and reason == "AUTO mode has no clear side":
+        return "자동대기"
+    return _grid_action_label(action)
+
+
 def _grid_action_tone(action: str) -> str:
     if action == "entry_submitted":
         return "good"
@@ -1917,9 +1933,17 @@ def _grid_action_tone(action: str) -> str:
     return "muted"
 
 
+def _grid_decision_action_tone(row) -> str:
+    action = str(_row_get(row, "action", ""))
+    reason = str(_row_get(row, "reason", "") or "")
+    if action == "observe" and reason == "mode_stopped":
+        return "warn"
+    return _grid_action_tone(action)
+
+
 def _grid_reason_label(reason: str) -> str:
     return {
-        "mode_stopped": "모드 정지",
+        "mode_stopped": "띠기 정지 상태",
         "placed missing grid entries": "부족한 겹수 진입 주문 생성",
         "grid layers already occupied": "이미 필요한 겹수 대기/보유 중",
         "AUTO mode has no clear side": "자동 방향 불명확",

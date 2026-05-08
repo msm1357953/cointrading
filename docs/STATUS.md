@@ -124,6 +124,7 @@
 - 2026-05-08: Historical 5m data check of BTCUSDC/ETHUSDC/SOLUSDC/XRPUSDC/DOGEUSDC showed KST 21:00 4h-boundary was not unusually dangerous, while NY 09:30 cash-market open was. For BTCUSDC, NY 09:30-10:00 had ~1.9x average 5m range, ~1.8x next-30m excursion, and ~4.8x large-candle frequency vs the all-day baseline. Maker-grid now has a default NY-time blackout window (`09:25-10:30`) that cancels pending entries and blocks new layers during that high-volatility open window while still managing already-open positions.
 - 2026-05-08: Maker-grid basket synchronization now updates stop prices as well as take-profit prices. Once multiple layers are open, live and regular paper grid cycles store/display a shared basket-average stop level instead of leaving stale per-layer stop prices next to the basket TP.
 - 2026-05-08: Maker-grid paper direction was aligned with the live grid mode. Regular `maker_grid_paper` and `micro_grid_paper` no longer open both long and short hypotheses at the same time; LONG/SHORT follows the manual mode, while AUTO/STOPPED shadows the current auto-selected side only. Opposite-side paper entries/positions are marked `paper_direction_changed` so the dashboard stops looking hedged.
+- 2026-05-09: Dashboard grid decision wording now separates `정지` from `자동대기` instead of showing every non-entry as generic `관찰`. This makes it clear whether paper/live grid is paused by the Telegram mode or simply waiting because the AUTO direction filter has no one-way side.
 
 ## Next Work Packets
 
