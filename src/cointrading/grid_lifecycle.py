@@ -1056,7 +1056,7 @@ def grid_recommendation_text(
     layer_notional = min(capital * cfg.grid_layer_notional_pct, cfg.grid_max_layer_notional)
     layer_margin = layer_notional / max(1, cfg.grid_leverage)
     side = market.effective_side
-    reason = "15m/1h 흐름이 같은 방향" if side else "15m/1h 흐름이 엇갈려서 대기"
+    reason = "15m/1h 다중봉 추세 필터 통과" if side else "15m/1h 다중봉 추세가 애매해서 대기"
     if market.risk_label == "HALT":
         side = None
         reason = f"과열/급변동 차단: {market.risk_reason}"
