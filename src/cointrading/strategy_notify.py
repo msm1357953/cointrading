@@ -96,6 +96,7 @@ REASON_LABELS = {
     "paper_reanchored": "현재가 기준 재배치",
     "paper_basket_tp_synced": "평단 기준 목표가 재계산",
     "paper_basket_stop_synced": "평단 기준 손절가 재계산",
+    "paper_direction_changed": "페이퍼 방향 전환 정리",
     "entry_reanchored": "현재가 기준 실전 재주문",
     "basket_stop_synced": "평단 기준 손절가 동기화",
     "entry_reanchor_submit_failed": "실전 재주문 실패",

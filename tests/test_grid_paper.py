@@ -6,6 +6,7 @@ from pathlib import Path
 
 from cointrading.config import TradingConfig
 from cointrading.grid_paper import GridPaperEngine, STRATEGY_NAME
+from cointrading.grid_lifecycle import GridState, MODE_AUTO, MODE_SHORT, save_state
 from cointrading.models import Kline
 from cointrading.storage import TradingStore
 
@@ -45,9 +46,9 @@ class FakeGridPaperClient:
         if interval == "5m":
             return _klines(79_000, 2.0, min(limit, 300), 300_000)
         if interval == "15m":
-            return _klines(79_000, 5.0, min(limit, 96), 900_000)
+            return _klines(79_000, 90.0, min(limit, 96), 900_000)
         if interval == "1h":
-            return _klines(78_000, 20.0, min(limit, 10), 3_600_000)
+            return _klines(78_000, 250.0, min(limit, 10), 3_600_000)
         return _klines(79_000, 1.0, min(limit, 10), 60_000)
 
 
@@ -75,6 +76,8 @@ class GridPaperTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.store = TradingStore(Path(self.tmp.name) / "db.sqlite")
+        self.state = Path(self.tmp.name) / "grid_state.json"
+        save_state(GridState(mode=MODE_AUTO), self.state)
         self.client = FakeGridPaperClient()
         self.cfg = _cfg()
 
@@ -82,17 +85,31 @@ class GridPaperTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _engine(self) -> GridPaperEngine:
-        return GridPaperEngine(config=self.cfg, storage=self.store, client=self.client)
+        return GridPaperEngine(
+            config=self.cfg,
+            storage=self.store,
+            client=self.client,
+            state_path=self.state,
+        )
 
-    def test_regular_grid_paper_opens_virtual_layers(self) -> None:
+    def test_regular_grid_paper_opens_auto_side_only(self) -> None:
         result = self._engine().step()
 
-        self.assertEqual(len(result.opened), 4)
+        self.assertEqual(len(result.opened), 2)
         cycles = self.store.recent_strategy_cycles(limit=10)
-        self.assertEqual(len(cycles), 4)
+        self.assertEqual(len(cycles), 2)
         self.assertTrue(all(row["strategy"] == STRATEGY_NAME for row in cycles))
         self.assertEqual({row["status"] for row in cycles}, {"ENTRY_SUBMITTED"})
-        self.assertEqual({row["side"] for row in cycles}, {"long", "short"})
+        self.assertEqual({row["side"] for row in cycles}, {"long"})
+
+    def test_regular_grid_paper_follows_manual_short_mode(self) -> None:
+        save_state(GridState(mode=MODE_SHORT), self.state)
+
+        result = self._engine().step()
+
+        self.assertEqual(len(result.opened), 2)
+        cycles = self.store.recent_strategy_cycles(limit=10)
+        self.assertEqual({row["side"] for row in cycles}, {"short"})
 
     def test_regular_grid_paper_fills_and_closes(self) -> None:
         self.cfg = _cfg(grid_max_layers=1, grid_paper_max_active_cycles=2)

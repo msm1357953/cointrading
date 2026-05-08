@@ -217,6 +217,10 @@ Maker-grid implementation notes:
   5m lake showed US cash-market open is the real high-risk window; KST 21:00
   4h-boundary was not elevated. The guard blocks/cancels pending entries only;
   already-open positions continue to be managed by the normal grid risk logic.
+- Paper grid engines follow the live grid direction model. They do not open
+  long and short hypotheses together anymore: manual LONG/SHORT is respected,
+  and AUTO/STOPPED shadows only the current auto-selected side. Opposite-side
+  active paper rows are stopped with `paper_direction_changed`.
 
 Auto alerts come from `funding_carry_notify.py` and
 `wick_carry_notify.py`:

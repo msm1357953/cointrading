@@ -15,6 +15,12 @@ from cointrading.config import TradingConfig
 from cointrading.exchange.binance_usdm import BinanceUSDMClient
 from cointrading.grid_lifecycle import (
     MakerGridEngine,
+    MODE_AUTO,
+    MODE_LONG,
+    MODE_SHORT,
+    MODE_STOPPED,
+    default_state_path,
+    load_state,
     _side_orderflow_status,
     _soft_filter_reasons,
 )
@@ -52,10 +58,12 @@ class GridPaperEngine:
         config: TradingConfig,
         storage: TradingStore,
         client: BinanceUSDMClient,
+        state_path=None,
     ) -> None:
         self.config = config
         self.storage = storage
         self.client = client
+        self.state_path = state_path or default_state_path()
 
     def step(self) -> GridPaperStepResult:
         ts = now_ms()
@@ -69,9 +77,14 @@ class GridPaperEngine:
             storage=self.storage,
             client=self.client,
         )._load_market()
+        sides = self._candidate_sides(market)
+        result.managed.extend(self._stop_disallowed_cycles(sides, market, ts))
         result.managed.extend(self._manage_existing_cycles(market, ts))
         if market.risk_label == "HALT":
             result.skipped.append({"reason": "risk_halt", "detail": market.risk_reason})
+            return result
+        if not sides:
+            result.skipped.append({"reason": "auto_wait", "detail": "paper has no clear one-way side"})
             return result
 
         active = self._active_cycles()
@@ -81,7 +94,7 @@ class GridPaperEngine:
             result.skipped.append({"reason": "active_cap", "active": len(active)})
             return result
 
-        for side in ("long", "short"):
+        for side in sides:
             block_reason = self._side_block_reason(side, market)
             if block_reason:
                 result.skipped.append({"reason": "side_block", "side": side, "detail": block_reason})
@@ -104,6 +117,68 @@ class GridPaperEngine:
                 active_keys.add(key)
                 remaining_slots -= 1
         return result
+
+    def _candidate_sides(self, market) -> list[str]:
+        state = load_state(self.state_path)
+        if state.mode == MODE_LONG:
+            return ["long"]
+        if state.mode == MODE_SHORT:
+            return ["short"]
+        if state.mode in {MODE_AUTO, MODE_STOPPED}:
+            open_sides = {
+                str(cycle["side"])
+                for cycle in self._active_cycles()
+                if str(cycle["status"]) == STATUS_OPEN
+            }
+            if len(open_sides) == 1:
+                return [next(iter(open_sides))]
+            if market.effective_side in {"long", "short"}:
+                return [market.effective_side]
+        return []
+
+    def _stop_disallowed_cycles(self, allowed_sides: list[str], market, ts: int) -> list[dict[str, Any]]:
+        allowed = set(allowed_sides)
+        managed: list[dict[str, Any]] = []
+        for cycle in self._active_cycles():
+            side = str(cycle["side"])
+            if side in allowed:
+                continue
+            status = str(cycle["status"])
+            if status == STATUS_ENTRY_SUBMITTED:
+                self.storage.update_strategy_cycle(
+                    int(cycle["id"]),
+                    status=STATUS_STOPPED,
+                    reason="paper_direction_changed",
+                    closed_ms=ts,
+                    last_mid_price=market.mid,
+                    realized_pnl=0.0,
+                    timestamp_ms=ts,
+                )
+                managed.append({
+                    "action": "paper_direction_changed",
+                    "cycle_id": int(cycle["id"]),
+                    "side": side,
+                    "status": status,
+                })
+            elif status == STATUS_OPEN and allowed:
+                pnl = _cycle_pnl(cycle, market.mid, self.config.maker_fee_rate)
+                self.storage.update_strategy_cycle(
+                    int(cycle["id"]),
+                    status=STATUS_STOPPED,
+                    reason="paper_direction_changed",
+                    closed_ms=ts,
+                    last_mid_price=market.mid,
+                    realized_pnl=pnl,
+                    timestamp_ms=ts,
+                )
+                managed.append({
+                    "action": "paper_direction_changed",
+                    "cycle_id": int(cycle["id"]),
+                    "side": side,
+                    "status": status,
+                    "realized_pnl": pnl,
+                })
+        return managed
 
     def _active_cycles(self) -> list[Any]:
         return [

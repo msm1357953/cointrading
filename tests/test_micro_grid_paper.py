@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from cointrading.config import TradingConfig
+from cointrading.grid_lifecycle import GridState, MODE_AUTO, MODE_SHORT, save_state
 from cointrading.micro_grid_paper import MicroGridPaperEngine, STRATEGY_NAME
 from cointrading.models import Kline
 from cointrading.storage import TradingStore
@@ -44,9 +45,9 @@ class FakeMarketClient:
         if interval == "5m":
             return _klines(79_000, 2.0, min(limit, 300), 300_000)
         if interval == "15m":
-            return _klines(79_000, 10.0, min(limit, 96), 900_000)
+            return _klines(79_000, 90.0, min(limit, 96), 900_000)
         if interval == "1h":
-            return _klines(78_000, 20.0, min(limit, 10), 3_600_000)
+            return _klines(78_000, 250.0, min(limit, 10), 3_600_000)
         return _klines(79_000, 1.0, min(limit, 10), 60_000)
 
 
@@ -70,6 +71,8 @@ class MicroGridPaperTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.store = TradingStore(Path(self.tmp.name) / "db.sqlite")
+        self.state = Path(self.tmp.name) / "grid_state.json"
+        save_state(GridState(mode=MODE_AUTO), self.state)
         self.client = FakeMarketClient()
         self.cfg = _cfg()
 
@@ -77,17 +80,31 @@ class MicroGridPaperTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _engine(self) -> MicroGridPaperEngine:
-        return MicroGridPaperEngine(config=self.cfg, storage=self.store, client=self.client)
+        return MicroGridPaperEngine(
+            config=self.cfg,
+            storage=self.store,
+            client=self.client,
+            state_path=self.state,
+        )
 
-    def test_step_submits_virtual_entries_without_exchange_orders(self) -> None:
+    def test_step_submits_auto_side_only_without_exchange_orders(self) -> None:
         result = self._engine().step()
 
-        self.assertEqual(len(result.opened), 4)
+        self.assertEqual(len(result.opened), 2)
         cycles = self.store.recent_strategy_cycles(limit=10)
-        self.assertEqual(len(cycles), 4)
+        self.assertEqual(len(cycles), 2)
         self.assertTrue(all(row["strategy"] == STRATEGY_NAME for row in cycles))
         self.assertEqual({row["status"] for row in cycles}, {"ENTRY_SUBMITTED"})
-        self.assertEqual({row["side"] for row in cycles}, {"long", "short"})
+        self.assertEqual({row["side"] for row in cycles}, {"long"})
+
+    def test_step_follows_manual_short_mode(self) -> None:
+        save_state(GridState(mode=MODE_SHORT), self.state)
+
+        result = self._engine().step()
+
+        self.assertEqual(len(result.opened), 2)
+        cycles = self.store.recent_strategy_cycles(limit=10)
+        self.assertEqual({row["side"] for row in cycles}, {"short"})
 
     def test_virtual_entry_can_fill_and_close_at_take_profit(self) -> None:
         self.cfg = _cfg(
