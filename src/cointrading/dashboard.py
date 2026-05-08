@@ -153,7 +153,11 @@ def _snapshot(
     symbol: str | None,
     limit: int = DEFAULT_DASHBOARD_ROW_LIMIT,
 ) -> dict[str, str]:
-    rows = store.list_signals(symbol=symbol, symbols=config.scalp_symbols if not symbol else None)
+    rows = store.recent_signals(
+        symbol=symbol,
+        symbols=config.scalp_symbols if not symbol else None,
+        limit=limit,
+    )
     report = scalp_report_rows_text(
         rows,
         symbol=symbol,

@@ -469,6 +469,32 @@ class TradingStore:
         with self.connect() as connection:
             return [_signal_row_to_report(row) for row in connection.execute(sql, params)]
 
+    def recent_signals(
+        self,
+        symbol: str | None = None,
+        symbols: Iterable[str] | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, str]]:
+        where: list[str] = []
+        params: list[Any] = []
+        if symbol:
+            where.append("symbol=?")
+            params.append(symbol.upper())
+        elif symbols is not None:
+            active = [item.upper() for item in symbols]
+            if not active:
+                return []
+            where.append(f"symbol IN ({', '.join('?' for _ in active)})")
+            params.extend(active)
+        sql = "SELECT * FROM signals"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY timestamp_ms DESC LIMIT ?"
+        params.append(limit)
+        with self.connect() as connection:
+            rows = list(connection.execute(sql, params))
+        return [_signal_row_to_report(row) for row in reversed(rows)]
+
     def pending_score_rows(
         self,
         current_timestamp_ms: int | None = None,
