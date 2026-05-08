@@ -1,6 +1,8 @@
 import tempfile
+import time
 import unittest
 from dataclasses import replace
+import json
 from pathlib import Path
 
 from cointrading.config import TelegramConfig, TradingConfig
@@ -41,6 +43,7 @@ def _cfg(**overrides) -> TradingConfig:
         initial_equity=1000.0,
         maker_fee_rate=0.0,
         taker_fee_rate=0.0004,
+        orderflow_guard_enabled=False,
     )
     return replace(base, **overrides)
 
@@ -214,6 +217,31 @@ class GridEngineTests(unittest.TestCase):
         self.assertIn("예상 주문 레벨", text)
         self.assertIn("시작 명령", text)
         self.assertIn("20x", text)
+
+    def test_orderflow_danger_blocks_new_long_entries(self) -> None:
+        orderflow_path = Path(self.tmp.name) / "orderflow.json"
+        orderflow_path.write_text(json.dumps({
+            "symbol": "BTCUSDC",
+            "updated_ms": int(time.time() * 1000),
+            "status": "DANGER",
+            "long_status": "DANGER",
+            "short_status": "NORMAL",
+            "reason": "롱 DANGER: 내 쪽 0.1% depth 급감 70%",
+            "long_reason": "내 쪽 0.1% depth 급감 70%",
+            "short_reason": "정상",
+        }))
+        self.cfg = _cfg(
+            orderflow_guard_enabled=True,
+            orderflow_guard_path=str(orderflow_path),
+        )
+        save_state(GridState(mode=MODE_LONG), self.state)
+
+        result = self._engine().step()
+
+        self.assertEqual(result.opened, [])
+        self.assertEqual(self.client.orders, [])
+        self.assertEqual(result.skipped[0]["reason"], "risk_halt")
+        self.assertIn("orderflow", result.skipped[0]["detail"])
 
 
 class TelegramGridTests(unittest.TestCase):

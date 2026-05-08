@@ -276,6 +276,24 @@ class TradingConfig:
     grid_overheat_1h_return_pct: float = 0.0130
     grid_atr_spike_multiple: float = 2.5
     grid_big_candle_atr_multiple: float = 1.5
+    # BTCUSDC orderflow guard. A separate websocket service writes a tiny JSON
+    # snapshot once per second; grid reads it before placing maker entries.
+    orderflow_guard_enabled: bool = True
+    orderflow_guard_symbol: str = "BTCUSDC"
+    orderflow_guard_path: str = "data/orderflow_guard_latest.json"
+    orderflow_guard_window_seconds: float = 5.0
+    orderflow_guard_write_interval_seconds: float = 1.0
+    orderflow_guard_stale_seconds: float = 10.0
+    orderflow_guard_spread_danger_bps: float = 1.5
+    orderflow_guard_depth_drop_caution: float = 0.35
+    orderflow_guard_depth_drop_danger: float = 0.50
+    orderflow_guard_imbalance_caution: float = 0.80
+    orderflow_guard_imbalance_danger: float = 0.65
+    orderflow_guard_taker_ratio_caution: float = 0.60
+    orderflow_guard_taker_ratio_danger: float = 0.70
+    orderflow_guard_min_trade_notional_usdc: float = 5000.0
+    orderflow_guard_velocity_caution_bps: float = 4.0
+    orderflow_guard_velocity_danger_bps: float = 8.0
     # BNB fee-discount fuel manager. This is intentionally separate from
     # strategy logic: it only buys/transfers small BNB amounts for fee payment.
     bnb_fee_topup_enabled: bool = False
@@ -851,6 +869,71 @@ class TradingConfig:
             grid_big_candle_atr_multiple=_get_float(
                 "COINTRADING_GRID_BIG_CANDLE_ATR_MULTIPLE",
                 cls.grid_big_candle_atr_multiple,
+            ),
+            orderflow_guard_enabled=_get_bool(
+                "COINTRADING_ORDERFLOW_GUARD_ENABLED",
+                cls.orderflow_guard_enabled,
+            ),
+            orderflow_guard_symbol=_get_str(
+                "COINTRADING_ORDERFLOW_GUARD_SYMBOL",
+                cls.orderflow_guard_symbol,
+            ).upper()
+            or cls.orderflow_guard_symbol,
+            orderflow_guard_path=_get_str(
+                "COINTRADING_ORDERFLOW_GUARD_PATH",
+                cls.orderflow_guard_path,
+            ),
+            orderflow_guard_window_seconds=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_WINDOW_SECONDS",
+                cls.orderflow_guard_window_seconds,
+            ),
+            orderflow_guard_write_interval_seconds=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_WRITE_INTERVAL_SECONDS",
+                cls.orderflow_guard_write_interval_seconds,
+            ),
+            orderflow_guard_stale_seconds=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_STALE_SECONDS",
+                cls.orderflow_guard_stale_seconds,
+            ),
+            orderflow_guard_spread_danger_bps=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_SPREAD_DANGER_BPS",
+                cls.orderflow_guard_spread_danger_bps,
+            ),
+            orderflow_guard_depth_drop_caution=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_DEPTH_DROP_CAUTION",
+                cls.orderflow_guard_depth_drop_caution,
+            ),
+            orderflow_guard_depth_drop_danger=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_DEPTH_DROP_DANGER",
+                cls.orderflow_guard_depth_drop_danger,
+            ),
+            orderflow_guard_imbalance_caution=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_IMBALANCE_CAUTION",
+                cls.orderflow_guard_imbalance_caution,
+            ),
+            orderflow_guard_imbalance_danger=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_IMBALANCE_DANGER",
+                cls.orderflow_guard_imbalance_danger,
+            ),
+            orderflow_guard_taker_ratio_caution=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_TAKER_RATIO_CAUTION",
+                cls.orderflow_guard_taker_ratio_caution,
+            ),
+            orderflow_guard_taker_ratio_danger=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_TAKER_RATIO_DANGER",
+                cls.orderflow_guard_taker_ratio_danger,
+            ),
+            orderflow_guard_min_trade_notional_usdc=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_MIN_TRADE_NOTIONAL_USDC",
+                cls.orderflow_guard_min_trade_notional_usdc,
+            ),
+            orderflow_guard_velocity_caution_bps=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_VELOCITY_CAUTION_BPS",
+                cls.orderflow_guard_velocity_caution_bps,
+            ),
+            orderflow_guard_velocity_danger_bps=_get_float(
+                "COINTRADING_ORDERFLOW_GUARD_VELOCITY_DANGER_BPS",
+                cls.orderflow_guard_velocity_danger_bps,
             ),
             bnb_fee_topup_enabled=_get_bool(
                 "COINTRADING_BNB_FEE_TOPUP_ENABLED", cls.bnb_fee_topup_enabled

@@ -229,6 +229,11 @@ class TelegramCommandProcessor:
         "grid_status": "grid_status",
         "띠기추천": "grid_recommend",
         "grid_recommend": "grid_recommend",
+        "호가": "orderflow",
+        "호가창": "orderflow",
+        "호가상태": "orderflow",
+        "오더플로우": "orderflow",
+        "orderflow": "orderflow",
     }
 
     def __init__(
@@ -314,6 +319,8 @@ class TelegramCommandProcessor:
             return self.grid_status_text()
         if command == "grid_recommend":
             return self.grid_recommend_text()
+        if command == "orderflow":
+            return self.orderflow_text()
         if command == "pause":
             self.state.paused = True
             return "정지했습니다. 이후 자동매매 루프는 신규 진입을 거부해야 합니다."
@@ -362,6 +369,7 @@ class TelegramCommandProcessor:
                 "띠기 숏 시작    - 숏 grid ON",
                 "띠기 자동 시작  - 장세 기반 LONG/SHORT 자동 선택",
                 "띠기 정지       - 신규 진입 정지",
+                "호가창          - BTCUSDC 100ms orderflow 가드 상태",
                 "",
                 "■ 시장 데이터",
                 "장세       - 매크로 regime 분류",
@@ -446,8 +454,9 @@ class TelegramCommandProcessor:
                 "■ 띠기 maker grid",
                 f"  모드={grid_state.mode}  활성 주문/포지션={grid_open}  오늘PnL={grid_state.daily_realized_pnl:+.4f}",
                 f"  라이브: {'🔴 ARMED' if grid_live_armed(cfg) else '잠김'}  설정={cfg.grid_symbol} {cfg.grid_leverage}x",
+                f"  호가창 센서: {'ON' if cfg.orderflow_guard_enabled else 'OFF'}",
                 "",
-                "자세한 정보: '펀딩' / '펀딩보고' / '꼬리' / '꼬리보고' / '띠기 추천'",
+                "자세한 정보: '펀딩' / '펀딩보고' / '꼬리' / '꼬리보고' / '띠기 추천' / '호가창'",
             ]
         )
 
@@ -1199,6 +1208,11 @@ class TelegramCommandProcessor:
         from cointrading.grid_lifecycle import set_grid_mode_text
 
         return set_grid_mode_text(mode, config=self.trading_config)
+
+    def orderflow_text(self) -> str:
+        from cointrading.orderflow_guard import orderflow_guard_text
+
+        return orderflow_guard_text(config=self.trading_config)
 
     # ----- end grid -----
 

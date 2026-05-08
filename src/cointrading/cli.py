@@ -254,6 +254,13 @@ def main(argv: list[str] | None = None) -> None:
     grid_notify_parser = subparsers.add_parser("grid-step-notify")
     grid_notify_parser.add_argument("--state-path", type=Path, default=Path("data/grid_state.json"))
 
+    orderflow_guard_parser = subparsers.add_parser("orderflow-guard")
+    orderflow_guard_parser.add_argument("--symbol", default=None)
+    orderflow_guard_parser.add_argument("--output", type=Path)
+
+    orderflow_status_parser = subparsers.add_parser("orderflow-status")
+    orderflow_status_parser.add_argument("--path", type=Path)
+
     strategy_evaluate_parser = subparsers.add_parser("strategy-evaluate")
     strategy_evaluate_parser.add_argument("--db-path", type=Path, default=default_db_path())
     strategy_evaluate_parser.add_argument("--limit", type=int, default=25)
@@ -556,6 +563,12 @@ def main(argv: list[str] | None = None) -> None:
         from cointrading.grid_lifecycle import run_step_and_notify
         result = run_step_and_notify(state_path=args.state_path)
         print(json.dumps(result, indent=2, default=str))
+    elif args.command == "orderflow-guard":
+        from cointrading.orderflow_guard import run_guard_forever_cmd
+        run_guard_forever_cmd(symbol=args.symbol, output=args.output)
+    elif args.command == "orderflow-status":
+        from cointrading.orderflow_guard import orderflow_guard_text
+        print(orderflow_guard_text(path=args.path))
     elif args.command == "trade-monitor":
         from cointrading.live_trade_monitor import run_monitor
         result = run_monitor(state_path=args.state_path,

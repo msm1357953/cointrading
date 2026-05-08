@@ -1,3 +1,6 @@
+from dataclasses import replace
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -244,6 +247,26 @@ class TelegramCommandTests(unittest.TestCase):
         reply = processor.handle_text("123", "BNB 보충 15")
         self.assertIn("BNB 보충", reply)
         self.assertIn("dry_run", reply)
+
+    def test_orderflow_command_reports_guard_status(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            processor = TelegramCommandProcessor(
+                TelegramConfig(
+                    allowed_chat_ids=frozenset({"123"}),
+                    commands_enabled=True,
+                ),
+                replace(
+                    TradingConfig(),
+                    orderflow_guard_enabled=True,
+                    orderflow_guard_path=str(Path(td) / "missing.json"),
+                ),
+                TelegramBotState(),
+                exchange_client=FakeExchangeClient(),
+            )
+            reply = processor.handle_text("123", "호가창")
+
+        self.assertIn("호가창/orderflow 상태", reply)
+        self.assertIn("센서 파일 없음", reply)
 
     def test_market_command_reads_latest_regime_rows(self) -> None:
         processor = TelegramCommandProcessor(

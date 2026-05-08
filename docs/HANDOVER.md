@@ -1,6 +1,6 @@
 # Project Handover
 
-Last updated: **2026-05-05** by Claude Opus 4.7 (1M).
+Last updated: **2026-05-08** by Codex.
 
 This document is the entry point for any future agent (Claude or otherwise)
 picking up this project. Read it before doing anything else.
@@ -40,6 +40,7 @@ GCP project `seokmin-494312`, VM `cointrading-vm` (asia-northeast3-a, IP
 | `cointrading-telegram.service` | Korean command bot |
 | `cointrading-dashboard.service` | SSE dashboard |
 | `cointrading-grid-engine.timer` (1m) | BTCUSDC maker-grid "띠기"; dormant until Telegram mode is LONG/SHORT/AUTO |
+| `cointrading-orderflow-guard.service` | BTCUSDC 100ms depth/trade websocket guard for maker-grid entry safety |
 
 **Disabled (Phase 1 cleanup, do NOT re-enable without rationale):**
 `tactical-paper`, `tactical-live`, `strategy-evaluate`, `tactical-radar-notify`,
@@ -198,6 +199,7 @@ Active commands (Korean):
 - `장세`, `시장상황 BTCUSDC`, `주문`, `포지션`
 - `계좌`, `위험`, `수수료`, `BNB`, `BNB 보충`, `가격`
 - `띠기 추천`, `띠기 상태`, `띠기 롱 시작`, `띠기 숏 시작`, `띠기 자동 시작`, `띠기 정지`
+- `호가창` / `오더플로우` — BTCUSDC websocket orderflow guard 상태. `DANGER`/stale/missing이면 maker-grid 신규 진입을 막는다.
 - `정지` / `재개`
 
 Auto alerts come from `funding_carry_notify.py` and
@@ -265,6 +267,22 @@ COINTRADING_GRID_REDUCE_LOSS_PCT=0.0045
 COINTRADING_GRID_STOP_LOSS_PCT=0.007
 COINTRADING_GRID_DAILY_LOSS_PCT=0.01
 COINTRADING_GRID_MAX_ORDERS_PER_DAY=12
+
+# BTCUSDC orderflow guard for maker-grid.
+COINTRADING_ORDERFLOW_GUARD_ENABLED=true
+COINTRADING_ORDERFLOW_GUARD_SYMBOL=BTCUSDC
+COINTRADING_ORDERFLOW_GUARD_PATH=data/orderflow_guard_latest.json
+COINTRADING_ORDERFLOW_GUARD_WINDOW_SECONDS=5
+COINTRADING_ORDERFLOW_GUARD_STALE_SECONDS=10
+COINTRADING_ORDERFLOW_GUARD_SPREAD_DANGER_BPS=1.5
+COINTRADING_ORDERFLOW_GUARD_DEPTH_DROP_CAUTION=0.35
+COINTRADING_ORDERFLOW_GUARD_DEPTH_DROP_DANGER=0.50
+COINTRADING_ORDERFLOW_GUARD_IMBALANCE_CAUTION=0.80
+COINTRADING_ORDERFLOW_GUARD_IMBALANCE_DANGER=0.65
+COINTRADING_ORDERFLOW_GUARD_TAKER_RATIO_CAUTION=0.60
+COINTRADING_ORDERFLOW_GUARD_TAKER_RATIO_DANGER=0.70
+COINTRADING_ORDERFLOW_GUARD_VELOCITY_CAUTION_BPS=4
+COINTRADING_ORDERFLOW_GUARD_VELOCITY_DANGER_BPS=8
 ```
 
 BNB fee top-up flow: USD-M futures USDC → spot USDC → spot `BNBUSDC`
@@ -293,6 +311,7 @@ src/cointrading/
   wick_lifecycle.py              # Strategy 2 engine (paper + live)
   wick_carry_notify.py           # Telegram + state for Strategy 2
   grid_lifecycle.py              # BTCUSDC maker-grid "띠기" lifecycle
+  orderflow_guard.py             # websocket depth/trade guard for maker-grid
   live_execution.py              # shared live order-flow primitives
 
   research/

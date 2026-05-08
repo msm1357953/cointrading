@@ -32,6 +32,7 @@ from cointrading.live_execution import (
     query_live_order_status,
 )
 from cointrading.models import Kline, OrderIntent
+from cointrading.orderflow_guard import load_latest_snapshot
 from cointrading.storage import TradingStore, default_db_path, kst_from_ms, now_ms as store_now_ms
 from cointrading.telegram_bot import TelegramClient, TelegramConfigError
 
@@ -167,6 +168,11 @@ class GridMarket:
     effective_side: str | None
     risk_label: str
     risk_reason: str
+    orderflow_status: str = "UNKNOWN"
+    orderflow_long_status: str = "UNKNOWN"
+    orderflow_short_status: str = "UNKNOWN"
+    orderflow_reason: str = ""
+    orderflow_age_seconds: float | None = None
 
 
 @dataclass
@@ -250,7 +256,7 @@ class MakerGridEngine:
             result.skipped.append({
                 "reason": "risk_halt",
                 "side": side,
-                "detail": market.risk_reason,
+                "detail": self._side_halt_reason(side, market),
             })
             save_state(state, self.state_path)
             return result
@@ -312,6 +318,7 @@ class MakerGridEngine:
             risk_reason = ""
 
         auto_side = _auto_side(klines_15m, klines_1h)
+        orderflow = load_latest_snapshot(self.config)
         return GridMarket(
             bid=bid,
             ask=ask,
@@ -326,10 +333,24 @@ class MakerGridEngine:
             effective_side=auto_side,
             risk_label=risk_label,
             risk_reason=risk_reason,
+            orderflow_status=orderflow.status,
+            orderflow_long_status=orderflow.long_status,
+            orderflow_short_status=orderflow.short_status,
+            orderflow_reason=orderflow.reason,
+            orderflow_age_seconds=orderflow.age_seconds,
         )
 
     def _side_halted(self, side: str, market: GridMarket) -> bool:
         if market.risk_label == "HALT":
+            return True
+        side_orderflow_status = (
+            market.orderflow_long_status if side == "long" else market.orderflow_short_status
+        )
+        if self.config.orderflow_guard_enabled and side_orderflow_status in {
+            "DANGER",
+            "STALE",
+            "UNKNOWN",
+        }:
             return True
         if side == "long":
             return (
@@ -340,6 +361,30 @@ class MakerGridEngine:
             market.ret_15m >= self.config.grid_overheat_15m_return_pct
             or market.ret_1h >= self.config.grid_overheat_1h_return_pct
         )
+
+    def _side_halt_reason(self, side: str, market: GridMarket) -> str:
+        if market.risk_reason:
+            return market.risk_reason
+        side_orderflow_status = (
+            market.orderflow_long_status if side == "long" else market.orderflow_short_status
+        )
+        if self.config.orderflow_guard_enabled and side_orderflow_status in {
+            "DANGER",
+            "STALE",
+            "UNKNOWN",
+        }:
+            return f"orderflow {side_orderflow_status}: {market.orderflow_reason}"
+        if side == "long":
+            if market.ret_15m <= -self.config.grid_overheat_15m_return_pct:
+                return f"15m adverse move {market.ret_15m * 100:+.2f}%"
+            if market.ret_1h <= -self.config.grid_overheat_1h_return_pct:
+                return f"1h adverse move {market.ret_1h * 100:+.2f}%"
+        else:
+            if market.ret_15m >= self.config.grid_overheat_15m_return_pct:
+                return f"15m adverse move {market.ret_15m * 100:+.2f}%"
+            if market.ret_1h >= self.config.grid_overheat_1h_return_pct:
+                return f"1h adverse move {market.ret_1h * 100:+.2f}%"
+        return "risk halt"
 
     def _effective_side_for_state(self, state: GridState, market: GridMarket) -> str | None:
         if state.mode == MODE_LONG:
@@ -524,6 +569,11 @@ class MakerGridEngine:
         occupied = self._occupied_levels(side)
         max_layers = self.config.grid_max_layers
         if market.risk_label != "NORMAL":
+            max_layers = min(max_layers, 1)
+        side_orderflow_status = (
+            market.orderflow_long_status if side == "long" else market.orderflow_short_status
+        )
+        if self.config.orderflow_guard_enabled and side_orderflow_status == "CAUTION":
             max_layers = min(max_layers, 1)
         events: list[dict[str, Any]] = []
         if len(occupied) >= max_layers:
@@ -1024,9 +1074,23 @@ def grid_status_text(
             f"  ATR        : 5m {market.atr_5m:.2f} / 24h중앙 {market.atr_5m_median_24h:.2f}",
             f"  변동       : 15m {market.ret_15m * 100:+.2f}% / 1h {market.ret_1h * 100:+.2f}%",
             f"  AUTO 판단  : {market.effective_side or '대기'}",
+            (
+                "  호가창     : "
+                f"전체 {market.orderflow_status}, 롱 {market.orderflow_long_status}, "
+                f"숏 {market.orderflow_short_status}, age "
+                f"{market.orderflow_age_seconds:.1f}s"
+                if market.orderflow_age_seconds is not None
+                else (
+                    "  호가창     : "
+                    f"전체 {market.orderflow_status}, 롱 {market.orderflow_long_status}, "
+                    f"숏 {market.orderflow_short_status}"
+                )
+            ),
         ])
         if market.risk_reason:
             lines.append(f"  위험       : {market.risk_label} - {market.risk_reason}")
+        if market.orderflow_reason and market.orderflow_status != "NORMAL":
+            lines.append(f"  호가 사유  : {market.orderflow_reason}")
     elif market_error:
         lines.append(f"  시장 조회 오류: {market_error}")
     lines.extend([
@@ -1060,6 +1124,15 @@ def grid_recommendation_text(
     if market.risk_label == "HALT":
         side = None
         reason = f"과열/급변동 차단: {market.risk_reason}"
+    if side and cfg.orderflow_guard_enabled:
+        side_orderflow_status = (
+            market.orderflow_long_status if side == "long" else market.orderflow_short_status
+        )
+        if side_orderflow_status in {"DANGER", "STALE", "UNKNOWN"}:
+            side = None
+            reason = f"호가창 차단: {market.orderflow_reason}"
+        elif side_orderflow_status == "CAUTION":
+            reason += f" / 호가창 주의: {market.orderflow_reason}"
 
     lines = [
         "■ 띠기 추천",
@@ -1070,6 +1143,11 @@ def grid_recommendation_text(
         f"최대 겹수: {cfg.grid_max_layers}개, 총 명목 최대 약 {layer_notional * cfg.grid_max_layers:.2f} USDC",
         f"변동: 15m {market.ret_15m * 100:+.2f}% / 1h {market.ret_1h * 100:+.2f}%",
         f"ATR: 5m {market.atr_5m:.2f}, 24h 중앙 {market.atr_5m_median_24h:.2f}",
+        (
+            "호가창: "
+            f"전체 {market.orderflow_status}, 롱 {market.orderflow_long_status}, "
+            f"숏 {market.orderflow_short_status}"
+        ),
     ]
     if side:
         lines.extend(["", "예상 주문 레벨:"])
