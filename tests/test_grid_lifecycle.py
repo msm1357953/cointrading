@@ -269,6 +269,14 @@ class GridEngineTests(unittest.TestCase):
         self.assertEqual(result.skipped[0]["reason"], "risk_halt")
         self.assertIn("orderflow", result.skipped[0]["detail"])
 
+    def test_daily_realized_loss_is_accounting_not_entry_stop(self) -> None:
+        save_state(GridState(mode=MODE_LONG, daily_realized_pnl=-999.0), self.state)
+
+        result = self._engine().step()
+
+        self.assertEqual(len(result.opened), 3)
+        self.assertFalse(any(item.get("action") == "daily_stop" for item in result.risk))
+
     def test_manual_long_soft_blocks_when_price_is_near_range_top(self) -> None:
         self.cfg = _cfg(
             grid_position_filter_enabled=True,

@@ -146,9 +146,6 @@ def safeguard_block_reason(state: GridState, config: TradingConfig) -> str | Non
         return "grid disabled"
     if state.mode not in ACTIVE_MODES:
         return "grid mode STOPPED"
-    daily_loss_cap = config.initial_equity * config.grid_daily_loss_pct
-    if state.daily_realized_pnl <= -daily_loss_cap:
-        return f"daily loss cap reached ({state.daily_realized_pnl:+.2f} <= -{daily_loss_cap:.2f})"
     if state.consecutive_losses >= config.grid_max_consecutive_losses:
         return f"{state.consecutive_losses} consecutive losses"
     if state.daily_order_count >= config.grid_max_orders_per_day:
@@ -456,13 +453,6 @@ class MakerGridEngine:
         unrealized = self._grid_unrealized_pnl(market.mid)
         loss_pct = (-unrealized / capital) if unrealized < 0 and capital > 0 else 0.0
         events: list[dict[str, Any]] = []
-        if state.daily_realized_pnl <= -capital * self.config.grid_daily_loss_pct:
-            state.mode = MODE_STOPPED
-            state.paused_reason = f"daily loss {state.daily_realized_pnl:+.2f}"
-            cancelled = self._cancel_pending_entries(ts, "daily_loss_cap")
-            closed = self._close_all_open_cycles(market.mid, ts, "daily_loss_cap", state)
-            events.append({"action": "daily_stop", "cancelled": cancelled, "closed": closed})
-            return events
         if loss_pct >= self.config.grid_stop_loss_pct:
             state.mode = MODE_STOPPED
             state.paused_reason = f"grid stop loss {loss_pct:.2%}"
@@ -1560,7 +1550,7 @@ def step_result_notification_text(result: StepResult) -> str:
                 f"평단={float(item.get('avg_entry', 0)):.2f} "
                 f"TP={float(item.get('target', 0)):.2f}"
             )
-        elif action.startswith("grid_") or action in {"daily_stop"}:
+        elif action.startswith("grid_"):
             lines.append(
                 f"- 위험조치: {action} unreal={float(item.get('unrealized', 0)):+.4f} "
                 f"loss={float(item.get('loss_pct', 0)):.2%}"

@@ -278,7 +278,6 @@ class TradingConfig:
     grid_warning_loss_pct: float = 0.0025
     grid_reduce_loss_pct: float = 0.0045
     grid_stop_loss_pct: float = 0.0070
-    grid_daily_loss_pct: float = 0.0100
     grid_max_consecutive_losses: int = 3
     grid_max_orders_per_day: int = 12
     grid_overheat_15m_return_pct: float = 0.0070
@@ -888,9 +887,6 @@ class TradingConfig:
             ),
             grid_stop_loss_pct=_get_float(
                 "COINTRADING_GRID_STOP_LOSS_PCT", cls.grid_stop_loss_pct
-            ),
-            grid_daily_loss_pct=_get_float(
-                "COINTRADING_GRID_DAILY_LOSS_PCT", cls.grid_daily_loss_pct
             ),
             grid_max_consecutive_losses=_get_int(
                 "COINTRADING_GRID_MAX_CONSECUTIVE_LOSSES",
