@@ -399,6 +399,12 @@ class TradingStore:
                     )
                 """
             )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strategy_evaluations_eval_order
+                    ON strategy_evaluations(evaluated_ms DESC, decision ASC, avg_pnl_bps DESC)
+                """
+            )
 
     def insert_signal(self, signal: ScalpSignal, timestamp_ms: int | None = None) -> int:
         ts = timestamp_ms or now_ms()

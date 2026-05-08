@@ -169,7 +169,7 @@ def _snapshot(
     active_scalp_cycles = [row for row in scalp_cycles if _is_active_status(row["status"])]
     active_strategy_cycles = [row for row in strategy_cycles if _is_active_status(row["status"])]
     strategy_rows = store.latest_strategy_evaluations(limit=limit)
-    latest_strategy_batch = store.latest_strategy_batch()
+    latest_strategy_batch = store.latest_strategy_batch(limit=limit)
     market_regime_rows = store.latest_market_regimes(symbols=config.scalp_symbols, limit=limit)
     market_context_rows = store.latest_market_contexts(symbols=config.scalp_symbols, limit=limit)
     grid_decisions = store.recent_grid_decisions(limit=limit)
