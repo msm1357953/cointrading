@@ -449,7 +449,7 @@ def orderflow_guard_text(
         ])
     lines.extend([
         "",
-        "해석: DANGER면 띠기 신규 진입 차단, CAUTION이면 신규 겹수를 1개로 축소.",
+        "해석: DANGER가 연속 확정되면 띠기 신규 진입 차단/미체결 진입 취소, CAUTION이나 관찰중 DANGER는 신규 겹수를 1개로 축소.",
     ])
     return "\n".join(lines)
 

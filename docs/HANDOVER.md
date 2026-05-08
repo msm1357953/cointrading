@@ -199,8 +199,8 @@ Active commands (Korean):
 - `장세`, `시장상황 BTCUSDC`, `주문`, `포지션`
 - `계좌`, `위험`, `수수료`, `BNB`, `BNB 보충`, `가격`
 - `띠기 추천`, `띠기 상태`, `띠기 롱 시작`, `띠기 숏 시작`, `띠기 자동 시작`, `띠기 정지`
-- `띠기 롱 강제 시작`, `띠기 숏 강제 시작` — 위치/유동성 soft filter만 우회. 손실한도, 급변동, orderflow `DANGER`는 계속 차단.
-- `호가창` / `오더플로우` — BTCUSDC websocket orderflow guard 상태. `DANGER`/stale/missing이면 maker-grid 신규 진입을 막는다.
+- `띠기 롱 강제 시작`, `띠기 숏 강제 시작` — 위치/유동성 soft filter만 우회. 손실한도, 급변동, 확정 orderflow `DANGER`는 계속 차단.
+- `호가창` / `오더플로우` — BTCUSDC websocket orderflow guard 상태. stale/missing이면 maker-grid 신규 진입을 막고, `DANGER`는 연속 확정된 경우에만 hard block/cancel로 본다.
 - `정지` / `재개`
 
 Auto alerts come from `funding_carry_notify.py` and
@@ -272,9 +272,13 @@ COINTRADING_GRID_SHORT_MIN_RANGE_POSITION=0.18
 COINTRADING_GRID_LIQUIDITY_FILTER_ENABLED=true
 COINTRADING_GRID_MIN_SIDE_DEPTH_010_USDC=150000
 COINTRADING_GRID_MIN_TOTAL_DEPTH_010_USDC=350000
+COINTRADING_GRID_PAPER_LOG_ENABLED=true
+COINTRADING_GRID_ORDERFLOW_CONFIRMATIONS=3
+COINTRADING_GRID_ORDERFLOW_RECOVERY_CONFIRMATIONS=2
 COINTRADING_GRID_WARNING_LOSS_PCT=0.0025
 COINTRADING_GRID_REDUCE_LOSS_PCT=0.0045
 COINTRADING_GRID_STOP_LOSS_PCT=0.007
+COINTRADING_GRID_LOSS_COOLDOWN_SECONDS=1800
 COINTRADING_GRID_MAX_ORDERS_PER_DAY=12
 
 # BTCUSDC orderflow guard for maker-grid.

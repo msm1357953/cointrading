@@ -168,6 +168,7 @@ def _snapshot(
     latest_strategy_batch = store.latest_strategy_batch()
     market_regime_rows = store.latest_market_regimes(symbols=config.scalp_symbols, limit=limit)
     market_context_rows = store.latest_market_contexts(symbols=config.scalp_symbols, limit=limit)
+    grid_decisions = store.recent_grid_decisions(limit=limit)
     price_by_symbol = _price_by_symbol(market_context_rows)
     scalp_performance = store.scalp_cycle_performance()
     strategy_performance = store.strategy_cycle_performance()
@@ -215,6 +216,7 @@ def _snapshot(
             scalp_exit_reasons=scalp_exit_reasons,
             strategy_exit_reasons=strategy_exit_reasons,
         ),
+        "grid_paper_summary": _grid_paper_summary_html(grid_decisions),
         "strategy_summary": _strategy_summary_html(latest_strategy_batch),
         "tactical_radar_summary": _tactical_radar_summary_html(tactical_radar_report),
         "meta_summary": _meta_summary_html(meta_report),
@@ -227,6 +229,7 @@ def _snapshot(
         "order_rows": _order_rows_html(store.recent_orders(limit=limit)) or _empty_table_row(5, "최근 주문/차단 없음"),
         "cycle_rows": _cycle_rows_html(scalp_cycles) or _empty_table_row(6, "스캘핑 상태머신 기록 없음"),
         "strategy_cycle_rows": _strategy_cycle_rows_html(strategy_cycles) or _empty_table_row(7, "전략 상태머신 기록 없음"),
+        "grid_decision_rows": _grid_decision_rows_html(grid_decisions) or _empty_table_row(17, "띠기 판단 히스토리 없음"),
         "strategy_rows": _strategy_rows_html(strategy_rows) or _empty_table_row(16, "전략 평가 결과 없음"),
         "tactical_radar_rows": _tactical_radar_rows_html(tactical_radar_report) or _empty_table_row(13, "전술 레이더 결과 없음"),
         "meta_rows": _meta_rows_html(meta_report) or _empty_table_row(13, "메타전략 백테스트 결과 없음"),
@@ -494,6 +497,65 @@ def _paper_summary_html(
             _metric_html("전략 합계", f"{strategy_sum:+.6f}", _pnl_tone(strategy_sum)),
             _metric_html("최악 종료사유", reason_text, "warn" if worst_reasons else "muted"),
         ]
+    )
+
+
+def _grid_paper_summary_html(rows) -> str:
+    rows = list(rows)
+    if not rows:
+        return _metric_html("띠기 관찰", "기록 없음", "warn")
+    latest = rows[0]
+    recent = rows[:60]
+    blocked = [
+        row for row in recent
+        if str(row["action"]) in {"risk_halt", "soft_filter", "safeguard", "active_side_lock"}
+    ]
+    entries = [row for row in recent if str(row["action"]) == "entry_submitted"]
+    observe = [
+        row for row in recent
+        if str(row["action"]) in {"observe", "entry_wait", "auto_wait", "live_gate_locked"}
+    ]
+    long_danger = int(latest["orderflow_long_danger_count"] or 0)
+    short_danger = int(latest["orderflow_short_danger_count"] or 0)
+    price = _fmt_price(latest["mid"])
+    latest_text = (
+        f"{_grid_action_label(str(latest['action']))}"
+        f" / {_side_label(str(latest['intended_side'] or latest['effective_side'] or ''))}"
+    )
+    return "\n".join(
+        [
+            _metric_html("최근 판단", latest_text, _grid_action_tone(str(latest["action"]))),
+            _metric_html("현재가", price or "n/a", "muted"),
+            _metric_html("최근 진입시도", str(len(entries)), "good" if entries else "muted"),
+            _metric_html("최근 차단", str(len(blocked)), "warn" if blocked else "good"),
+            _metric_html("최근 관찰", str(len(observe)), "muted"),
+            _metric_html("호가 DANGER", f"롱 {long_danger} / 숏 {short_danger}", "warn" if long_danger or short_danger else "good"),
+        ]
+    )
+
+
+def _grid_decision_rows_html(rows) -> str:
+    return "\n".join(
+        "<tr>"
+        f"<td>{escape(kst_from_ms(int(row['timestamp_ms'])))}</td>"
+        f"<td>{escape(str(row['mode']))}</td>"
+        f"<td>{escape(_side_label(str(row['intended_side'] or row['effective_side'] or '대기')))}</td>"
+        f"<td><span class=\"pill {_tone_class(_grid_action_tone(str(row['action'])))}\">{escape(_grid_action_label(str(row['action'])))}</span></td>"
+        f"<td>{_fmt_price(row['mid'])}</td>"
+        f"<td>{_fmt_price(row['gap_usdc'])}</td>"
+        f"<td>{_fmt_price(row['take_profit_usdc'])}</td>"
+        f"<td>{float(row['range_position_15m'] or 0.0) * 100:.0f}%</td>"
+        f"<td>{float(row['ret_15m'] or 0.0) * 100:+.2f}%</td>"
+        f"<td>{float(row['ret_1h'] or 0.0) * 100:+.2f}%</td>"
+        f"<td>{escape(str(row['risk_label'] or ''))}</td>"
+        f"<td>{escape(str(row['orderflow_long_status'] or ''))} {int(row['orderflow_long_danger_count'] or 0)}</td>"
+        f"<td>{escape(str(row['orderflow_short_status'] or ''))} {int(row['orderflow_short_danger_count'] or 0)}</td>"
+        f"<td>{int(row['active_entries'] or 0)}/{int(row['active_opens'] or 0)}</td>"
+        f"<td>{int(row['opened_count'] or 0)}</td>"
+        f"<td>{escape(_grid_reason_label(str(row['reason'] or '')))}</td>"
+        f"<td>{escape(str(row['orderflow_reason'] or ''))}</td>"
+        "</tr>"
+        for row in rows
     )
 
 
@@ -1019,6 +1081,8 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     active_paper_rows = snapshot.get("active_paper_rows", "") or _empty_table_row(14, "진행 중인 paper 사이클 없음")
     paper_rows = snapshot.get("paper_rows", "") or _empty_table_row(14, "paper 사이클 기록 없음")
     paper_summary = snapshot.get("paper_summary", "")
+    grid_paper_summary = snapshot.get("grid_paper_summary", "")
+    grid_decision_rows = snapshot.get("grid_decision_rows", "") or _empty_table_row(17, "띠기 판단 히스토리 없음")
     strategy_summary = snapshot.get("strategy_summary", "")
     tactical_radar_rows = snapshot.get("tactical_radar_rows", "") or _empty_table_row(13, "전술 레이더 결과 없음")
     signal_rows = snapshot["signal_rows"] or _empty_table_row(5, "최근 신호 없음")
@@ -1253,6 +1317,16 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     <section id="tab-paper" class="tab-panel">
       <h2>Paper 사이클</h2>
       <div id="paper-summary" class="metric-grid">{paper_summary}</div>
+      <h3>띠기 판단 히스토리</h3>
+      <div id="grid-paper-summary" class="metric-grid">{grid_paper_summary}</div>
+      <p class="muted">실전 주문 전후로 매 분 “왜 진입/대기/차단했는지”를 기록합니다. 당일 손익은 표시용이고, DANGER는 연속 확정될 때만 강한 차단으로 봅니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>시각</th><th>모드</th><th>방향</th><th>판단</th><th>현재가</th><th>간격</th><th>TP폭</th><th>위치</th><th>15m</th><th>1h</th><th>장위험</th><th>롱 호가</th><th>숏 호가</th><th>진입/포지션</th><th>신규</th><th>이유</th><th>호가사유</th></tr></thead>
+          <tbody id="grid-decision-rows">{grid_decision_rows}</tbody>
+        </table>
+      </div>
+      <h3>전략/Paper 사이클</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입가</th><th>현재가</th><th>목표가</th><th>손절가</th><th>미실현</th><th>실현손익</th><th>이유</th></tr></thead>
@@ -1424,6 +1498,8 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("active-paper-rows").innerHTML = data.active_paper_rows;
       document.getElementById("paper-rows").innerHTML = data.paper_rows;
       document.getElementById("paper-summary").innerHTML = data.paper_summary;
+      document.getElementById("grid-paper-summary").innerHTML = data.grid_paper_summary;
+      document.getElementById("grid-decision-rows").innerHTML = data.grid_decision_rows;
       document.getElementById("strategy-summary").innerHTML = data.strategy_summary;
       document.getElementById("strategy-summary-tab").innerHTML = data.strategy_summary;
       document.getElementById("tactical-radar-summary").innerHTML = data.tactical_radar_summary;
@@ -1569,6 +1645,39 @@ def _decision_label(decision: str) -> str:
         "NEAR": "근접",
         "AVOID": "관망",
     }.get(decision, decision)
+
+
+def _grid_action_label(action: str) -> str:
+    return {
+        "observe": "관찰",
+        "observe_error": "관찰 오류",
+        "stopped_manage": "정지관리",
+        "live_gate_locked": "실전잠김",
+        "safeguard": "안전차단",
+        "auto_wait": "자동대기",
+        "active_side_lock": "방향잠금",
+        "risk_halt": "위험차단",
+        "soft_filter": "소프트차단",
+        "entry_submitted": "진입주문",
+        "entry_wait": "대기",
+    }.get(action, action)
+
+
+def _grid_action_tone(action: str) -> str:
+    if action == "entry_submitted":
+        return "good"
+    if action in {"risk_halt", "soft_filter", "safeguard", "active_side_lock", "observe_error"}:
+        return "warn"
+    return "muted"
+
+
+def _grid_reason_label(reason: str) -> str:
+    return {
+        "mode_stopped": "모드 정지",
+        "placed missing grid entries": "부족한 겹수 진입 주문 생성",
+        "grid layers already occupied": "이미 필요한 겹수 대기/보유 중",
+        "AUTO mode has no clear side": "자동 방향 불명확",
+    }.get(reason, _reason_label(reason))
 
 
 def _scenario_label(scenario: str) -> str:

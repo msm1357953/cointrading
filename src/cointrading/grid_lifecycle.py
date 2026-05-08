@@ -76,6 +76,11 @@ class GridState:
     daily_realized_pnl: float = 0.0
     daily_order_count: int = 0
     consecutive_losses: int = 0
+    loss_cooldown_until_ms: int = 0
+    orderflow_long_danger_count: int = 0
+    orderflow_short_danger_count: int = 0
+    orderflow_long_recovery_count: int = 0
+    orderflow_short_recovery_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +91,11 @@ class GridState:
             "daily_realized_pnl": self.daily_realized_pnl,
             "daily_order_count": self.daily_order_count,
             "consecutive_losses": self.consecutive_losses,
+            "loss_cooldown_until_ms": self.loss_cooldown_until_ms,
+            "orderflow_long_danger_count": self.orderflow_long_danger_count,
+            "orderflow_short_danger_count": self.orderflow_short_danger_count,
+            "orderflow_long_recovery_count": self.orderflow_long_recovery_count,
+            "orderflow_short_recovery_count": self.orderflow_short_recovery_count,
         }
 
     @classmethod
@@ -101,6 +111,11 @@ class GridState:
             daily_realized_pnl=float(data.get("daily_realized_pnl", 0.0)),
             daily_order_count=int(data.get("daily_order_count", 0)),
             consecutive_losses=int(data.get("consecutive_losses", 0)),
+            loss_cooldown_until_ms=int(data.get("loss_cooldown_until_ms", 0)),
+            orderflow_long_danger_count=int(data.get("orderflow_long_danger_count", 0)),
+            orderflow_short_danger_count=int(data.get("orderflow_short_danger_count", 0)),
+            orderflow_long_recovery_count=int(data.get("orderflow_long_recovery_count", 0)),
+            orderflow_short_recovery_count=int(data.get("orderflow_short_recovery_count", 0)),
         )
 
 
@@ -126,6 +141,8 @@ def reset_daily_if_needed(state: GridState, ts_ms: int) -> None:
         state.daily_kst_date = today
         state.daily_realized_pnl = 0.0
         state.daily_order_count = 0
+        state.consecutive_losses = 0
+        state.loss_cooldown_until_ms = 0
 
 
 def live_gate_text(config: TradingConfig) -> str:
@@ -141,13 +158,22 @@ def is_live_armed(config: TradingConfig) -> bool:
     return (not config.dry_run) and config.live_trading_enabled and config.grid_live_enabled
 
 
-def safeguard_block_reason(state: GridState, config: TradingConfig) -> str | None:
+def safeguard_block_reason(
+    state: GridState,
+    config: TradingConfig,
+    *,
+    ts_ms: int | None = None,
+) -> str | None:
     if not config.grid_enabled:
         return "grid disabled"
     if state.mode not in ACTIVE_MODES:
         return "grid mode STOPPED"
-    if state.consecutive_losses >= config.grid_max_consecutive_losses:
-        return f"{state.consecutive_losses} consecutive losses"
+    now = ts_ms or _now_ms()
+    if state.loss_cooldown_until_ms > now:
+        return (
+            f"{state.consecutive_losses} consecutive losses; cooldown until "
+            f"{kst_from_ms(state.loss_cooldown_until_ms)}"
+        )
     if state.daily_order_count >= config.grid_max_orders_per_day:
         return f"daily order cap reached ({state.daily_order_count})"
     return None
@@ -216,15 +242,41 @@ class MakerGridEngine:
         ts = _now_ms()
         state = load_state(self.state_path)
         reset_daily_if_needed(state, ts)
+        if state.loss_cooldown_until_ms and state.loss_cooldown_until_ms <= ts:
+            state.loss_cooldown_until_ms = 0
+            if "cooldown until" in state.paused_reason:
+                state.paused_reason = ""
         result = StepResult(ts_ms=ts)
 
         active_cycles = self._active_grid_cycles()
         if state.mode == MODE_STOPPED and not active_cycles:
             result.skipped.append({"reason": "mode_stopped", "detail": state.paused_reason})
+            if self.config.grid_paper_log_enabled:
+                try:
+                    market = self._load_market()
+                except Exception as exc:  # noqa: BLE001
+                    self._record_decision(
+                        state=state,
+                        market=None,
+                        result=result,
+                        action="observe_error",
+                        reason=f"market_load_failed: {exc}",
+                    )
+                else:
+                    self._update_orderflow_state(state, market)
+                    self._record_decision(
+                        state=state,
+                        market=market,
+                        result=result,
+                        intended_side=market.effective_side,
+                        action="observe",
+                        reason="mode_stopped",
+                    )
             save_state(state, self.state_path)
             return result
 
         market = self._load_market()
+        self._update_orderflow_state(state, market)
         if state.mode == MODE_STOPPED:
             cancelled = self._cancel_pending_entries(ts, "manual_stop")
             if cancelled:
@@ -233,20 +285,46 @@ class MakerGridEngine:
             result.managed.extend(self._sync_basket_take_profit_orders(market, ts, state))
             result.risk.extend(self._apply_risk_controls(market, ts, state))
             result.skipped.append({"reason": "mode_stopped", "detail": state.paused_reason})
+            self._record_decision(
+                state=state,
+                market=market,
+                result=result,
+                action="stopped_manage",
+                reason=state.paused_reason or "mode_stopped",
+            )
             save_state(state, self.state_path)
             return result
 
         result.managed.extend(self._manage_cycles(market, ts, state))
         result.managed.extend(self._sync_basket_take_profit_orders(market, ts, state))
+        danger_cancelled = self._cancel_entries_on_confirmed_orderflow_danger(ts, state)
+        if danger_cancelled:
+            result.risk.append({"action": "orderflow_danger_cancel", "cancelled": danger_cancelled})
         result.risk.extend(self._apply_risk_controls(market, ts, state))
         if not is_live_armed(self.config):
             result.skipped.append({"reason": "live_gate_locked", "detail": live_gate_text(self.config)})
+            self._record_decision(
+                state=state,
+                market=market,
+                result=result,
+                intended_side=self._effective_side_for_state(state, market),
+                action="live_gate_locked",
+                reason=live_gate_text(self.config),
+            )
             save_state(state, self.state_path)
             return result
 
-        block = safeguard_block_reason(state, self.config)
+        block = safeguard_block_reason(state, self.config, ts_ms=ts)
         if block:
             result.skipped.append({"reason": "safeguard", "detail": block})
+            self._record_decision(
+                state=state,
+                market=market,
+                result=result,
+                intended_side=self._effective_side_for_state(state, market),
+                action="safeguard",
+                reason=block,
+            )
             save_state(state, self.state_path)
             return result
 
@@ -256,6 +334,13 @@ class MakerGridEngine:
                 "reason": "auto_wait",
                 "detail": market.risk_reason or "AUTO mode has no clear side",
             })
+            self._record_decision(
+                state=state,
+                market=market,
+                result=result,
+                action="auto_wait",
+                reason=market.risk_reason or "AUTO mode has no clear side",
+            )
             save_state(state, self.state_path)
             return result
         active_side = self._active_grid_side()
@@ -265,15 +350,31 @@ class MakerGridEngine:
                 "side": side,
                 "detail": f"active {active_side} grid exists; wait until it closes before switching",
             })
+            self._record_decision(
+                state=state,
+                market=market,
+                result=result,
+                intended_side=side,
+                action="active_side_lock",
+                reason=f"active {active_side} grid exists",
+            )
             save_state(state, self.state_path)
             return result
-        if self._side_halted(side, market):
+        if self._side_halted(side, market, state):
             self._cancel_pending_entries(ts, f"risk_{market.risk_label}")
             result.skipped.append({
                 "reason": "risk_halt",
                 "side": side,
-                "detail": self._side_halt_reason(side, market),
+                "detail": self._side_halt_reason(side, market, state),
             })
+            self._record_decision(
+                state=state,
+                market=market,
+                result=result,
+                intended_side=side,
+                action="risk_halt",
+                reason=self._side_halt_reason(side, market, state),
+            )
             save_state(state, self.state_path)
             return result
         if self._soft_filter_blocked(side, market, state):
@@ -283,10 +384,26 @@ class MakerGridEngine:
                 "detail": self._soft_filter_reason(side, market),
                 "force_hint": "띠기 롱 강제 시작 / 띠기 숏 강제 시작",
             })
+            self._record_decision(
+                state=state,
+                market=market,
+                result=result,
+                intended_side=side,
+                action="soft_filter",
+                reason=self._soft_filter_reason(side, market),
+            )
             save_state(state, self.state_path)
             return result
 
         result.opened.extend(self._place_missing_entries(side, market, ts, state))
+        self._record_decision(
+            state=state,
+            market=market,
+            result=result,
+            intended_side=side,
+            action="entry_submitted" if result.opened else "entry_wait",
+            reason="placed missing grid entries" if result.opened else "grid layers already occupied",
+        )
         save_state(state, self.state_path)
         return result
 
@@ -379,18 +496,17 @@ class MakerGridEngine:
             range_position_15m=range_position,
         )
 
-    def _side_halted(self, side: str, market: GridMarket) -> bool:
+    def _side_halted(self, side: str, market: GridMarket, state: GridState) -> bool:
         if market.risk_label == "HALT":
             return True
-        side_orderflow_status = (
-            market.orderflow_long_status if side == "long" else market.orderflow_short_status
-        )
+        side_orderflow_status = _side_orderflow_status(side, market)
         if self.config.orderflow_guard_enabled and side_orderflow_status in {
-            "DANGER",
             "STALE",
             "UNKNOWN",
         }:
             return True
+        if self.config.orderflow_guard_enabled and side_orderflow_status == "DANGER":
+            return self._confirmed_orderflow_danger_from_state(side, state)
         if side == "long":
             return (
                 market.ret_15m <= -self.config.grid_overheat_15m_return_pct
@@ -401,18 +517,20 @@ class MakerGridEngine:
             or market.ret_1h >= self.config.grid_overheat_1h_return_pct
         )
 
-    def _side_halt_reason(self, side: str, market: GridMarket) -> str:
+    def _side_halt_reason(self, side: str, market: GridMarket, state: GridState) -> str:
         if market.risk_reason:
             return market.risk_reason
-        side_orderflow_status = (
-            market.orderflow_long_status if side == "long" else market.orderflow_short_status
-        )
+        side_orderflow_status = _side_orderflow_status(side, market)
         if self.config.orderflow_guard_enabled and side_orderflow_status in {
-            "DANGER",
             "STALE",
             "UNKNOWN",
         }:
             return f"orderflow {side_orderflow_status}: {market.orderflow_reason}"
+        if self.config.orderflow_guard_enabled and side_orderflow_status == "DANGER":
+            count = self._orderflow_danger_count(side, state)
+            threshold = self.config.grid_orderflow_confirmations
+            suffix = "확정" if count >= threshold else f"관찰중 {count}/{threshold}"
+            return f"orderflow DANGER {suffix}: {market.orderflow_reason}"
         if side == "long":
             if market.ret_15m <= -self.config.grid_overheat_15m_return_pct:
                 return f"15m adverse move {market.ret_15m * 100:+.2f}%"
@@ -433,6 +551,128 @@ class MakerGridEngine:
     def _soft_filter_reason(self, side: str, market: GridMarket) -> str:
         reasons = _soft_filter_reasons(side, market, self.config)
         return "; ".join(reasons)
+
+    def _update_orderflow_state(self, state: GridState, market: GridMarket) -> None:
+        self._update_orderflow_side_state(state, "long", market.orderflow_long_status)
+        self._update_orderflow_side_state(state, "short", market.orderflow_short_status)
+
+    def _update_orderflow_side_state(self, state: GridState, side: str, status: str) -> None:
+        danger_attr = f"orderflow_{side}_danger_count"
+        recovery_attr = f"orderflow_{side}_recovery_count"
+        if status == "DANGER":
+            count = min(
+                self.config.grid_orderflow_confirmations,
+                getattr(state, danger_attr) + 1,
+            )
+            setattr(state, danger_attr, count)
+            setattr(state, recovery_attr, 0)
+            return
+        if status in {"NORMAL", "CAUTION", "DISABLED"}:
+            recovery = min(
+                self.config.grid_orderflow_recovery_confirmations,
+                getattr(state, recovery_attr) + 1,
+            )
+            setattr(state, recovery_attr, recovery)
+            if getattr(state, recovery_attr) >= self.config.grid_orderflow_recovery_confirmations:
+                setattr(state, danger_attr, 0)
+            return
+        setattr(state, danger_attr, self.config.grid_orderflow_confirmations)
+        setattr(state, recovery_attr, 0)
+
+    def _cancel_entries_on_confirmed_orderflow_danger(
+        self,
+        ts: int,
+        state: GridState,
+    ) -> int:
+        cancelled = 0
+        for side in ("long", "short"):
+            if not self._confirmed_orderflow_danger_from_state(side, state):
+                continue
+            for cycle in self._active_grid_cycles(status=STATUS_ENTRY_SUBMITTED):
+                if str(cycle["side"]) != side:
+                    continue
+                if cycle["entry_order_id"] is not None:
+                    cancel_local_order(
+                        client=self.client,
+                        store=self.storage,
+                        local_order_id=int(cycle["entry_order_id"]),
+                    )
+                self.storage.update_strategy_cycle(
+                    int(cycle["id"]),
+                    status=STATUS_STOPPED,
+                    reason=f"orderflow_{side}_danger",
+                    closed_ms=ts,
+                    timestamp_ms=ts,
+                )
+                cancelled += 1
+        return cancelled
+
+    def _confirmed_orderflow_danger_from_state(self, side: str, state: GridState) -> bool:
+        count = self._orderflow_danger_count(side, state)
+        return count >= self.config.grid_orderflow_confirmations
+
+    def _orderflow_danger_count(self, side: str, state: GridState) -> int:
+        return (
+            state.orderflow_long_danger_count
+            if side == "long"
+            else state.orderflow_short_danger_count
+        )
+
+    def _record_decision(
+        self,
+        *,
+        state: GridState,
+        market: GridMarket | None,
+        result: StepResult,
+        action: str,
+        reason: str,
+        intended_side: str | None = None,
+    ) -> None:
+        if not self.config.grid_paper_log_enabled:
+            return
+        try:
+            cycles = self._active_grid_cycles()
+            active_entries = sum(1 for cycle in cycles if cycle["status"] == STATUS_ENTRY_SUBMITTED)
+            active_opens = sum(1 for cycle in cycles if cycle["status"] == STATUS_OPEN)
+            self.storage.insert_grid_decision(
+                symbol=self.config.grid_symbol,
+                mode=state.mode,
+                intended_side=intended_side,
+                effective_side=market.effective_side if market is not None else None,
+                action=action,
+                reason=reason,
+                timestamp_ms=result.ts_ms,
+                live_armed=is_live_armed(self.config),
+                force_entry=state.force_entry,
+                bid=market.bid if market is not None else None,
+                ask=market.ask if market is not None else None,
+                mid=market.mid if market is not None else None,
+                gap_usdc=market.gap_usdc if market is not None else None,
+                take_profit_usdc=market.take_profit_usdc if market is not None else None,
+                atr_5m=market.atr_5m if market is not None else None,
+                atr_5m_median_24h=market.atr_5m_median_24h if market is not None else None,
+                ret_15m=market.ret_15m if market is not None else None,
+                ret_1h=market.ret_1h if market is not None else None,
+                range_position_15m=market.range_position_15m if market is not None else None,
+                risk_label=market.risk_label if market is not None else None,
+                risk_reason=market.risk_reason if market is not None else None,
+                orderflow_status=market.orderflow_status if market is not None else None,
+                orderflow_long_status=market.orderflow_long_status if market is not None else None,
+                orderflow_short_status=market.orderflow_short_status if market is not None else None,
+                orderflow_reason=market.orderflow_reason if market is not None else None,
+                orderflow_long_danger_count=state.orderflow_long_danger_count,
+                orderflow_short_danger_count=state.orderflow_short_danger_count,
+                orderflow_long_recovery_count=state.orderflow_long_recovery_count,
+                orderflow_short_recovery_count=state.orderflow_short_recovery_count,
+                active_entries=active_entries,
+                active_opens=active_opens,
+                opened_count=len(result.opened),
+                managed_count=len(result.managed),
+                risk_count=len(result.risk),
+                raw=result.as_dict(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("maker_grid: failed to record grid decision: %s", exc)
 
     def _effective_side_for_state(self, state: GridState, market: GridMarket) -> str | None:
         if state.mode == MODE_LONG:
@@ -608,7 +848,7 @@ class MakerGridEngine:
                     realized_pnl=pnl,
                     timestamp_ms=ts,
                 )
-                _apply_closed_pnl(state, pnl, self.config)
+                _apply_closed_pnl(state, pnl, self.config, ts)
                 return [{
                     "id": cycle["id"],
                     "action": "closed_tp",
@@ -727,10 +967,14 @@ class MakerGridEngine:
         max_layers = self.config.grid_max_layers
         if market.risk_label != "NORMAL":
             max_layers = min(max_layers, 1)
-        side_orderflow_status = (
-            market.orderflow_long_status if side == "long" else market.orderflow_short_status
-        )
+        side_orderflow_status = _side_orderflow_status(side, market)
         if self.config.orderflow_guard_enabled and side_orderflow_status == "CAUTION":
+            max_layers = min(max_layers, 1)
+        if (
+            self.config.orderflow_guard_enabled
+            and side_orderflow_status == "DANGER"
+            and not self._confirmed_orderflow_danger_from_state(side, state)
+        ):
             max_layers = min(max_layers, 1)
         events: list[dict[str, Any]] = []
         if len(occupied) >= max_layers:
@@ -1016,7 +1260,7 @@ class MakerGridEngine:
             timestamp_ms=ts,
         )
         if state is not None:
-            _apply_closed_pnl(state, pnl, self.config)
+            _apply_closed_pnl(state, pnl, self.config, ts)
         return {"ok": True, "exit": avg_exit, "qty": qty, "pnl": pnl}
 
     # ----- Queries / helpers -----
@@ -1164,6 +1408,19 @@ def _soft_filter_reasons(
     return reasons
 
 
+def _side_orderflow_status(side: str, market: GridMarket) -> str:
+    return market.orderflow_long_status if side == "long" else market.orderflow_short_status
+
+
+def _orderflow_confirmation_text(state: GridState, config: TradingConfig) -> str:
+    return (
+        f"롱 DANGER {state.orderflow_long_danger_count}/{config.grid_orderflow_confirmations}"
+        f"·회복 {state.orderflow_long_recovery_count}/{config.grid_orderflow_recovery_confirmations}, "
+        f"숏 DANGER {state.orderflow_short_danger_count}/{config.grid_orderflow_confirmations}"
+        f"·회복 {state.orderflow_short_recovery_count}/{config.grid_orderflow_recovery_confirmations}"
+    )
+
+
 def _auto_side(klines_15m: list[Kline], klines_1h: list[Kline]) -> str | None:
     ret_15m_4 = _return_from_klines(klines_15m, bars=4)
     ret_1h_3 = _return_from_klines(klines_1h, bars=3)
@@ -1201,15 +1458,24 @@ def _cycle_pnl(cycle: Any, exit_price: float, quantity: float, exit_fee_rate: fl
     return gross - entry_fee - exit_fee
 
 
-def _apply_closed_pnl(state: GridState, pnl: float, config: TradingConfig) -> None:
+def _apply_closed_pnl(
+    state: GridState,
+    pnl: float,
+    config: TradingConfig,
+    ts_ms: int,
+) -> None:
     state.daily_realized_pnl += pnl
     if pnl > 0:
         state.consecutive_losses = 0
+        state.loss_cooldown_until_ms = 0
     else:
         state.consecutive_losses += 1
         if state.consecutive_losses >= config.grid_max_consecutive_losses:
-            state.mode = MODE_STOPPED
-            state.paused_reason = f"{state.consecutive_losses} consecutive losses"
+            state.loss_cooldown_until_ms = ts_ms + config.grid_loss_cooldown_seconds * 1000
+            state.paused_reason = (
+                f"{state.consecutive_losses} consecutive losses; cooldown until "
+                f"{kst_from_ms(state.loss_cooldown_until_ms)}"
+            )
 
 
 def _cycle_setup(cycle: Any) -> dict[str, Any]:
@@ -1315,7 +1581,7 @@ def grid_status_text(
         f"  최대 겹수  : {cfg.grid_max_layers}",
         f"  TP 방식    : {'평단 묶음 TP' if cfg.grid_basket_take_profit_enabled else '레이어별 TP'}",
         "",
-        f"  오늘 손익  : {state.daily_realized_pnl:+.4f} USDC",
+        f"  오늘 손익  : {state.daily_realized_pnl:+.4f} USDC (표시용, 단독 차단 없음)",
         f"  오늘 주문  : {state.daily_order_count}/{cfg.grid_max_orders_per_day}",
         f"  연속 손실  : {state.consecutive_losses}/{cfg.grid_max_consecutive_losses}",
         f"  활성 주문  : 진입대기 {len(entries)} / 포지션 {len(opens)}",
@@ -1339,6 +1605,8 @@ def grid_status_text(
         )
     if state.paused_reason:
         lines.append(f"  정지 사유  : {state.paused_reason}")
+    if state.loss_cooldown_until_ms > store_now_ms():
+        lines.append(f"  손실 쿨다운: {kst_from_ms(state.loss_cooldown_until_ms)}까지 신규 진입 대기")
     basket = _basket_summary(opens)
     if basket is not None:
         lines.append(
@@ -1374,6 +1642,8 @@ def grid_status_text(
             lines.append(f"  위험       : {market.risk_label} - {market.risk_reason}")
         if market.orderflow_reason and market.orderflow_status != "NORMAL":
             lines.append(f"  호가 사유  : {market.orderflow_reason}")
+        if cfg.orderflow_guard_enabled:
+            lines.append(f"  호가 확정  : {_orderflow_confirmation_text(state, cfg)}")
         for side_name, label in (("long", "롱"), ("short", "숏")):
             soft_reason = _soft_filter_reasons(side_name, market, cfg)
             if soft_reason:
@@ -1398,6 +1668,7 @@ def grid_recommendation_text(
     st = store or TradingStore()
     cl = client or BinanceUSDMClient(config=cfg)
     engine = MakerGridEngine(config=cfg, storage=st, client=cl, state_path=state_path)
+    state = load_state(state_path)
     try:
         market = engine._load_market()
     except Exception as exc:  # noqa: BLE001
@@ -1412,12 +1683,22 @@ def grid_recommendation_text(
         side = None
         reason = f"과열/급변동 차단: {market.risk_reason}"
     if side and cfg.orderflow_guard_enabled:
-        side_orderflow_status = (
-            market.orderflow_long_status if side == "long" else market.orderflow_short_status
-        )
-        if side_orderflow_status in {"DANGER", "STALE", "UNKNOWN"}:
+        side_orderflow_status = _side_orderflow_status(side, market)
+        if side_orderflow_status in {"STALE", "UNKNOWN"}:
             side = None
             reason = f"호가창 차단: {market.orderflow_reason}"
+        elif side_orderflow_status == "DANGER":
+            count = (
+                state.orderflow_long_danger_count
+                if side == "long"
+                else state.orderflow_short_danger_count
+            )
+            threshold = cfg.grid_orderflow_confirmations
+            if count >= threshold:
+                side = None
+                reason = f"호가창 DANGER 확정 {count}/{threshold}: {market.orderflow_reason}"
+            else:
+                reason += f" / 호가창 DANGER 관찰중 {count}/{threshold}: 신규 겹수 1개로 축소"
         elif side_orderflow_status == "CAUTION":
             reason += f" / 호가창 주의: {market.orderflow_reason}"
     if side:
@@ -1441,6 +1722,7 @@ def grid_recommendation_text(
             f"전체 {market.orderflow_status}, 롱 {market.orderflow_long_status}, "
             f"숏 {market.orderflow_short_status}"
         ),
+        f"호가 확정: {_orderflow_confirmation_text(state, cfg)}",
     ]
     if side:
         lines.extend(["", "예상 주문 레벨:"])
@@ -1505,8 +1787,9 @@ def set_grid_mode_text(
         f"최대 겹수: {cfg.grid_max_layers}",
         f"위치/유동성 필터: {'우회' if state.force_entry else '적용'}",
         f"손실한도: 경고 {cfg.grid_warning_loss_pct:.2%}, 축소 {cfg.grid_reduce_loss_pct:.2%}, 정지 {cfg.grid_stop_loss_pct:.2%}",
+        f"연속손실: {cfg.grid_max_consecutive_losses}회면 {cfg.grid_loss_cooldown_seconds // 60}분 쿨다운 후 재평가",
         "주문 방식: 진입/익절 모두 post-only maker. 익절은 열린 레이어 평단 기준 묶음 TP.",
-        "강제 모드여도 손실한도/orderflow DANGER/급변동 차단은 유지됩니다.",
+        "강제 모드여도 손실한도/orderflow DANGER 확정/급변동 차단은 유지됩니다.",
         "손실한도 초과 시에만 reduce-only market.",
     ])
 
@@ -1549,6 +1832,10 @@ def step_result_notification_text(result: StepResult) -> str:
                 f"- 묶음 TP 재배치: {item.get('side')} {item.get('cycles')}개 "
                 f"평단={float(item.get('avg_entry', 0)):.2f} "
                 f"TP={float(item.get('target', 0)):.2f}"
+            )
+        elif action == "orderflow_danger_cancel":
+            lines.append(
+                f"- 호가창 위험 확정: 미체결 진입 주문 {int(item.get('cancelled', 0))}개 취소"
             )
         elif action.startswith("grid_"):
             lines.append(

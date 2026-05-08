@@ -332,6 +332,51 @@ class TradingStore:
                         source, symbol, regime, side,
                         take_profit_bps, stop_loss_bps, max_hold_seconds, evaluated_ms
                     );
+
+                CREATE TABLE IF NOT EXISTS grid_decisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp_ms INTEGER NOT NULL,
+                    iso_time TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    intended_side TEXT,
+                    effective_side TEXT,
+                    action TEXT NOT NULL,
+                    reason TEXT,
+                    live_armed INTEGER NOT NULL,
+                    force_entry INTEGER NOT NULL,
+                    bid REAL,
+                    ask REAL,
+                    mid REAL,
+                    gap_usdc REAL,
+                    take_profit_usdc REAL,
+                    atr_5m REAL,
+                    atr_5m_median_24h REAL,
+                    ret_15m REAL,
+                    ret_1h REAL,
+                    range_position_15m REAL,
+                    risk_label TEXT,
+                    risk_reason TEXT,
+                    orderflow_status TEXT,
+                    orderflow_long_status TEXT,
+                    orderflow_short_status TEXT,
+                    orderflow_reason TEXT,
+                    orderflow_long_danger_count INTEGER NOT NULL DEFAULT 0,
+                    orderflow_short_danger_count INTEGER NOT NULL DEFAULT 0,
+                    orderflow_long_recovery_count INTEGER NOT NULL DEFAULT 0,
+                    orderflow_short_recovery_count INTEGER NOT NULL DEFAULT 0,
+                    active_entries INTEGER NOT NULL DEFAULT 0,
+                    active_opens INTEGER NOT NULL DEFAULT 0,
+                    opened_count INTEGER NOT NULL DEFAULT 0,
+                    managed_count INTEGER NOT NULL DEFAULT 0,
+                    risk_count INTEGER NOT NULL DEFAULT 0,
+                    raw_json TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_grid_decisions_symbol_time
+                    ON grid_decisions(symbol, timestamp_ms);
+                CREATE INDEX IF NOT EXISTS idx_grid_decisions_action_time
+                    ON grid_decisions(action, timestamp_ms);
                 """
             )
             _ensure_column(
@@ -1262,6 +1307,102 @@ class TradingStore:
                 count += 1
         return count
 
+    def insert_grid_decision(
+        self,
+        *,
+        symbol: str,
+        mode: str,
+        action: str,
+        timestamp_ms: int | None = None,
+        intended_side: str | None = None,
+        effective_side: str | None = None,
+        reason: str = "",
+        live_armed: bool = False,
+        force_entry: bool = False,
+        bid: float | None = None,
+        ask: float | None = None,
+        mid: float | None = None,
+        gap_usdc: float | None = None,
+        take_profit_usdc: float | None = None,
+        atr_5m: float | None = None,
+        atr_5m_median_24h: float | None = None,
+        ret_15m: float | None = None,
+        ret_1h: float | None = None,
+        range_position_15m: float | None = None,
+        risk_label: str | None = None,
+        risk_reason: str | None = None,
+        orderflow_status: str | None = None,
+        orderflow_long_status: str | None = None,
+        orderflow_short_status: str | None = None,
+        orderflow_reason: str | None = None,
+        orderflow_long_danger_count: int = 0,
+        orderflow_short_danger_count: int = 0,
+        orderflow_long_recovery_count: int = 0,
+        orderflow_short_recovery_count: int = 0,
+        active_entries: int = 0,
+        active_opens: int = 0,
+        opened_count: int = 0,
+        managed_count: int = 0,
+        risk_count: int = 0,
+        raw: dict[str, Any] | None = None,
+    ) -> int:
+        ts = timestamp_ms or now_ms()
+        payload = {
+            "timestamp_ms": ts,
+            "iso_time": iso_from_ms(ts),
+            "symbol": symbol.upper(),
+            "mode": mode,
+            "intended_side": intended_side,
+            "effective_side": effective_side,
+            "action": action,
+            "reason": reason,
+            "live_armed": 1 if live_armed else 0,
+            "force_entry": 1 if force_entry else 0,
+            "bid": bid,
+            "ask": ask,
+            "mid": mid,
+            "gap_usdc": gap_usdc,
+            "take_profit_usdc": take_profit_usdc,
+            "atr_5m": atr_5m,
+            "atr_5m_median_24h": atr_5m_median_24h,
+            "ret_15m": ret_15m,
+            "ret_1h": ret_1h,
+            "range_position_15m": range_position_15m,
+            "risk_label": risk_label,
+            "risk_reason": risk_reason,
+            "orderflow_status": orderflow_status,
+            "orderflow_long_status": orderflow_long_status,
+            "orderflow_short_status": orderflow_short_status,
+            "orderflow_reason": orderflow_reason,
+            "orderflow_long_danger_count": int(orderflow_long_danger_count),
+            "orderflow_short_danger_count": int(orderflow_short_danger_count),
+            "orderflow_long_recovery_count": int(orderflow_long_recovery_count),
+            "orderflow_short_recovery_count": int(orderflow_short_recovery_count),
+            "active_entries": int(active_entries),
+            "active_opens": int(active_opens),
+            "opened_count": int(opened_count),
+            "managed_count": int(managed_count),
+            "risk_count": int(risk_count),
+            "raw_json": json.dumps(raw, sort_keys=True) if raw is not None else None,
+        }
+        columns = list(payload)
+        placeholders = ", ".join("?" for _ in columns)
+        with self.connect() as connection:
+            cursor = connection.execute(
+                f"INSERT INTO grid_decisions ({', '.join(columns)}) VALUES ({placeholders})",
+                [payload[column] for column in columns],
+            )
+            return int(cursor.lastrowid)
+
+    def recent_grid_decisions(self, limit: int = 50) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    "SELECT * FROM grid_decisions ORDER BY timestamp_ms DESC LIMIT ?",
+                    (limit,),
+                )
+            )
+
     def latest_strategy_evaluations(
         self,
         *,
@@ -1422,6 +1563,9 @@ class TradingStore:
                 ),
                 "market_contexts": int(
                     connection.execute("SELECT COUNT(*) FROM market_contexts").fetchone()[0]
+                ),
+                "grid_decisions": int(
+                    connection.execute("SELECT COUNT(*) FROM grid_decisions").fetchone()[0]
                 ),
             }
 

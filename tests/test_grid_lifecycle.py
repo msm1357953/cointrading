@@ -14,6 +14,7 @@ from cointrading.grid_lifecycle import (
     STATUS_ENTRY_SUBMITTED,
     STATUS_OPEN,
     STRATEGY_NAME,
+    _kst_today_str,
     grid_recommendation_text,
     load_state,
     save_state,
@@ -244,7 +245,7 @@ class GridEngineTests(unittest.TestCase):
         self.assertIn("시작 명령", text)
         self.assertIn("20x", text)
 
-    def test_orderflow_danger_blocks_new_long_entries(self) -> None:
+    def test_orderflow_danger_needs_confirmation_then_cancels_pending_entry(self) -> None:
         orderflow_path = Path(self.tmp.name) / "orderflow.json"
         orderflow_path.write_text(json.dumps({
             "symbol": "BTCUSDC",
@@ -262,12 +263,72 @@ class GridEngineTests(unittest.TestCase):
         )
         save_state(GridState(mode=MODE_LONG), self.state)
 
+        first = self._engine().step()
+
+        self.assertEqual(len(first.opened), 1)
+        self.assertEqual(len(self.client.orders), 1)
+        state = load_state(self.state)
+        self.assertEqual(state.orderflow_long_danger_count, 1)
+
+        second = self._engine().step()
+        self.assertEqual(second.opened, [])
+        self.assertFalse(any(item.get("reason") == "risk_halt" for item in second.skipped))
+        state = load_state(self.state)
+        self.assertEqual(state.orderflow_long_danger_count, 2)
+
+        third = self._engine().step()
+        self.assertEqual(third.opened, [])
+        self.assertEqual(third.skipped[0]["reason"], "risk_halt")
+        self.assertIn("확정", third.skipped[0]["detail"])
+        self.assertTrue(any(item.get("action") == "orderflow_danger_cancel" for item in third.risk))
+        self.assertEqual(len(self.client.cancels), 1)
+
+    def test_grid_step_records_decision_history_for_dashboard(self) -> None:
+        save_state(GridState(mode=MODE_LONG), self.state)
+
         result = self._engine().step()
 
-        self.assertEqual(result.opened, [])
-        self.assertEqual(self.client.orders, [])
-        self.assertEqual(result.skipped[0]["reason"], "risk_halt")
-        self.assertIn("orderflow", result.skipped[0]["detail"])
+        self.assertEqual(len(result.opened), 3)
+        decisions = self.store.recent_grid_decisions(limit=5)
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0]["action"], "entry_submitted")
+        self.assertEqual(decisions[0]["opened_count"], 3)
+        self.assertEqual(decisions[0]["active_entries"], 3)
+
+    def test_loss_cooldown_blocks_temporarily_not_by_daily_pnl(self) -> None:
+        future = int(time.time() * 1000) + 600_000
+        save_state(
+            GridState(
+                mode=MODE_LONG,
+                daily_kst_date=_kst_today_str(int(time.time() * 1000)),
+                daily_realized_pnl=-999.0,
+                consecutive_losses=3,
+                loss_cooldown_until_ms=future,
+            ),
+            self.state,
+        )
+
+        blocked = self._engine().step()
+
+        self.assertEqual(blocked.opened, [])
+        self.assertEqual(blocked.skipped[0]["reason"], "safeguard")
+        self.assertIn("cooldown", blocked.skipped[0]["detail"])
+
+        past = int(time.time() * 1000) - 1
+        save_state(
+            GridState(
+                mode=MODE_LONG,
+                daily_kst_date=_kst_today_str(int(time.time() * 1000)),
+                daily_realized_pnl=-999.0,
+                consecutive_losses=3,
+                loss_cooldown_until_ms=past,
+            ),
+            self.state,
+        )
+
+        resumed = self._engine().step()
+
+        self.assertEqual(len(resumed.opened), 3)
 
     def test_daily_realized_loss_is_accounting_not_entry_stop(self) -> None:
         save_state(GridState(mode=MODE_LONG, daily_realized_pnl=-999.0), self.state)

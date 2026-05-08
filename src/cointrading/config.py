@@ -275,10 +275,14 @@ class TradingConfig:
     grid_liquidity_filter_enabled: bool = True
     grid_min_side_depth_010_usdc: float = 150_000.0
     grid_min_total_depth_010_usdc: float = 350_000.0
+    grid_paper_log_enabled: bool = True
+    grid_orderflow_confirmations: int = 3
+    grid_orderflow_recovery_confirmations: int = 2
     grid_warning_loss_pct: float = 0.0025
     grid_reduce_loss_pct: float = 0.0045
     grid_stop_loss_pct: float = 0.0070
     grid_max_consecutive_losses: int = 3
+    grid_loss_cooldown_seconds: int = 1800
     grid_max_orders_per_day: int = 12
     grid_overheat_15m_return_pct: float = 0.0070
     grid_overheat_1h_return_pct: float = 0.0130
@@ -879,6 +883,18 @@ class TradingConfig:
                 "COINTRADING_GRID_MIN_TOTAL_DEPTH_010_USDC",
                 cls.grid_min_total_depth_010_usdc,
             ),
+            grid_paper_log_enabled=_get_bool(
+                "COINTRADING_GRID_PAPER_LOG_ENABLED",
+                cls.grid_paper_log_enabled,
+            ),
+            grid_orderflow_confirmations=_get_int(
+                "COINTRADING_GRID_ORDERFLOW_CONFIRMATIONS",
+                cls.grid_orderflow_confirmations,
+            ),
+            grid_orderflow_recovery_confirmations=_get_int(
+                "COINTRADING_GRID_ORDERFLOW_RECOVERY_CONFIRMATIONS",
+                cls.grid_orderflow_recovery_confirmations,
+            ),
             grid_warning_loss_pct=_get_float(
                 "COINTRADING_GRID_WARNING_LOSS_PCT", cls.grid_warning_loss_pct
             ),
@@ -891,6 +907,10 @@ class TradingConfig:
             grid_max_consecutive_losses=_get_int(
                 "COINTRADING_GRID_MAX_CONSECUTIVE_LOSSES",
                 cls.grid_max_consecutive_losses,
+            ),
+            grid_loss_cooldown_seconds=_get_int(
+                "COINTRADING_GRID_LOSS_COOLDOWN_SECONDS",
+                cls.grid_loss_cooldown_seconds,
             ),
             grid_max_orders_per_day=_get_int(
                 "COINTRADING_GRID_MAX_ORDERS_PER_DAY", cls.grid_max_orders_per_day
