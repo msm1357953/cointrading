@@ -237,7 +237,7 @@ def _snapshot(
         ),
         "grid_paper_summary": _grid_paper_summary_html(grid_decisions),
         "grid_cycle_rows": _grid_cycle_rows_html(strategy_cycles, price_by_symbol)
-        or _empty_table_row(14, "띠기 상태머신 기록 없음"),
+        or _empty_table_row(15, "띠기 상태머신 기록 없음"),
         "micro_grid_summary": _micro_grid_summary_html(config, micro_grid_cycles),
         "micro_grid_rows": _micro_grid_rows_html(config, micro_grid_cycles, price_by_symbol),
         "strategy_summary": _strategy_summary_html(latest_strategy_batch),
@@ -341,7 +341,7 @@ def _active_paper_rows_html(scalp_cycles, strategy_cycles, price_by_symbol: dict
         *_cycle_table_rows(strategy_cycles, cycle_type="전략", price_by_symbol=price_by_symbol),
     ]
     if not rows:
-        return '<tr><td colspan="14" class="empty">진행 중인 paper 사이클 없음</td></tr>'
+        return '<tr><td colspan="15" class="empty">진행 중인 paper 사이클 없음</td></tr>'
     ranked = sorted(rows, key=lambda item: item[0], reverse=True)
     return "\n".join(row for _, row in ranked)
 
@@ -352,7 +352,7 @@ def _paper_rows_html(scalp_cycles, strategy_cycles, price_by_symbol: dict[str, f
         *_cycle_table_rows(strategy_cycles, cycle_type="전략", price_by_symbol=price_by_symbol),
     ]
     if not rows:
-        return '<tr><td colspan="14" class="empty">paper 사이클 기록 없음</td></tr>'
+        return '<tr><td colspan="15" class="empty">paper 사이클 기록 없음</td></tr>'
     ranked = sorted(rows, key=lambda item: item[0], reverse=True)
     return "\n".join(row for _, row in ranked)
 
@@ -373,6 +373,7 @@ def _cycle_table_rows(
         current_price_text = _fmt_price(current_price)
         target_price = _fmt_price(cycle["target_price"])
         stop_price = _fmt_price(cycle["stop_price"])
+        basket_avg = _fmt_price(_basket_average_for_cycle(cycle))
         quantity = _fmt_qty(cycle["quantity"])
         unrealized_text = _fmt_signed_pnl(unrealized_pnl)
         pnl = _fmt_signed_pnl(cycle["realized_pnl"])
@@ -388,6 +389,7 @@ def _cycle_table_rows(
             f"<td>{_status_pill(status)}</td>"
             f"<td>{escape(quantity)}</td>"
             f"<td>{escape(entry_price)}</td>"
+            f"<td>{escape(basket_avg)}</td>"
             f"<td>{escape(current_price_text)}</td>"
             f"<td>{escape(target_price)}</td>"
             f"<td>{escape(stop_price)}</td>"
@@ -416,6 +418,18 @@ def _current_price_for_cycle(cycle, price_by_symbol: dict[str, float]) -> float 
     if symbol in price_by_symbol:
         return price_by_symbol[symbol]
     return _float_or_none(_row_get(cycle, "last_mid_price"))
+
+
+def _basket_average_for_cycle(cycle) -> float | None:
+    setup = _setup_json(cycle)
+    value = _float_or_none(setup.get("basket_avg_entry"))
+    if value is not None:
+        return value
+    strategy = str(_row_get(cycle, "strategy", ""))
+    status = str(_row_get(cycle, "status", ""))
+    if strategy in {"maker_grid", GRID_PAPER_STRATEGY_NAME} and status == "OPEN":
+        return _float_or_none(_row_get(cycle, "entry_price"))
+    return None
 
 
 def _active_unrealized_total(
@@ -545,6 +559,7 @@ def _grid_status_summary_html(*, config: TradingConfig, grid_decisions, strategy
     ]
     active_entries = sum(1 for row in active_grid_cycles if str(_row_get(row, "status", "")) == "ENTRY_SUBMITTED")
     active_opens = sum(1 for row in active_grid_cycles if str(_row_get(row, "status", "")) == "OPEN")
+    basket_text = _grid_basket_summary_text(active_grid_cycles)
     rows = list(grid_decisions)
     latest = rows[0] if rows else None
     latest_text = "기록 없음"
@@ -570,6 +585,7 @@ def _grid_status_summary_html(*, config: TradingConfig, grid_decisions, strategy
             _metric_html("최근 판단", latest_text, latest_tone),
             _metric_html("현재가", price_text, "muted"),
             _metric_html("간격 / 익절", f"{gap_text} / {tp_text}", "muted"),
+            _metric_html("보유 평단/TP", basket_text, "warn" if active_opens else "muted"),
             _metric_html("활성 진입/보유", f"{active_entries} / {active_opens}", "warn" if active_entries or active_opens else "good"),
             _metric_html("오늘 주문", f"{state.daily_order_count}/{config.grid_max_orders_per_day}", "warn" if state.daily_order_count else "muted"),
             _metric_html("오늘 손익", f"{state.daily_realized_pnl:+.4f}", _pnl_tone(state.daily_realized_pnl)),
@@ -581,6 +597,31 @@ def _grid_status_summary_html(*, config: TradingConfig, grid_decisions, strategy
             ),
         ]
     )
+
+
+def _grid_basket_summary_text(cycles) -> str:
+    grouped: dict[tuple[str, str], list] = {}
+    for row in cycles:
+        if str(_row_get(row, "status", "")) != "OPEN":
+            continue
+        strategy = str(_row_get(row, "strategy", ""))
+        side = str(_row_get(row, "side", ""))
+        grouped.setdefault((strategy, side), []).append(row)
+    parts: list[str] = []
+    for (strategy, side), rows in sorted(grouped.items()):
+        qty = sum(float(_row_get(row, "quantity", 0.0) or 0.0) for row in rows)
+        if qty <= 0:
+            continue
+        avg = sum(
+            float(_row_get(row, "entry_price", 0.0) or 0.0)
+            * float(_row_get(row, "quantity", 0.0) or 0.0)
+            for row in rows
+        ) / qty
+        target = _float_or_none(_row_get(rows[0], "target_price"))
+        label = "실전" if strategy == "maker_grid" else "페이퍼"
+        target_text = _fmt_price(target) if target is not None else "-"
+        parts.append(f"{label} {_side_label(side)} {_fmt_price(avg)} -> {target_text}")
+    return " / ".join(parts) if parts else "없음"
 
 
 def _grid_cycle_rows_html(strategy_cycles, price_by_symbol: dict[str, float]) -> str:
@@ -1249,12 +1290,12 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     risk_state = snapshot.get("risk_state", "런타임 위험모드\n아직 산출된 내용이 없습니다.")
     mode_summary = snapshot.get("mode_summary", "")
     overview = snapshot.get("overview", "")
-    active_paper_rows = snapshot.get("active_paper_rows", "") or _empty_table_row(14, "진행 중인 paper 사이클 없음")
-    paper_rows = snapshot.get("paper_rows", "") or _empty_table_row(14, "paper 사이클 기록 없음")
+    active_paper_rows = snapshot.get("active_paper_rows", "") or _empty_table_row(15, "진행 중인 paper 사이클 없음")
+    paper_rows = snapshot.get("paper_rows", "") or _empty_table_row(15, "paper 사이클 기록 없음")
     paper_summary = snapshot.get("paper_summary", "")
     grid_status_summary = snapshot.get("grid_status_summary", "")
     grid_paper_summary = snapshot.get("grid_paper_summary", "")
-    grid_cycle_rows = snapshot.get("grid_cycle_rows", "") or _empty_table_row(14, "띠기 상태머신 기록 없음")
+    grid_cycle_rows = snapshot.get("grid_cycle_rows", "") or _empty_table_row(15, "띠기 상태머신 기록 없음")
     grid_decision_rows = snapshot.get("grid_decision_rows", "") or _empty_table_row(17, "띠기 판단 히스토리 없음")
     micro_grid_summary = snapshot.get("micro_grid_summary", "")
     micro_grid_rows = snapshot.get("micro_grid_rows", "") or _empty_table_row(13, "스캘핑 띠기 paper 실험 없음")
@@ -1467,7 +1508,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
           <h3>진행 중 Paper</h3>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입가</th><th>현재가</th><th>목표가</th><th>손절가</th><th>미실현</th><th>실현손익</th><th>이유</th></tr></thead>
+              <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입가</th><th>평단</th><th>현재가</th><th>목표가</th><th>손절가</th><th>미실현</th><th>실현손익</th><th>이유</th></tr></thead>
               <tbody id="active-paper-rows">{active_paper_rows}</tbody>
             </table>
           </div>
@@ -1498,7 +1539,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       <p class="muted">BTCUSDC maker-only 띠기 주문의 진입 대기, 보유, 익절/손절 흐름입니다. 현재가와 미실현 손익은 시장상황 스냅샷 기준입니다.</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입가</th><th>현재가</th><th>목표가</th><th>손절가</th><th>미실현</th><th>실현손익</th><th>이유</th></tr></thead>
+          <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입가</th><th>평단</th><th>현재가</th><th>목표가</th><th>손절가</th><th>미실현</th><th>실현손익</th><th>이유</th></tr></thead>
           <tbody id="grid-cycle-rows">{grid_cycle_rows}</tbody>
         </table>
       </div>
@@ -1529,7 +1570,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       <h3>전략/Paper 사이클</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입가</th><th>현재가</th><th>목표가</th><th>손절가</th><th>미실현</th><th>실현손익</th><th>이유</th></tr></thead>
+          <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입가</th><th>평단</th><th>현재가</th><th>목표가</th><th>손절가</th><th>미실현</th><th>실현손익</th><th>이유</th></tr></thead>
           <tbody id="paper-rows">{paper_rows}</tbody>
         </table>
       </div>

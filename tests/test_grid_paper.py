@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from dataclasses import replace
+import json
 from pathlib import Path
 
 from cointrading.config import TradingConfig
@@ -129,6 +130,31 @@ class GridPaperTests(unittest.TestCase):
         ][0]
         self.assertGreater(float(latest_long["entry_price"]), float(first_long["entry_price"]))
         self.assertEqual(int(latest_long["reprice_count"]), 1)
+
+    def test_multiple_filled_paper_layers_share_basket_average_target(self) -> None:
+        self.cfg = _cfg(grid_max_layers=2, grid_paper_max_active_cycles=2)
+        self._engine().step()
+
+        self.client.book = {"bidPrice": "79900.0", "askPrice": "79900.5"}
+        result = self._engine().step()
+
+        self.assertTrue(any(item["action"] == "paper_basket_tp_synced" for item in result.managed))
+        opens = [
+            row for row in self.store.recent_strategy_cycles(limit=10)
+            if row["strategy"] == STRATEGY_NAME and row["side"] == "long" and row["status"] == "OPEN"
+        ]
+        self.assertEqual(len(opens), 2)
+        targets = {round(float(row["target_price"]), 2) for row in opens}
+        self.assertEqual(len(targets), 1)
+        basket_entries = {
+            round(float(json.loads(row["setup_json"])["basket_avg_entry"]), 2)
+            for row in opens
+        }
+        self.assertEqual(len(basket_entries), 1)
+        avg_entry = basket_entries.pop()
+        layer_entries = sorted(float(row["entry_price"]) for row in opens)
+        self.assertGreater(avg_entry, layer_entries[0])
+        self.assertLess(avg_entry, layer_entries[-1])
 
 
 if __name__ == "__main__":

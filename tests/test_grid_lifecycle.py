@@ -232,6 +232,29 @@ class GridEngineTests(unittest.TestCase):
         self.assertGreaterEqual(tp_price, 79930.0)
         self.assertLessEqual(tp_price, 79930.1)
 
+    def test_unfilled_live_entry_reanchors_when_price_moves(self) -> None:
+        self.cfg = _cfg(
+            grid_max_layers=1,
+            grid_entry_reanchor_min_age_seconds=0,
+            grid_entry_reanchor_min_usdc=5.0,
+        )
+        save_state(GridState(mode=MODE_LONG), self.state)
+        self._engine().step()
+        cycle = self.store.recent_strategy_cycles(limit=1)[0]
+        old_entry = float(cycle["entry_price"])
+        old_order_id = int(cycle["entry_order_id"])
+
+        self.client.book = {"bidPrice": "80200.0", "askPrice": "80200.5"}
+        result = self._engine().step()
+
+        self.assertTrue(any(item["action"] == "entry_reanchored" for item in result.managed))
+        latest = self.store.recent_strategy_cycles(limit=1)[0]
+        self.assertGreater(float(latest["entry_price"]), old_entry)
+        self.assertNotEqual(int(latest["entry_order_id"]), old_order_id)
+        self.assertEqual(int(latest["reprice_count"]), 1)
+        self.assertEqual(len(self.client.cancels), 1)
+        self.assertEqual(load_state(self.state).daily_order_count, 2)
+
     def test_recommendation_shows_levels_and_command(self) -> None:
         text = grid_recommendation_text(
             config=self.cfg,

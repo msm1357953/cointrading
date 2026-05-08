@@ -120,6 +120,7 @@
 - 2026-05-08: Added a paper-only `micro_grid_paper` engine for the `스캘핑 띠기` dashboard tab. It never submits exchange orders; it records virtual maker entries into `strategy_cycles`, then marks paper fills, take-profit, stop-loss, entry-timeout, and max-hold exits for 5/10/15/20 USDC gap variants. A new `cointrading-micro-grid-paper.timer` runs it every minute on the VM.
 - 2026-05-08: Added a paper-only regular `maker_grid_paper` engine for the main `띠기` dashboard tab. This fixes the gap where `grid_decisions` showed STOPPED/observe history but no paper cycles. The new `cointrading-grid-paper.timer` mirrors the wide maker-grid gap/TP settings into virtual layers every minute, with no exchange orders.
 - 2026-05-08: Paper grid anchoring fixed. Unfilled `maker_grid_paper` and `micro_grid_paper` entry layers now re-anchor to the current price when the market has moved far enough; only already-filled/open paper positions keep their original entry/target/stop. Dashboard reason label `현재가 기준 재배치` marks these updates.
+- 2026-05-08: Live maker-grid pending entries now use the same re-anchor model. If an unfilled live layer drifts far from the current bid/ask-derived level, the engine cancels the stale post-only order and submits a fresh post-only maker order, updating the cycle's `entry_order_id`, entry price, quantity, deadline, and reprice count. Regular maker-grid paper now also recalculates open layers to a quantity-weighted basket average TP, and the dashboard shows both per-layer entry and basket average.
 
 ## Next Work Packets
 

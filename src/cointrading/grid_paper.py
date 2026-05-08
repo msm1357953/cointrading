@@ -118,10 +118,15 @@ class GridPaperEngine:
             status = str(cycle["status"])
             if status == STATUS_ENTRY_SUBMITTED:
                 item = self._manage_entry(cycle, market, ts)
-            elif status == STATUS_OPEN:
-                item = self._manage_open(cycle, market.mid, ts)
             else:
                 item = None
+            if item is not None:
+                managed.append(item)
+        managed.extend(self._sync_basket_targets(market, ts))
+        for cycle in self._active_cycles():
+            if str(cycle["status"]) != STATUS_OPEN:
+                continue
+            item = self._manage_open(cycle, market.mid, ts)
             if item is not None:
                 managed.append(item)
         return managed
@@ -215,6 +220,62 @@ class GridPaperEngine:
             "old_entry": current_entry,
             "new_entry": desired_entry,
         }
+
+    def _sync_basket_targets(self, market, ts: int) -> list[dict[str, Any]]:
+        managed: list[dict[str, Any]] = []
+        for side in ("long", "short"):
+            cycles = [
+                cycle
+                for cycle in self._active_cycles()
+                if str(cycle["status"]) == STATUS_OPEN and str(cycle["side"]) == side
+            ]
+            if not cycles:
+                continue
+            avg_entry = _weighted_average_entry(cycles)
+            total_qty = sum(float(cycle["quantity"]) for cycle in cycles)
+            if avg_entry <= 0 or total_qty <= 0:
+                continue
+            target = _target_price(side, avg_entry, market.take_profit_usdc)
+            changed = False
+            for cycle in cycles:
+                setup = _setup_dict(cycle)
+                current_target = float(cycle["target_price"] or 0.0)
+                setup_target = float(setup.get("basket_target_price") or 0.0)
+                if abs(current_target - target) >= self.config.grid_basket_reprice_min_usdc:
+                    changed = True
+                    break
+                if abs(setup_target - target) >= 0.000001:
+                    changed = True
+                    break
+            if not changed:
+                continue
+            for cycle in cycles:
+                self.storage.update_strategy_cycle(
+                    int(cycle["id"]),
+                    reason="paper_basket_tp_synced",
+                    target_price=target,
+                    timestamp_ms=ts,
+                )
+                _merge_cycle_setup(
+                    self.storage,
+                    int(cycle["id"]),
+                    {
+                        "basket_avg_entry": avg_entry,
+                        "basket_total_qty": total_qty,
+                        "basket_target_price": target,
+                        "basket_take_profit_usdc": market.take_profit_usdc,
+                    },
+                    ts,
+                )
+            managed.append({
+                "action": "paper_basket_tp_synced",
+                "side": side,
+                "cycles": len(cycles),
+                "avg_entry": avg_entry,
+                "target": target,
+                "total_qty": total_qty,
+            })
+        return managed
 
     def _manage_open(self, cycle, mid: float, ts: int) -> dict[str, Any] | None:
         side = str(cycle["side"])
@@ -316,13 +377,18 @@ def _cycle_key(cycle) -> tuple[str, int]:
 
 
 def _setup_value(cycle, key: str, default: Any = None) -> Any:
+    return _setup_dict(cycle).get(key, default)
+
+
+def _setup_dict(cycle) -> dict[str, Any]:
     raw = cycle["setup_json"]
     if not raw:
-        return default
+        return {}
     try:
-        return json.loads(raw).get(key, default)
+        loaded = json.loads(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
-        return default
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def _merge_cycle_setup(store: TradingStore, cycle_id: int, extra: dict[str, Any], ts: int) -> None:
@@ -352,6 +418,13 @@ def _entry_price(side: str, mid: float, gap_usdc: float, layer: int) -> float:
 
 def _target_price(side: str, entry: float, take_profit_usdc: float) -> float:
     return entry + take_profit_usdc if side == "long" else entry - take_profit_usdc
+
+
+def _weighted_average_entry(cycles: list[Any]) -> float:
+    total_qty = sum(float(cycle["quantity"]) for cycle in cycles)
+    if total_qty <= 0:
+        return 0.0
+    return sum(float(cycle["entry_price"]) * float(cycle["quantity"]) for cycle in cycles) / total_qty
 
 
 def _stop_price(side: str, entry: float, stop_usdc: float) -> float:

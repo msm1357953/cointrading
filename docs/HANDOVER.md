@@ -205,6 +205,14 @@ Active commands (Korean):
 - `호가창` / `오더플로우` — BTCUSDC websocket orderflow guard 상태. stale/missing이면 maker-grid 신규 진입을 막고, `DANGER`는 연속 확정된 경우에만 hard block/cancel로 본다.
 - `정지` / `재개`
 
+Maker-grid implementation notes:
+- Pending live maker entries are cancel-and-reposted when the current desired
+  level moves far enough away; `entry_order_id`, price, quantity, deadline, and
+  `reprice_count` are updated on the existing cycle.
+- Filled grid layers are managed as a basket. TP is recalculated from the
+  quantity-weighted average entry, not from each layer's original entry.
+- The dashboard grid/paper tables show both per-layer entry and basket average.
+
 Auto alerts come from `funding_carry_notify.py` and
 `wick_carry_notify.py`:
 - 📈 OPEN, ✅ CLOSED, 🛑 STOPPED on every cycle event

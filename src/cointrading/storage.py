@@ -1187,6 +1187,7 @@ class TradingStore:
         allowed = {
             "status",
             "reason",
+            "entry_order_id",
             "exit_order_id",
             "quantity",
             "entry_price",

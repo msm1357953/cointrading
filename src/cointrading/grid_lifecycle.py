@@ -750,16 +750,6 @@ class MakerGridEngine:
                 reason="entry_order_missing", timestamp_ms=ts,
             )
             return [{"id": cycle["id"], "action": "entry_missing"}]
-        age_ms = ts - int(cycle["created_ms"])
-        if age_ms >= self.config.grid_entry_order_ttl_seconds * 1000:
-            cancel_local_order(
-                client=self.client, store=self.storage, local_order_id=int(cycle["entry_order_id"])
-            )
-            self.storage.update_strategy_cycle(
-                int(cycle["id"]), status=STATUS_STOPPED,
-                reason="entry_ttl_expired", closed_ms=ts, timestamp_ms=ts,
-            )
-            return [{"id": cycle["id"], "action": "entry_cancelled_ttl"}]
         status_resp = query_live_order_status(
             client=self.client, store=self.storage, order_id=int(cycle["entry_order_id"])
         )
@@ -767,6 +757,23 @@ class MakerGridEngine:
             return [{"id": cycle["id"], "action": "entry_waiting"}]
         status = str(status_resp.get("status", ""))
         if status not in {"FILLED", "PARTIALLY_FILLED"}:
+            if int(cycle["entry_deadline_ms"] or 0) <= ts:
+                cancel_local_order(
+                    client=self.client,
+                    store=self.storage,
+                    local_order_id=int(cycle["entry_order_id"]),
+                )
+                self.storage.update_strategy_cycle(
+                    int(cycle["id"]),
+                    status=STATUS_STOPPED,
+                    reason="entry_ttl_expired",
+                    closed_ms=ts,
+                    timestamp_ms=ts,
+                )
+                return [{"id": cycle["id"], "action": "entry_cancelled_ttl"}]
+            reanchored = self._reanchor_entry_order_if_needed(cycle, market, ts, state)
+            if reanchored is not None:
+                return [reanchored]
             return [{"id": cycle["id"], "action": "entry_waiting", "status": status}]
 
         avg_entry = float(status_resp.get("avgPrice") or 0.0) or float(cycle["entry_price"])
@@ -823,6 +830,135 @@ class MakerGridEngine:
             "target": target,
             "qty": qty,
         }]
+
+    def _reanchor_entry_order_if_needed(
+        self,
+        cycle: Any,
+        market: GridMarket,
+        ts: int,
+        state: GridState,
+    ) -> dict[str, Any] | None:
+        if not self.config.grid_entry_reanchor_enabled:
+            return None
+        setup = _cycle_setup(cycle)
+        level = int(setup.get("grid_level") or 0)
+        if level <= 0:
+            return None
+        reprice_count = int(cycle["reprice_count"] or 0)
+        if reprice_count >= self.config.grid_entry_reanchor_max_reprices:
+            return None
+        if state.daily_order_count >= self.config.grid_max_orders_per_day:
+            return None
+        age_since_last_update = ts - int(cycle["updated_ms"] or cycle["created_ms"])
+        if age_since_last_update < self.config.grid_entry_reanchor_min_age_seconds * 1000:
+            return None
+
+        side = str(cycle["side"])
+        current_entry = float(cycle["entry_price"] or 0.0)
+        desired_entry = _entry_price_for_level(side, market, level)
+        threshold = max(
+            self.config.grid_entry_reanchor_min_usdc,
+            market.gap_usdc * self.config.grid_entry_reanchor_gap_fraction,
+        )
+        if desired_entry <= 0 or current_entry <= 0:
+            return None
+        if abs(desired_entry - current_entry) < threshold:
+            return None
+
+        ok, cancel_detail = cancel_local_order(
+            client=self.client,
+            store=self.storage,
+            local_order_id=int(cycle["entry_order_id"]),
+        )
+        if not ok:
+            return {
+                "id": cycle["id"],
+                "action": "entry_reanchor_cancel_failed",
+                "detail": cancel_detail,
+            }
+
+        notional = float(setup.get("notional") or 0.0)
+        if notional <= 0:
+            notional = current_entry * float(cycle["quantity"])
+        quantity = notional / desired_entry if desired_entry > 0 else 0.0
+        order_id, normalized_price, normalized_qty, detail = self._submit_entry_limit(
+            side=side,
+            quantity=quantity,
+            entry_price=desired_entry,
+            ts=ts,
+        )
+        if order_id is None or normalized_price <= 0 or normalized_qty <= 0:
+            self.storage.update_strategy_cycle(
+                int(cycle["id"]),
+                status=STATUS_STOPPED,
+                reason="entry_reanchor_submit_failed",
+                closed_ms=ts,
+                timestamp_ms=ts,
+            )
+            _merge_cycle_setup(
+                self.storage,
+                int(cycle["id"]),
+                {
+                    "reanchor_failed_at_ms": ts,
+                    "reanchor_failed_detail": detail,
+                    "reanchor_old_entry": current_entry,
+                    "reanchor_desired_entry": desired_entry,
+                },
+                ts,
+            )
+            return {
+                "id": cycle["id"],
+                "action": "entry_reanchor_submit_failed",
+                "detail": detail,
+            }
+
+        state.daily_order_count += 1
+        target_price = _target_price(side, normalized_price, 0.0, market.take_profit_usdc)
+        stop_price = (
+            normalized_price * (1.0 - self.config.grid_stop_loss_pct)
+            if side == "long"
+            else normalized_price * (1.0 + self.config.grid_stop_loss_pct)
+        )
+        self.storage.update_strategy_cycle(
+            int(cycle["id"]),
+            reason="entry_reanchored",
+            entry_order_id=order_id,
+            quantity=normalized_qty,
+            entry_price=normalized_price,
+            target_price=target_price,
+            stop_price=stop_price,
+            entry_deadline_ms=ts + self.config.grid_entry_order_ttl_seconds * 1000,
+            last_mid_price=market.mid,
+            reprice_count=reprice_count + 1,
+            timestamp_ms=ts,
+        )
+        _merge_cycle_setup(
+            self.storage,
+            int(cycle["id"]),
+            {
+                "gap_usdc": market.gap_usdc,
+                "take_profit_usdc": market.take_profit_usdc,
+                "atr_5m": market.atr_5m,
+                "entry_mid": market.mid,
+                "notional": normalized_price * normalized_qty,
+                "reanchor_count": reprice_count + 1,
+                "reanchored_at_ms": ts,
+                "reanchor_old_order_id": int(cycle["entry_order_id"]),
+                "reanchor_new_order_id": order_id,
+                "reanchor_old_entry": current_entry,
+                "reanchor_new_entry": normalized_price,
+            },
+            ts,
+        )
+        return {
+            "id": cycle["id"],
+            "action": "entry_reanchored",
+            "side": side,
+            "level": level,
+            "old_entry": current_entry,
+            "new_entry": normalized_price,
+            "order_id": order_id,
+        }
 
     def _manage_open_cycle(
         self,
@@ -999,11 +1135,7 @@ class MakerGridEngine:
             if state.daily_order_count >= self.config.grid_max_orders_per_day:
                 events.append({"action": "blocked", "reason": "daily_order_cap"})
                 break
-            price = (
-                market.bid - market.gap_usdc * level
-                if side == "long"
-                else market.ask + market.gap_usdc * level
-            )
+            price = _entry_price_for_level(side, market, level)
             if price <= 0:
                 continue
             quantity = notional / price
@@ -1439,6 +1571,14 @@ def _target_price(side: str, entry_price: float, take_profit_bps: float, take_pr
     return entry_price + delta if side == "long" else entry_price - delta
 
 
+def _entry_price_for_level(side: str, market: GridMarket, level: int) -> float:
+    return (
+        market.bid - market.gap_usdc * level
+        if side == "long"
+        else market.ask + market.gap_usdc * level
+    )
+
+
 def _weighted_average_entry(cycles: list[Any]) -> float:
     total_qty = sum(float(cycle["quantity"]) for cycle in cycles)
     if total_qty <= 0:
@@ -1727,11 +1867,7 @@ def grid_recommendation_text(
     if side:
         lines.extend(["", "예상 주문 레벨:"])
         for level in range(1, cfg.grid_max_layers + 1):
-            entry = (
-                market.bid - market.gap_usdc * level
-                if side == "long"
-                else market.ask + market.gap_usdc * level
-            )
+            entry = _entry_price_for_level(side, market, level)
             target = entry + market.take_profit_usdc if side == "long" else entry - market.take_profit_usdc
             lines.append(
                 f"  L{level}: {'BUY' if side == 'long' else 'SELL'} {entry:.2f} -> TP {target:.2f}"
@@ -1824,6 +1960,12 @@ def step_result_notification_text(result: StepResult) -> str:
             lines.append(
                 f"- 진입 체결: {item.get('side')} entry={float(item.get('entry', 0)):.2f} "
                 f"target={float(item.get('target', 0)):.2f}"
+            )
+        elif action == "entry_reanchored":
+            lines.append(
+                f"- 미체결 진입 재배치: {item.get('side')} L{item.get('level')} "
+                f"{float(item.get('old_entry', 0)):.2f} -> "
+                f"{float(item.get('new_entry', 0)):.2f}"
             )
         elif action == "closed_tp":
             lines.append(f"- 익절 체결: pnl={float(item.get('pnl', 0)):+.4f} USDC")

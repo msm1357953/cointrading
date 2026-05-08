@@ -268,6 +268,11 @@ class TradingConfig:
     grid_max_layer_notional: float = 1000.0
     grid_max_layers: int = 3
     grid_entry_order_ttl_seconds: int = 600
+    grid_entry_reanchor_enabled: bool = True
+    grid_entry_reanchor_min_usdc: float = 5.0
+    grid_entry_reanchor_gap_fraction: float = 0.25
+    grid_entry_reanchor_min_age_seconds: int = 30
+    grid_entry_reanchor_max_reprices: int = 12
     grid_gap_atr_mult: float = 0.60
     grid_gap_min_usdc: float = 50.0
     grid_gap_max_usdc: float = 150.0
@@ -854,6 +859,26 @@ class TradingConfig:
             grid_entry_order_ttl_seconds=_get_int(
                 "COINTRADING_GRID_ENTRY_ORDER_TTL_SECONDS",
                 cls.grid_entry_order_ttl_seconds,
+            ),
+            grid_entry_reanchor_enabled=_get_bool(
+                "COINTRADING_GRID_ENTRY_REANCHOR_ENABLED",
+                cls.grid_entry_reanchor_enabled,
+            ),
+            grid_entry_reanchor_min_usdc=_get_float(
+                "COINTRADING_GRID_ENTRY_REANCHOR_MIN_USDC",
+                cls.grid_entry_reanchor_min_usdc,
+            ),
+            grid_entry_reanchor_gap_fraction=_get_float(
+                "COINTRADING_GRID_ENTRY_REANCHOR_GAP_FRACTION",
+                cls.grid_entry_reanchor_gap_fraction,
+            ),
+            grid_entry_reanchor_min_age_seconds=_get_int(
+                "COINTRADING_GRID_ENTRY_REANCHOR_MIN_AGE_SECONDS",
+                cls.grid_entry_reanchor_min_age_seconds,
+            ),
+            grid_entry_reanchor_max_reprices=_get_int(
+                "COINTRADING_GRID_ENTRY_REANCHOR_MAX_REPRICES",
+                cls.grid_entry_reanchor_max_reprices,
             ),
             grid_gap_atr_mult=_get_float(
                 "COINTRADING_GRID_GAP_ATR_MULT", cls.grid_gap_atr_mult
