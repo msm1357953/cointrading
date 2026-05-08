@@ -266,6 +266,8 @@ class TradingConfig:
     grid_take_profit_atr_mult: float = 0.40
     grid_take_profit_min_usdc: float = 30.0
     grid_take_profit_max_usdc: float = 80.0
+    grid_basket_take_profit_enabled: bool = True
+    grid_basket_reprice_min_usdc: float = 5.0
     grid_warning_loss_pct: float = 0.0025
     grid_reduce_loss_pct: float = 0.0045
     grid_stop_loss_pct: float = 0.0070
@@ -834,6 +836,14 @@ class TradingConfig:
             grid_take_profit_max_usdc=_get_float(
                 "COINTRADING_GRID_TAKE_PROFIT_MAX_USDC",
                 cls.grid_take_profit_max_usdc,
+            ),
+            grid_basket_take_profit_enabled=_get_bool(
+                "COINTRADING_GRID_BASKET_TAKE_PROFIT_ENABLED",
+                cls.grid_basket_take_profit_enabled,
+            ),
+            grid_basket_reprice_min_usdc=_get_float(
+                "COINTRADING_GRID_BASKET_REPRICE_MIN_USDC",
+                cls.grid_basket_reprice_min_usdc,
             ),
             grid_warning_loss_pct=_get_float(
                 "COINTRADING_GRID_WARNING_LOSS_PCT", cls.grid_warning_loss_pct

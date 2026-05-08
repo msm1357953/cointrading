@@ -205,6 +205,28 @@ class GridEngineTests(unittest.TestCase):
         cycle = self.store.recent_strategy_cycles(limit=1)[0]
         self.assertEqual(cycle["status"], STATUS_OPEN)
 
+    def test_multiple_filled_layers_share_basket_take_profit_price(self) -> None:
+        save_state(GridState(mode=MODE_LONG), self.state)
+        self._engine().step()
+        entry_rows = self.store.recent_orders(limit=3)
+        fill_prices = ["79950.0", "79900.0", "79850.0"]
+        for row, fill_price in zip(entry_rows, fill_prices):
+            exchange_id = json.loads(row["response_json"])["orderId"]
+            self.client.canned_status[exchange_id] = {
+                "status": "FILLED",
+                "avgPrice": fill_price,
+                "executedQty": "0.001",
+            }
+
+        result = self._engine().step()
+
+        self.assertTrue(any(item["action"] == "basket_tp_synced" for item in result.managed))
+        tp_orders = [order for order in self.client.orders if order.reduce_only]
+        self.assertEqual(len(tp_orders), 3)
+        tp_prices = {round(float(order.price), 2) for order in tp_orders}
+        self.assertEqual(len(tp_prices), 1)
+        self.assertAlmostEqual(tp_prices.pop(), 79930.1, places=1)
+
     def test_recommendation_shows_levels_and_command(self) -> None:
         text = grid_recommendation_text(
             config=self.cfg,

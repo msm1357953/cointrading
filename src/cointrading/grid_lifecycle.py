@@ -225,12 +225,14 @@ class MakerGridEngine:
             if cancelled:
                 result.risk.append({"action": "manual_stop_cancel", "cancelled": cancelled})
             result.managed.extend(self._manage_cycles(market, ts, state))
+            result.managed.extend(self._sync_basket_take_profit_orders(market, ts, state))
             result.risk.extend(self._apply_risk_controls(market, ts, state))
             result.skipped.append({"reason": "mode_stopped", "detail": state.paused_reason})
             save_state(state, self.state_path)
             return result
 
         result.managed.extend(self._manage_cycles(market, ts, state))
+        result.managed.extend(self._sync_basket_take_profit_orders(market, ts, state))
         result.risk.extend(self._apply_risk_controls(market, ts, state))
         if not is_live_armed(self.config):
             result.skipped.append({"reason": "live_gate_locked", "detail": live_gate_text(self.config)})
@@ -492,6 +494,28 @@ class MakerGridEngine:
         qty = float(status_resp.get("executedQty") or 0.0) or float(cycle["quantity"])
         side = str(cycle["side"])
         target = _target_price(side, avg_entry, float(cycle["take_profit_bps"]), market.take_profit_usdc)
+        if self.config.grid_basket_take_profit_enabled:
+            self.storage.update_strategy_cycle(
+                int(cycle["id"]),
+                status=STATUS_OPEN,
+                reason="entry_filled_basket_tp_pending",
+                quantity=qty,
+                entry_price=avg_entry,
+                target_price=target,
+                exit_order_id=None,
+                opened_ms=ts,
+                last_mid_price=market.mid,
+                timestamp_ms=ts,
+            )
+            return [{
+                "id": cycle["id"],
+                "action": "entry_filled",
+                "side": side,
+                "entry": avg_entry,
+                "target": target,
+                "qty": qty,
+                "basket_tp_pending": True,
+            }]
         tp_order_id, detail = self._submit_take_profit_limit(
             side=side, quantity=qty, target_price=target, ts=ts
         )
@@ -556,6 +580,100 @@ class MakerGridEngine:
             int(cycle["id"]), last_mid_price=market.mid, timestamp_ms=ts,
         )
         return [{"id": cycle["id"], "action": "hold", "mark": market.mid}]
+
+    def _sync_basket_take_profit_orders(
+        self,
+        market: GridMarket,
+        ts: int,
+        state: GridState,
+    ) -> list[dict[str, Any]]:
+        if not self.config.grid_basket_take_profit_enabled:
+            return []
+        events: list[dict[str, Any]] = []
+        for side in ("long", "short"):
+            cycles = [
+                cycle
+                for cycle in self._active_grid_cycles(status=STATUS_OPEN)
+                if str(cycle["side"]) == side
+            ]
+            if not cycles:
+                continue
+            avg_entry = _weighted_average_entry(cycles)
+            if avg_entry <= 0:
+                continue
+            desired_target = _target_price(side, avg_entry, 0.0, market.take_profit_usdc)
+            total_qty = sum(float(cycle["quantity"]) for cycle in cycles)
+            needs_reprice = False
+            for cycle in cycles:
+                current_target = float(cycle["target_price"] or 0.0)
+                if cycle["exit_order_id"] is None:
+                    needs_reprice = True
+                    break
+                if abs(current_target - desired_target) >= self.config.grid_basket_reprice_min_usdc:
+                    needs_reprice = True
+                    break
+            if not needs_reprice:
+                continue
+            for cycle in cycles:
+                if cycle["exit_order_id"] is not None:
+                    cancel_local_order(
+                        client=self.client,
+                        store=self.storage,
+                        local_order_id=int(cycle["exit_order_id"]),
+                    )
+                    self.storage.update_strategy_cycle(
+                        int(cycle["id"]),
+                        exit_order_id=None,
+                        timestamp_ms=ts,
+                    )
+            submitted = 0
+            for cycle in cycles:
+                tp_order_id, detail = self._submit_take_profit_limit(
+                    side=side,
+                    quantity=float(cycle["quantity"]),
+                    target_price=desired_target,
+                    ts=ts,
+                )
+                if tp_order_id is None:
+                    closed = self._close_cycle_market(
+                        cycle, market.mid, ts, "basket_tp_submit_failed", state
+                    )
+                    events.append({
+                        "id": cycle["id"],
+                        "action": "emergency_close",
+                        "detail": detail,
+                        "closed": closed,
+                    })
+                    continue
+                self.storage.update_strategy_cycle(
+                    int(cycle["id"]),
+                    target_price=desired_target,
+                    exit_order_id=tp_order_id,
+                    reason="basket_tp_synced",
+                    timestamp_ms=ts,
+                )
+                _merge_cycle_setup(
+                    self.storage,
+                    int(cycle["id"]),
+                    {
+                        "basket_avg_entry": avg_entry,
+                        "basket_total_qty": total_qty,
+                        "basket_target_price": desired_target,
+                    },
+                    ts,
+                )
+                submitted += 1
+            if submitted:
+                events.append({
+                    "action": "basket_tp_synced",
+                    "side": side,
+                    "cycles": len(cycles),
+                    "submitted": submitted,
+                    "avg_entry": avg_entry,
+                    "target": desired_target,
+                    "total_qty": total_qty,
+                })
+        return events
 
     # ----- Entry placement -----
 
@@ -967,6 +1085,13 @@ def _target_price(side: str, entry_price: float, take_profit_bps: float, take_pr
     return entry_price + delta if side == "long" else entry_price - delta
 
 
+def _weighted_average_entry(cycles: list[Any]) -> float:
+    total_qty = sum(float(cycle["quantity"]) for cycle in cycles)
+    if total_qty <= 0:
+        return 0.0
+    return sum(float(cycle["entry_price"]) * float(cycle["quantity"]) for cycle in cycles) / total_qty
+
+
 def _cycle_pnl(cycle: Any, exit_price: float, quantity: float, exit_fee_rate: float) -> float:
     entry = float(cycle["entry_price"])
     qty = quantity if quantity > 0 else float(cycle["quantity"])
@@ -1021,6 +1146,23 @@ def _merge_cycle_setup(store: TradingStore, cycle_id: int, data: dict[str, Any],
         )
 
 
+def _basket_summary(cycles: list[Any]) -> dict[str, Any] | None:
+    if not cycles:
+        return None
+    side = str(cycles[0]["side"])
+    same_side = [cycle for cycle in cycles if str(cycle["side"]) == side]
+    if not same_side:
+        return None
+    total_qty = sum(float(cycle["quantity"]) for cycle in same_side)
+    if total_qty <= 0:
+        return None
+    return {
+        "side": side,
+        "total_qty": total_qty,
+        "avg_entry": _weighted_average_entry(same_side),
+    }
+
+
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
@@ -1073,6 +1215,7 @@ def grid_status_text(
         f"  진입 기준  : 계좌 USDC × {cfg.grid_layer_notional_pct * 100:.1f}% 명목가치"
         f" (상한 {cfg.grid_max_layer_notional:.0f} USDC)",
         f"  최대 겹수  : {cfg.grid_max_layers}",
+        f"  TP 방식    : {'평단 묶음 TP' if cfg.grid_basket_take_profit_enabled else '레이어별 TP'}",
         "",
         f"  오늘 손익  : {state.daily_realized_pnl:+.4f} USDC",
         f"  오늘 주문  : {state.daily_order_count}/{cfg.grid_max_orders_per_day}",
@@ -1098,6 +1241,12 @@ def grid_status_text(
         )
     if state.paused_reason:
         lines.append(f"  정지 사유  : {state.paused_reason}")
+    basket = _basket_summary(opens)
+    if basket is not None:
+        lines.append(
+            f"  평단/수량   : {basket['side']} avg {basket['avg_entry']:.2f} / "
+            f"qty {basket['total_qty']:.6f}"
+        )
     if market is not None:
         lines.extend([
             "",
@@ -1235,7 +1384,8 @@ def set_grid_mode_text(
         f" (상한 {cfg.grid_max_layer_notional:.0f} USDC)",
         f"최대 겹수: {cfg.grid_max_layers}",
         f"손실한도: 경고 {cfg.grid_warning_loss_pct:.2%}, 축소 {cfg.grid_reduce_loss_pct:.2%}, 정지 {cfg.grid_stop_loss_pct:.2%}",
-        "주문 방식: 진입/익절 모두 post-only maker. 손실한도 초과 시에만 reduce-only market.",
+        "주문 방식: 진입/익절 모두 post-only maker. 익절은 열린 레이어 평단 기준 묶음 TP.",
+        "손실한도 초과 시에만 reduce-only market.",
     ])
 
 
@@ -1272,6 +1422,12 @@ def step_result_notification_text(result: StepResult) -> str:
             )
         elif action == "closed_tp":
             lines.append(f"- 익절 체결: pnl={float(item.get('pnl', 0)):+.4f} USDC")
+        elif action == "basket_tp_synced":
+            lines.append(
+                f"- 묶음 TP 재배치: {item.get('side')} {item.get('cycles')}개 "
+                f"평단={float(item.get('avg_entry', 0)):.2f} "
+                f"TP={float(item.get('target', 0)):.2f}"
+            )
         elif action.startswith("grid_") or action in {"daily_stop"}:
             lines.append(
                 f"- 위험조치: {action} unreal={float(item.get('unrealized', 0)):+.4f} "
