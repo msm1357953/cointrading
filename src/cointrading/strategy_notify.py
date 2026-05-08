@@ -93,6 +93,7 @@ REASON_LABELS = {
     "live strategy position open": "실전 포지션 보유 중",
     "paper_entry_wait": "가상 진입 대기",
     "paper_entry_filled": "가상 진입 체결",
+    "paper_reanchored": "현재가 기준 재배치",
     "entry_timeout": "진입 대기 시간초과",
     "take_profit": "목표가 도달",
     "stop_loss": "손절 조건",

@@ -13,7 +13,7 @@ from typing import Any
 from cointrading.config import TradingConfig
 from cointrading.exchange.binance_usdm import BinanceUSDMClient
 from cointrading.grid_lifecycle import MakerGridEngine
-from cointrading.storage import TradingStore, default_db_path, now_ms
+from cointrading.storage import TradingStore, default_db_path, iso_from_ms, now_ms
 
 
 STRATEGY_NAME = "micro_grid_paper"
@@ -123,7 +123,7 @@ class MicroGridPaperEngine:
         for cycle in self._active_cycles():
             status = str(cycle["status"])
             if status == STATUS_ENTRY_SUBMITTED:
-                managed_item = self._manage_entry_submitted(cycle, market.mid, ts)
+                managed_item = self._manage_entry_submitted(cycle, market, ts)
             elif status == STATUS_OPEN:
                 managed_item = self._manage_open(cycle, market.mid, ts)
             else:
@@ -132,8 +132,9 @@ class MicroGridPaperEngine:
                 managed.append(managed_item)
         return managed
 
-    def _manage_entry_submitted(self, cycle, mid: float, ts: int) -> dict[str, Any] | None:
+    def _manage_entry_submitted(self, cycle, market, ts: int) -> dict[str, Any] | None:
         side = str(cycle["side"])
+        mid = market.mid
         entry_price = float(cycle["entry_price"])
         if _entry_filled(side, mid, entry_price):
             self.storage.update_strategy_cycle(
@@ -152,6 +153,9 @@ class MicroGridPaperEngine:
                 "side": side,
                 "mid": mid,
             }
+        reanchored = self._reanchor_entry_if_needed(cycle, market, ts)
+        if reanchored is not None:
+            return reanchored
         if int(cycle["entry_deadline_ms"] or 0) <= ts:
             self.storage.update_strategy_cycle(
                 int(cycle["id"]),
@@ -170,6 +174,49 @@ class MicroGridPaperEngine:
             }
         self.storage.update_strategy_cycle(int(cycle["id"]), last_mid_price=mid, timestamp_ms=ts)
         return None
+
+    def _reanchor_entry_if_needed(self, cycle, market, ts: int) -> dict[str, Any] | None:
+        side = str(cycle["side"])
+        gap = float(_setup_value(cycle, "gap_usdc", 0.0) or 0.0)
+        take_profit = float(_setup_value(cycle, "take_profit_usdc", 0.0) or 0.0)
+        if gap <= 0 or take_profit <= 0:
+            return None
+        current_entry = float(cycle["entry_price"])
+        desired_entry = _entry_price(side, market.mid, gap)
+        threshold = max(1.0, gap * 0.5)
+        if abs(desired_entry - current_entry) < threshold:
+            return None
+        stop_usdc = max(gap, take_profit) * self.config.micro_grid_paper_stop_gap_multiple
+        target = _target_price(side, desired_entry, take_profit)
+        stop = _stop_price(side, desired_entry, stop_usdc)
+        self.storage.update_strategy_cycle(
+            int(cycle["id"]),
+            reason="paper_reanchored",
+            entry_price=desired_entry,
+            target_price=target,
+            stop_price=stop,
+            entry_deadline_ms=ts + self.config.micro_grid_paper_entry_ttl_seconds * 1000,
+            last_mid_price=market.mid,
+            reprice_count=int(cycle["reprice_count"] or 0) + 1,
+            timestamp_ms=ts,
+        )
+        _merge_cycle_setup(
+            self.storage,
+            int(cycle["id"]),
+            {
+                "entry_mid": market.mid,
+                "reanchored_at_ms": ts,
+            },
+            ts,
+        )
+        return {
+            "action": "entry_reanchored",
+            "cycle_id": int(cycle["id"]),
+            "variant": _setup_value(cycle, "variant", ""),
+            "side": side,
+            "old_entry": current_entry,
+            "new_entry": desired_entry,
+        }
 
     def _manage_open(self, cycle, mid: float, ts: int) -> dict[str, Any] | None:
         side = str(cycle["side"])
@@ -296,6 +343,27 @@ def _setup_value(cycle, key: str, default: Any = None) -> Any:
         return json.loads(raw).get(key, default)
     except (TypeError, ValueError, json.JSONDecodeError):
         return default
+
+
+def _merge_cycle_setup(store: TradingStore, cycle_id: int, extra: dict[str, Any], ts: int) -> None:
+    setup: dict[str, Any] = {}
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT setup_json FROM strategy_cycles WHERE id=?",
+            (cycle_id,),
+        ).fetchone()
+        if row is not None and row["setup_json"]:
+            try:
+                loaded = json.loads(row["setup_json"])
+                if isinstance(loaded, dict):
+                    setup.update(loaded)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                setup = {}
+        setup.update(extra)
+        connection.execute(
+            "UPDATE strategy_cycles SET setup_json=?, updated_ms=?, updated_iso=? WHERE id=?",
+            (json.dumps(setup, sort_keys=True), ts, iso_from_ms(ts), cycle_id),
+        )
 
 
 def _side_orderflow_status(side: str, market) -> str:

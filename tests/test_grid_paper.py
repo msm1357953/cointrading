@@ -111,6 +111,25 @@ class GridPaperTests(unittest.TestCase):
         self.assertEqual(len(closed_cycles), 1)
         self.assertGreater(float(closed_cycles[0]["realized_pnl"]), 0.0)
 
+    def test_unfilled_layers_reanchor_when_price_moves(self) -> None:
+        self.cfg = _cfg(grid_max_layers=1, grid_paper_max_active_cycles=2)
+        self._engine().step()
+        first_long = [
+            row for row in self.store.recent_strategy_cycles(limit=10)
+            if row["strategy"] == STRATEGY_NAME and row["side"] == "long"
+        ][0]
+
+        self.client.book = {"bidPrice": "80100.0", "askPrice": "80100.5"}
+        result = self._engine().step()
+
+        self.assertTrue(any(item["action"] == "entry_reanchored" for item in result.managed))
+        latest_long = [
+            row for row in self.store.recent_strategy_cycles(limit=10)
+            if row["strategy"] == STRATEGY_NAME and row["side"] == "long"
+        ][0]
+        self.assertGreater(float(latest_long["entry_price"]), float(first_long["entry_price"]))
+        self.assertEqual(int(latest_long["reprice_count"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

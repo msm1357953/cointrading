@@ -18,7 +18,7 @@ from cointrading.grid_lifecycle import (
     _side_orderflow_status,
     _soft_filter_reasons,
 )
-from cointrading.storage import TradingStore, default_db_path, now_ms
+from cointrading.storage import TradingStore, default_db_path, iso_from_ms, now_ms
 
 
 STRATEGY_NAME = "maker_grid_paper"
@@ -117,7 +117,7 @@ class GridPaperEngine:
         for cycle in self._active_cycles():
             status = str(cycle["status"])
             if status == STATUS_ENTRY_SUBMITTED:
-                item = self._manage_entry(cycle, market.mid, ts)
+                item = self._manage_entry(cycle, market, ts)
             elif status == STATUS_OPEN:
                 item = self._manage_open(cycle, market.mid, ts)
             else:
@@ -126,8 +126,9 @@ class GridPaperEngine:
                 managed.append(item)
         return managed
 
-    def _manage_entry(self, cycle, mid: float, ts: int) -> dict[str, Any] | None:
+    def _manage_entry(self, cycle, market, ts: int) -> dict[str, Any] | None:
         side = str(cycle["side"])
+        mid = market.mid
         entry = float(cycle["entry_price"])
         if _entry_filled(side, mid, entry):
             self.storage.update_strategy_cycle(
@@ -145,6 +146,9 @@ class GridPaperEngine:
                 "side": side,
                 "layer": _setup_value(cycle, "layer"),
             }
+        reanchored = self._reanchor_entry_if_needed(cycle, market, ts)
+        if reanchored is not None:
+            return reanchored
         if int(cycle["entry_deadline_ms"] or 0) <= ts:
             self.storage.update_strategy_cycle(
                 int(cycle["id"]),
@@ -163,6 +167,54 @@ class GridPaperEngine:
             }
         self.storage.update_strategy_cycle(int(cycle["id"]), last_mid_price=mid, timestamp_ms=ts)
         return None
+
+    def _reanchor_entry_if_needed(self, cycle, market, ts: int) -> dict[str, Any] | None:
+        side = str(cycle["side"])
+        layer = int(_setup_value(cycle, "layer", 0) or 0)
+        if layer <= 0:
+            return None
+        current_entry = float(cycle["entry_price"])
+        desired_entry = _entry_price(side, market.mid, market.gap_usdc, layer)
+        threshold = max(self.config.grid_basket_reprice_min_usdc, market.gap_usdc * 0.25)
+        if abs(desired_entry - current_entry) < threshold:
+            return None
+        target = _target_price(side, desired_entry, market.take_profit_usdc)
+        stop_usdc = max(
+            market.gap_usdc * self.config.grid_paper_stop_gap_multiple,
+            market.take_profit_usdc * 2.0,
+        )
+        stop = _stop_price(side, desired_entry, stop_usdc)
+        self.storage.update_strategy_cycle(
+            int(cycle["id"]),
+            reason="paper_reanchored",
+            entry_price=desired_entry,
+            target_price=target,
+            stop_price=stop,
+            entry_deadline_ms=ts + self.config.grid_paper_entry_ttl_seconds * 1000,
+            last_mid_price=market.mid,
+            reprice_count=int(cycle["reprice_count"] or 0) + 1,
+            timestamp_ms=ts,
+        )
+        _merge_cycle_setup(
+            self.storage,
+            int(cycle["id"]),
+            {
+                "gap_usdc": market.gap_usdc,
+                "take_profit_usdc": market.take_profit_usdc,
+                "stop_usdc": stop_usdc,
+                "entry_mid": market.mid,
+                "reanchored_at_ms": ts,
+            },
+            ts,
+        )
+        return {
+            "action": "entry_reanchored",
+            "cycle_id": int(cycle["id"]),
+            "side": side,
+            "layer": layer,
+            "old_entry": current_entry,
+            "new_entry": desired_entry,
+        }
 
     def _manage_open(self, cycle, mid: float, ts: int) -> dict[str, Any] | None:
         side = str(cycle["side"])
@@ -271,6 +323,27 @@ def _setup_value(cycle, key: str, default: Any = None) -> Any:
         return json.loads(raw).get(key, default)
     except (TypeError, ValueError, json.JSONDecodeError):
         return default
+
+
+def _merge_cycle_setup(store: TradingStore, cycle_id: int, extra: dict[str, Any], ts: int) -> None:
+    setup: dict[str, Any] = {}
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT setup_json FROM strategy_cycles WHERE id=?",
+            (cycle_id,),
+        ).fetchone()
+        if row is not None and row["setup_json"]:
+            try:
+                loaded = json.loads(row["setup_json"])
+                if isinstance(loaded, dict):
+                    setup.update(loaded)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                setup = {}
+        setup.update(extra)
+        connection.execute(
+            "UPDATE strategy_cycles SET setup_json=?, updated_ms=?, updated_iso=? WHERE id=?",
+            (json.dumps(setup, sort_keys=True), ts, iso_from_ms(ts), cycle_id),
+        )
 
 
 def _entry_price(side: str, mid: float, gap_usdc: float, layer: int) -> float:
