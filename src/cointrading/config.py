@@ -77,6 +77,14 @@ def _get_csv_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return values or default
 
 
+def _get_float_tuple(name: str, default: tuple[float, ...]) -> tuple[float, ...]:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    values = tuple(float(item.strip()) for item in raw.split(",") if item.strip())
+    return values or default
+
+
 def _get_csv_lower_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -288,6 +296,18 @@ class TradingConfig:
     grid_overheat_1h_return_pct: float = 0.0130
     grid_atr_spike_multiple: float = 2.5
     grid_big_candle_atr_multiple: float = 1.5
+    # Paper-only micro grid ("스캘핑 띠기"). This never submits exchange orders;
+    # it records small maker-grid hypotheses into strategy_cycles for dashboard
+    # review before any live implementation is considered.
+    micro_grid_paper_enabled: bool = True
+    micro_grid_paper_symbol: str = "BTCUSDC"
+    micro_grid_paper_notional: float = 25.0
+    micro_grid_paper_gaps_usdc: tuple[float, ...] = (5.0, 10.0, 15.0, 20.0)
+    micro_grid_paper_take_profits_usdc: tuple[float, ...] = (5.0, 8.0, 10.0, 15.0)
+    micro_grid_paper_stop_gap_multiple: float = 4.0
+    micro_grid_paper_entry_ttl_seconds: int = 600
+    micro_grid_paper_max_hold_seconds: int = 1800
+    micro_grid_paper_max_active_cycles: int = 16
     # BTCUSDC orderflow guard. A separate websocket service writes a tiny JSON
     # snapshot once per second; grid reads it before placing maker entries.
     orderflow_guard_enabled: bool = True
@@ -930,6 +950,42 @@ class TradingConfig:
             grid_big_candle_atr_multiple=_get_float(
                 "COINTRADING_GRID_BIG_CANDLE_ATR_MULTIPLE",
                 cls.grid_big_candle_atr_multiple,
+            ),
+            micro_grid_paper_enabled=_get_bool(
+                "COINTRADING_MICRO_GRID_PAPER_ENABLED",
+                cls.micro_grid_paper_enabled,
+            ),
+            micro_grid_paper_symbol=_get_str(
+                "COINTRADING_MICRO_GRID_PAPER_SYMBOL",
+                cls.micro_grid_paper_symbol,
+            ).upper() or cls.micro_grid_paper_symbol,
+            micro_grid_paper_notional=_get_float(
+                "COINTRADING_MICRO_GRID_PAPER_NOTIONAL",
+                cls.micro_grid_paper_notional,
+            ),
+            micro_grid_paper_gaps_usdc=_get_float_tuple(
+                "COINTRADING_MICRO_GRID_PAPER_GAPS_USDC",
+                cls.micro_grid_paper_gaps_usdc,
+            ),
+            micro_grid_paper_take_profits_usdc=_get_float_tuple(
+                "COINTRADING_MICRO_GRID_PAPER_TAKE_PROFITS_USDC",
+                cls.micro_grid_paper_take_profits_usdc,
+            ),
+            micro_grid_paper_stop_gap_multiple=_get_float(
+                "COINTRADING_MICRO_GRID_PAPER_STOP_GAP_MULTIPLE",
+                cls.micro_grid_paper_stop_gap_multiple,
+            ),
+            micro_grid_paper_entry_ttl_seconds=_get_int(
+                "COINTRADING_MICRO_GRID_PAPER_ENTRY_TTL_SECONDS",
+                cls.micro_grid_paper_entry_ttl_seconds,
+            ),
+            micro_grid_paper_max_hold_seconds=_get_int(
+                "COINTRADING_MICRO_GRID_PAPER_MAX_HOLD_SECONDS",
+                cls.micro_grid_paper_max_hold_seconds,
+            ),
+            micro_grid_paper_max_active_cycles=_get_int(
+                "COINTRADING_MICRO_GRID_PAPER_MAX_ACTIVE_CYCLES",
+                cls.micro_grid_paper_max_active_cycles,
             ),
             orderflow_guard_enabled=_get_bool(
                 "COINTRADING_ORDERFLOW_GUARD_ENABLED",

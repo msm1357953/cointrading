@@ -1,0 +1,10 @@
+[Unit]
+Description=Run paper-only BTCUSDC micro grid lifecycle
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/msm1357953_gmail_com/cointrading
+EnvironmentFile=/home/msm1357953_gmail_com/cointrading/.env
+ExecStart=/home/msm1357953_gmail_com/cointrading/.venv/bin/python -m cointrading.cli micro-grid-paper-step

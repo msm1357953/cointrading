@@ -35,6 +35,7 @@ GCP project `seokmin-494312`, VM `cointrading-vm` (asia-northeast3-a, IP
 | `cointrading-ratio-capture.timer` (1h) | Accumulates LS/taker history into the lake |
 | `cointrading-market-context.timer` (5m) | Stores funding/OI/depth/spread snapshots |
 | `cointrading-market-regime.timer` (5m) | Macro regime classification |
+| `cointrading-micro-grid-paper.timer` (1m) | Paper-only BTCUSDC "스캘핑 띠기" shadow lifecycle; no exchange orders |
 | `cointrading-scalp-collect.timer` (1m) | Legacy signal logging — kept for historical context |
 | `cointrading-scalp-score.timer` (1m) | Legacy scoring — light, harmless |
 | `cointrading-telegram.service` | Korean command bot |

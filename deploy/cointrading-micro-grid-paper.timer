@@ -1,0 +1,11 @@
+[Unit]
+Description=Paper-only BTCUSDC micro grid lifecycle every minute
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+AccuracySec=5
+Unit=cointrading-micro-grid-paper.service
+
+[Install]
+WantedBy=timers.target

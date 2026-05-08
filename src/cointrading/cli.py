@@ -254,6 +254,9 @@ def main(argv: list[str] | None = None) -> None:
     grid_notify_parser = subparsers.add_parser("grid-step-notify")
     grid_notify_parser.add_argument("--state-path", type=Path, default=Path("data/grid_state.json"))
 
+    micro_grid_parser = subparsers.add_parser("micro-grid-paper-step")
+    micro_grid_parser.add_argument("--json", action="store_true")
+
     orderflow_guard_parser = subparsers.add_parser("orderflow-guard")
     orderflow_guard_parser.add_argument("--symbol", default=None)
     orderflow_guard_parser.add_argument("--output", type=Path)
@@ -563,6 +566,10 @@ def main(argv: list[str] | None = None) -> None:
         from cointrading.grid_lifecycle import run_step_and_notify
         result = run_step_and_notify(state_path=args.state_path)
         print(json.dumps(result, indent=2, default=str))
+    elif args.command == "micro-grid-paper-step":
+        from cointrading.micro_grid_paper import run_step_once
+        result = run_step_once()
+        print(json.dumps(result.as_dict(), indent=2, default=str))
     elif args.command == "orderflow-guard":
         from cointrading.orderflow_guard import run_guard_forever_cmd
         run_guard_forever_cmd(symbol=args.symbol, output=args.output)

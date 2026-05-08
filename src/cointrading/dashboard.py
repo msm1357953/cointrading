@@ -17,6 +17,10 @@ from cointrading.meta_strategy import (
     load_meta_report,
     meta_action_ko,
 )
+from cointrading.micro_grid_paper import (
+    STRATEGY_NAME as MICRO_GRID_STRATEGY_NAME,
+    micro_grid_variants,
+)
 from cointrading.refined_entry_gate import (
     default_refined_entry_report_path,
     load_refined_entry_report,
@@ -176,6 +180,9 @@ def _snapshot(
     market_context_rows = store.latest_market_contexts(symbols=config.scalp_symbols, limit=limit)
     grid_decisions = store.recent_grid_decisions(limit=limit)
     price_by_symbol = _price_by_symbol(market_context_rows)
+    micro_grid_cycles = [
+        row for row in strategy_cycles if str(_row_get(row, "strategy", "")) == MICRO_GRID_STRATEGY_NAME
+    ]
     scalp_performance = store.scalp_cycle_performance()
     strategy_performance = store.strategy_cycle_performance()
     scalp_exit_reasons = store.scalp_cycle_exit_reasons()
@@ -230,8 +237,8 @@ def _snapshot(
         "grid_paper_summary": _grid_paper_summary_html(grid_decisions),
         "grid_cycle_rows": _grid_cycle_rows_html(strategy_cycles, price_by_symbol)
         or _empty_table_row(14, "띠기 상태머신 기록 없음"),
-        "micro_grid_summary": _micro_grid_summary_html(config),
-        "micro_grid_rows": _micro_grid_rows_html(config),
+        "micro_grid_summary": _micro_grid_summary_html(config, micro_grid_cycles),
+        "micro_grid_rows": _micro_grid_rows_html(config, micro_grid_cycles, price_by_symbol),
         "strategy_summary": _strategy_summary_html(latest_strategy_batch),
         "tactical_radar_summary": _tactical_radar_summary_html(tactical_radar_report),
         "meta_summary": _meta_summary_html(meta_report),
@@ -474,6 +481,17 @@ def _row_get(row, key: str, default=None):
         return default
 
 
+def _setup_json(row) -> dict:
+    raw = _row_get(row, "setup_json")
+    if not raw:
+        return {}
+    try:
+        loaded = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
 def _float_or_none(value) -> float | None:
     if value is None or value == "":
         return None
@@ -575,41 +593,80 @@ def _grid_cycle_rows_html(strategy_cycles, price_by_symbol: dict[str, float]) ->
     return "\n".join(row for _, row in ranked)
 
 
-def _micro_grid_summary_html(config: TradingConfig) -> str:
+def _micro_grid_summary_html(config: TradingConfig, cycles) -> str:
+    cycles = list(cycles)
+    active = [row for row in cycles if _is_active_status(str(_row_get(row, "status", "")))]
+    entries = [row for row in active if str(_row_get(row, "status", "")) == "ENTRY_SUBMITTED"]
+    opens = [row for row in active if str(_row_get(row, "status", "")) == "OPEN"]
+    closed = [row for row in cycles if _row_get(row, "realized_pnl") is not None]
+    wins = [row for row in closed if float(_row_get(row, "realized_pnl", 0.0) or 0.0) > 0]
+    pnl_sum = sum(float(_row_get(row, "realized_pnl", 0.0) or 0.0) for row in closed)
+    variants = micro_grid_variants(config)
+    gap_text = " / ".join(f"{variant.gap_usdc:g}" for variant in variants) or "없음"
+    tp_text = " / ".join(f"{variant.take_profit_usdc:g}" for variant in variants) or "없음"
+    status_text = "작동 중" if active or closed else "엔진 대기"
     return "\n".join(
         [
-            _metric_html("상태", "paper 실험 대기", "warn"),
+            _metric_html("상태", status_text, "good" if cycles else "warn"),
             _metric_html("실전 주문", "없음", "good"),
             _metric_html("운영 원칙", "동일금액 레이어", "good"),
-            _metric_html("간격 후보", "5 / 10 / 15 / 20 USDC", "muted"),
-            _metric_html("익절 후보", "5 / 8 / 10 / 15 USDC", "muted"),
-            _metric_html("기준 심볼", config.grid_symbol, "muted"),
-            _metric_html("과열/DANGER", "신규 진입 중지", "warn"),
-            _metric_html("목표", "짧은 TP 표본 수집", "muted"),
+            _metric_html("진입대기/보유", f"{len(entries)} / {len(opens)}", "warn" if active else "muted"),
+            _metric_html("종료 표본", str(len(closed)), "good" if closed else "muted"),
+            _metric_html("승률", _fmt_pct(len(wins) / len(closed)) if closed else "n/a", "good" if wins else "muted"),
+            _metric_html("누적손익", f"{pnl_sum:+.6f}", _pnl_tone(pnl_sum)),
+            _metric_html("간격 후보", f"{gap_text} USDC", "muted"),
+            _metric_html("익절 후보", f"{tp_text} USDC", "muted"),
+            _metric_html("기준 심볼", config.micro_grid_paper_symbol, "muted"),
         ]
     )
 
 
-def _micro_grid_rows_html(config: TradingConfig) -> str:
-    variants = [
-        ("micro_5_5", "초촘촘", "5", "5", "동일", "스프레드/호가 최상급일 때만"),
-        ("micro_10_8", "촘촘", "10", "8", "동일", "횡보장 후보"),
-        ("micro_10_10", "기본", "10", "10", "동일", "거래 잦음/체결률 확인"),
-        ("micro_15_10", "완충", "15", "10", "동일", "급변동 교란 완화"),
-        ("micro_20_15", "넓은 간격", "20", "15", "동일", "변동성 커질 때 후보"),
-    ]
+def _micro_grid_rows_html(config: TradingConfig, cycles, price_by_symbol: dict[str, float]) -> str:
+    cycles = list(cycles)
+    if not cycles:
+        return "\n".join(
+            "<tr>"
+            f"<td>-</td><td>{escape(variant.name)}</td><td>{escape(config.micro_grid_paper_symbol)}</td>"
+            "<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>"
+            f"<td>{variant.gap_usdc:g}</td><td>{variant.take_profit_usdc:g}</td>"
+            f"<td>{_decision_pill('WAIT')}</td><td>-</td><td>엔진 시작 후 기록 생성</td>"
+            "</tr>"
+            for variant in micro_grid_variants(config)
+        )
+    ranked = sorted(cycles, key=lambda row: int(_row_get(row, "updated_ms", 0) or 0), reverse=True)
     return "\n".join(
+        _micro_grid_cycle_row_html(row, price_by_symbol)
+        for row in ranked
+    )
+
+
+def _micro_grid_cycle_row_html(cycle, price_by_symbol: dict[str, float]) -> str:
+    setup = _setup_json(cycle)
+    updated_ms = int(_row_get(cycle, "updated_ms", 0) or 0)
+    status = str(_row_get(cycle, "status", ""))
+    current_price = _current_price_for_cycle(cycle, price_by_symbol)
+    unrealized = _unrealized_pnl(cycle, current_price, cycle_type="전략")
+    realized = _row_get(cycle, "realized_pnl")
+    pnl = unrealized if _is_active_status(status) else realized
+    pnl_text = _fmt_signed_pnl(pnl)
+    gap = setup.get("gap_usdc")
+    tp = setup.get("take_profit_usdc")
+    return (
         "<tr>"
-        f"<td>{escape(name)}</td>"
-        f"<td>{escape(label)}</td>"
-        f"<td>{escape(config.grid_symbol)}</td>"
-        f"<td>{escape(gap)}</td>"
-        f"<td>{escape(tp)}</td>"
-        f"<td>{escape(layer)}</td>"
-        f"<td>{_decision_pill('WAIT')}</td>"
-        f"<td>{escape(note)}</td>"
+        f"<td>{escape(kst_from_ms(updated_ms))}</td>"
+        f"<td>{escape(str(setup.get('variant', '')))}</td>"
+        f"<td>{escape(str(_row_get(cycle, 'symbol', '')))}</td>"
+        f"<td>{escape(_side_label(str(_row_get(cycle, 'side', ''))))}</td>"
+        f"<td>{_status_pill(status)}</td>"
+        f"<td>{escape(_fmt_price(_row_get(cycle, 'entry_price')))}</td>"
+        f"<td>{escape(_fmt_price(current_price))}</td>"
+        f"<td>{escape(_fmt_price(_row_get(cycle, 'target_price')))}</td>"
+        f"<td>{escape(_fmt_price(_row_get(cycle, 'stop_price')))}</td>"
+        f"<td>{escape(_fmt_price(gap))}</td>"
+        f"<td>{escape(_fmt_price(tp))}</td>"
+        f'<td class="{_pnl_cell_class(pnl)}">{escape(pnl_text)}</td>'
+        f"<td>{escape(_reason_label(str(_row_get(cycle, 'reason', '') or '')))}</td>"
         "</tr>"
-        for name, label, gap, tp, layer, note in variants
     )
 
 
@@ -1199,7 +1256,7 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     grid_cycle_rows = snapshot.get("grid_cycle_rows", "") or _empty_table_row(14, "띠기 상태머신 기록 없음")
     grid_decision_rows = snapshot.get("grid_decision_rows", "") or _empty_table_row(17, "띠기 판단 히스토리 없음")
     micro_grid_summary = snapshot.get("micro_grid_summary", "")
-    micro_grid_rows = snapshot.get("micro_grid_rows", "") or _empty_table_row(8, "스캘핑 띠기 paper 실험 없음")
+    micro_grid_rows = snapshot.get("micro_grid_rows", "") or _empty_table_row(13, "스캘핑 띠기 paper 실험 없음")
     strategy_summary = snapshot.get("strategy_summary", "")
     tactical_radar_rows = snapshot.get("tactical_radar_rows", "") or _empty_table_row(13, "전술 레이더 결과 없음")
     signal_rows = snapshot["signal_rows"] or _empty_table_row(5, "최근 신호 없음")
@@ -1457,10 +1514,10 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     <section id="tab-micro-grid" class="tab-panel">
       <h2>스캘핑 띠기</h2>
       <div id="micro-grid-summary" class="metric-grid">{micro_grid_summary}</div>
-      <p class="muted">5~20 USDC 간격처럼 아주 짧게 먹는 띠기 실험 구역입니다. 아직 실전 주문 엔진이 아니라 paper로 후보군과 체결 가능성을 분리해서 볼 화면입니다.</p>
+      <p class="muted">5~20 USDC 간격처럼 아주 짧게 먹는 띠기 실험 구역입니다. 실전 주문은 전혀 넣지 않고, 가상 지정가 진입/익절/손절만 기록합니다.</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>실험</th><th>성격</th><th>심볼</th><th>간격 USDC</th><th>익절 USDC</th><th>레이어</th><th>상태</th><th>비고</th></tr></thead>
+          <thead><tr><th>갱신</th><th>실험</th><th>심볼</th><th>방향</th><th>상태</th><th>진입가</th><th>현재가</th><th>목표가</th><th>손절가</th><th>간격</th><th>익절폭</th><th>손익</th><th>이유</th></tr></thead>
           <tbody id="micro-grid-rows">{micro_grid_rows}</tbody>
         </table>
       </div>
