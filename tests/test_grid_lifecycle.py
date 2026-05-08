@@ -235,6 +235,13 @@ class GridEngineTests(unittest.TestCase):
         tp_price = tp_prices.pop()
         self.assertGreaterEqual(tp_price, 79930.0)
         self.assertLessEqual(tp_price, 79930.1)
+        open_cycles = [
+            row for row in self.store.recent_strategy_cycles(limit=10)
+            if row["strategy"] == STRATEGY_NAME and row["status"] == STATUS_OPEN
+        ]
+        stop_prices = {round(float(row["stop_price"]), 2) for row in open_cycles}
+        self.assertEqual(len(stop_prices), 1)
+        self.assertEqual(stop_prices.pop(), 79340.7)
 
     def test_unfilled_live_entry_reanchors_when_price_moves(self) -> None:
         self.cfg = _cfg(

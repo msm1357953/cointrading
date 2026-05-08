@@ -1037,16 +1037,48 @@ class MakerGridEngine:
             if avg_entry <= 0:
                 continue
             desired_target = _target_price(side, avg_entry, 0.0, market.take_profit_usdc)
+            desired_stop = _basket_stop_price(side, avg_entry, self.config.grid_stop_loss_pct)
             total_qty = sum(float(cycle["quantity"]) for cycle in cycles)
             needs_reprice = False
+            needs_stop_sync = False
             for cycle in cycles:
                 current_target = float(cycle["target_price"] or 0.0)
+                current_stop = float(cycle["stop_price"] or 0.0)
+                if abs(current_stop - desired_stop) >= 0.01:
+                    needs_stop_sync = True
                 if cycle["exit_order_id"] is None:
                     needs_reprice = True
                     break
                 if abs(current_target - desired_target) >= self.config.grid_basket_reprice_min_usdc:
                     needs_reprice = True
                     break
+            if not needs_reprice and needs_stop_sync:
+                for cycle in cycles:
+                    self.storage.update_strategy_cycle(
+                        int(cycle["id"]),
+                        stop_price=desired_stop,
+                        timestamp_ms=ts,
+                    )
+                    _merge_cycle_setup(
+                        self.storage,
+                        int(cycle["id"]),
+                        {
+                            "basket_avg_entry": avg_entry,
+                            "basket_total_qty": total_qty,
+                            "basket_target_price": desired_target,
+                            "basket_stop_price": desired_stop,
+                        },
+                        ts,
+                    )
+                events.append({
+                    "action": "basket_stop_synced",
+                    "side": side,
+                    "cycles": len(cycles),
+                    "avg_entry": avg_entry,
+                    "stop": desired_stop,
+                    "total_qty": total_qty,
+                })
+                continue
             if not needs_reprice:
                 continue
             for cycle in cycles:
@@ -1083,6 +1115,7 @@ class MakerGridEngine:
                 self.storage.update_strategy_cycle(
                     int(cycle["id"]),
                     target_price=desired_target,
+                    stop_price=desired_stop,
                     exit_order_id=tp_order_id,
                     reason="basket_tp_synced",
                     timestamp_ms=ts,
@@ -1094,6 +1127,7 @@ class MakerGridEngine:
                         "basket_avg_entry": avg_entry,
                         "basket_total_qty": total_qty,
                         "basket_target_price": desired_target,
+                        "basket_stop_price": desired_stop,
                     },
                     ts,
                 )
@@ -1106,6 +1140,7 @@ class MakerGridEngine:
                     "submitted": submitted,
                     "avg_entry": avg_entry,
                     "target": desired_target,
+                    "stop": desired_stop,
                     "total_qty": total_qty,
                 })
         return events
@@ -1639,6 +1674,10 @@ def _entry_price_for_level(side: str, market: GridMarket, level: int) -> float:
     )
 
 
+def _basket_stop_price(side: str, avg_entry: float, stop_loss_pct: float) -> float:
+    return avg_entry * (1.0 - stop_loss_pct) if side == "long" else avg_entry * (1.0 + stop_loss_pct)
+
+
 def _weighted_average_entry(cycles: list[Any]) -> float:
     total_qty = sum(float(cycle["quantity"]) for cycle in cycles)
     if total_qty <= 0:
@@ -2034,6 +2073,12 @@ def step_result_notification_text(result: StepResult) -> str:
                 f"- 묶음 TP 재배치: {item.get('side')} {item.get('cycles')}개 "
                 f"평단={float(item.get('avg_entry', 0)):.2f} "
                 f"TP={float(item.get('target', 0)):.2f}"
+            )
+        elif action == "basket_stop_synced":
+            lines.append(
+                f"- 묶음 손절 기준 동기화: {item.get('side')} {item.get('cycles')}개 "
+                f"평단={float(item.get('avg_entry', 0)):.2f} "
+                f"SL={float(item.get('stop', 0)):.2f}"
             )
         elif action == "orderflow_danger_cancel":
             lines.append(

@@ -146,10 +146,17 @@ class GridPaperTests(unittest.TestCase):
         self.assertEqual(len(opens), 2)
         targets = {round(float(row["target_price"]), 2) for row in opens}
         self.assertEqual(len(targets), 1)
+        stops = {round(float(row["stop_price"]), 2) for row in opens}
+        self.assertEqual(len(stops), 1)
         basket_entries = {
             round(float(json.loads(row["setup_json"])["basket_avg_entry"]), 2)
             for row in opens
         }
+        basket_stops = {
+            round(float(json.loads(row["setup_json"])["basket_stop_price"]), 2)
+            for row in opens
+        }
+        self.assertEqual(stops, basket_stops)
         self.assertEqual(len(basket_entries), 1)
         avg_entry = basket_entries.pop()
         layer_entries = sorted(float(row["entry_price"]) for row in opens)

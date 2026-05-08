@@ -209,8 +209,9 @@ Maker-grid implementation notes:
 - Pending live maker entries are cancel-and-reposted when the current desired
   level moves far enough away; `entry_order_id`, price, quantity, deadline, and
   `reprice_count` are updated on the existing cycle.
-- Filled grid layers are managed as a basket. TP is recalculated from the
-  quantity-weighted average entry, not from each layer's original entry.
+- Filled grid layers are managed as a basket. TP and displayed/stored stop
+  levels are recalculated from the quantity-weighted average entry, not from
+  each layer's original entry.
 - The dashboard grid/paper tables show both per-layer entry and basket average.
 - Time-risk guard is enabled by default for NY `09:25-10:30` because the local
   5m lake showed US cash-market open is the real high-risk window; KST 21:00

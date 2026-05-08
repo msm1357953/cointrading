@@ -236,24 +236,32 @@ class GridPaperEngine:
             if avg_entry <= 0 or total_qty <= 0:
                 continue
             target = _target_price(side, avg_entry, market.take_profit_usdc)
+            stop_usdc = max(
+                market.gap_usdc * self.config.grid_paper_stop_gap_multiple,
+                market.take_profit_usdc * 2.0,
+            )
+            stop = _stop_price(side, avg_entry, stop_usdc)
             changed = False
+            stop_changed = False
             for cycle in cycles:
                 setup = _setup_dict(cycle)
                 current_target = float(cycle["target_price"] or 0.0)
+                current_stop = float(cycle["stop_price"] or 0.0)
                 setup_target = float(setup.get("basket_target_price") or 0.0)
                 if abs(current_target - target) >= self.config.grid_basket_reprice_min_usdc:
                     changed = True
-                    break
+                if abs(current_stop - stop) >= 0.01:
+                    stop_changed = True
                 if abs(setup_target - target) >= 0.000001:
                     changed = True
-                    break
-            if not changed:
+            if not changed and not stop_changed:
                 continue
             for cycle in cycles:
                 self.storage.update_strategy_cycle(
                     int(cycle["id"]),
-                    reason="paper_basket_tp_synced",
+                    reason="paper_basket_tp_synced" if changed else "paper_basket_stop_synced",
                     target_price=target,
+                    stop_price=stop,
                     timestamp_ms=ts,
                 )
                 _merge_cycle_setup(
@@ -263,16 +271,19 @@ class GridPaperEngine:
                         "basket_avg_entry": avg_entry,
                         "basket_total_qty": total_qty,
                         "basket_target_price": target,
+                        "basket_stop_price": stop,
                         "basket_take_profit_usdc": market.take_profit_usdc,
+                        "basket_stop_usdc": stop_usdc,
                     },
                     ts,
                 )
             managed.append({
-                "action": "paper_basket_tp_synced",
+                "action": "paper_basket_tp_synced" if changed else "paper_basket_stop_synced",
                 "side": side,
                 "cycles": len(cycles),
                 "avg_entry": avg_entry,
                 "target": target,
+                "stop": stop,
                 "total_qty": total_qty,
             })
         return managed
