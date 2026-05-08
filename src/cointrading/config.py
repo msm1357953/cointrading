@@ -296,6 +296,15 @@ class TradingConfig:
     grid_overheat_1h_return_pct: float = 0.0130
     grid_atr_spike_multiple: float = 2.5
     grid_big_candle_atr_multiple: float = 1.5
+    # Paper-only regular maker grid. This mirrors the wide "띠기" settings
+    # into strategy_cycles so the dashboard can build evidence even while live
+    # mode is STOPPED.
+    grid_paper_enabled: bool = True
+    grid_paper_notional: float = 25.0
+    grid_paper_entry_ttl_seconds: int = 1800
+    grid_paper_max_hold_seconds: int = 7200
+    grid_paper_stop_gap_multiple: float = 3.0
+    grid_paper_max_active_cycles: int = 6
     # Paper-only micro grid ("스캘핑 띠기"). This never submits exchange orders;
     # it records small maker-grid hypotheses into strategy_cycles for dashboard
     # review before any live implementation is considered.
@@ -950,6 +959,30 @@ class TradingConfig:
             grid_big_candle_atr_multiple=_get_float(
                 "COINTRADING_GRID_BIG_CANDLE_ATR_MULTIPLE",
                 cls.grid_big_candle_atr_multiple,
+            ),
+            grid_paper_enabled=_get_bool(
+                "COINTRADING_GRID_PAPER_ENABLED",
+                cls.grid_paper_enabled,
+            ),
+            grid_paper_notional=_get_float(
+                "COINTRADING_GRID_PAPER_NOTIONAL",
+                cls.grid_paper_notional,
+            ),
+            grid_paper_entry_ttl_seconds=_get_int(
+                "COINTRADING_GRID_PAPER_ENTRY_TTL_SECONDS",
+                cls.grid_paper_entry_ttl_seconds,
+            ),
+            grid_paper_max_hold_seconds=_get_int(
+                "COINTRADING_GRID_PAPER_MAX_HOLD_SECONDS",
+                cls.grid_paper_max_hold_seconds,
+            ),
+            grid_paper_stop_gap_multiple=_get_float(
+                "COINTRADING_GRID_PAPER_STOP_GAP_MULTIPLE",
+                cls.grid_paper_stop_gap_multiple,
+            ),
+            grid_paper_max_active_cycles=_get_int(
+                "COINTRADING_GRID_PAPER_MAX_ACTIVE_CYCLES",
+                cls.grid_paper_max_active_cycles,
             ),
             micro_grid_paper_enabled=_get_bool(
                 "COINTRADING_MICRO_GRID_PAPER_ENABLED",

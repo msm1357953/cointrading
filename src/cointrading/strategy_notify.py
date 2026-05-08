@@ -59,6 +59,7 @@ STRATEGY_LABELS = {
     "breakout_reduced": "축소 돌파",
     "maker_scalp": "메이커 스캘핑",
     "maker_grid": "띠기 Maker Grid",
+    "maker_grid_paper": "띠기 Paper",
     "micro_grid_paper": "스캘핑 띠기 Paper",
     "observe_only": "관찰만",
     "breakout_trend_reduced_size": "돌파 추세 소액",

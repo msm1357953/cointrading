@@ -118,6 +118,7 @@
 - 2026-05-08: Maker-grid consecutive-loss handling changed from permanent STOPPED to a timed cooldown. Today's realized PnL remains display-only; after configured consecutive losses the grid pauses new entries for `COINTRADING_GRID_LOSS_COOLDOWN_SECONDS`, then automatically reevaluates if market/orderflow conditions have recovered.
 - 2026-05-08: Dashboard navigation split the previously buried maker-grid content into dedicated Korean tabs: `띠기`, `스캘핑 띠기`, and `페이퍼`. The `띠기` tab now shows grid mode, live gate, current price, gap/TP, active grid cycles, and decision history. `스캘핑 띠기` is explicitly marked as a paper experiment area with 5/10/15/20 USDC gap candidates, not as an active live order engine.
 - 2026-05-08: Added a paper-only `micro_grid_paper` engine for the `스캘핑 띠기` dashboard tab. It never submits exchange orders; it records virtual maker entries into `strategy_cycles`, then marks paper fills, take-profit, stop-loss, entry-timeout, and max-hold exits for 5/10/15/20 USDC gap variants. A new `cointrading-micro-grid-paper.timer` runs it every minute on the VM.
+- 2026-05-08: Added a paper-only regular `maker_grid_paper` engine for the main `띠기` dashboard tab. This fixes the gap where `grid_decisions` showed STOPPED/observe history but no paper cycles. The new `cointrading-grid-paper.timer` mirrors the wide maker-grid gap/TP settings into virtual layers every minute, with no exchange orders.
 
 ## Next Work Packets
 

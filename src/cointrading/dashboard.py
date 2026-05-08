@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 from cointrading.config import TradingConfig
 from cointrading.grid_lifecycle import is_live_armed as is_grid_live_armed
 from cointrading.grid_lifecycle import load_state as load_grid_state
+from cointrading.grid_paper import STRATEGY_NAME as GRID_PAPER_STRATEGY_NAME
 from cointrading.market_regime import macro_regime_ko, trade_bias_ko
 from cointrading.meta_strategy import (
     default_meta_report_path,
@@ -539,7 +540,7 @@ def _grid_status_summary_html(*, config: TradingConfig, grid_decisions, strategy
     active_grid_cycles = [
         row
         for row in strategy_cycles
-        if str(_row_get(row, "strategy", "")) == "maker_grid"
+        if str(_row_get(row, "strategy", "")) in {"maker_grid", GRID_PAPER_STRATEGY_NAME}
         and _is_active_status(str(_row_get(row, "status", "")))
     ]
     active_entries = sum(1 for row in active_grid_cycles if str(_row_get(row, "status", "")) == "ENTRY_SUBMITTED")
@@ -586,7 +587,7 @@ def _grid_cycle_rows_html(strategy_cycles, price_by_symbol: dict[str, float]) ->
     grid_cycles = [
         row
         for row in strategy_cycles
-        if str(_row_get(row, "strategy", "")) == "maker_grid"
+        if str(_row_get(row, "strategy", "")) in {"maker_grid", GRID_PAPER_STRATEGY_NAME}
     ]
     rows = _cycle_table_rows(grid_cycles, cycle_type="전략", price_by_symbol=price_by_symbol)
     ranked = sorted(rows, key=lambda item: item[0], reverse=True)

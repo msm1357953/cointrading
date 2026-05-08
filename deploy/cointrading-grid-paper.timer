@@ -1,0 +1,11 @@
+[Unit]
+Description=Paper-only BTCUSDC regular maker grid lifecycle every minute
+
+[Timer]
+OnBootSec=35
+OnUnitActiveSec=60
+AccuracySec=5
+Unit=cointrading-grid-paper.service
+
+[Install]
+WantedBy=timers.target
