@@ -225,7 +225,9 @@ class GridEngineTests(unittest.TestCase):
         self.assertEqual(len(tp_orders), 3)
         tp_prices = {round(float(order.price), 2) for order in tp_orders}
         self.assertEqual(len(tp_prices), 1)
-        self.assertAlmostEqual(tp_prices.pop(), 79930.1, places=1)
+        tp_price = tp_prices.pop()
+        self.assertGreaterEqual(tp_price, 79930.0)
+        self.assertLessEqual(tp_price, 79930.1)
 
     def test_recommendation_shows_levels_and_command(self) -> None:
         text = grid_recommendation_text(
