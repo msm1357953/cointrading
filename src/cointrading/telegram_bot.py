@@ -222,6 +222,13 @@ class TelegramCommandProcessor:
         "manual": "auto_off",
         "자동상태": "auto_status",
         "오토상태": "auto_status",
+        # Maker grid ("띠기")
+        "띠기": "grid",
+        "grid": "grid",
+        "띠기상태": "grid_status",
+        "grid_status": "grid_status",
+        "띠기추천": "grid_recommend",
+        "grid_recommend": "grid_recommend",
     }
 
     def __init__(
@@ -301,6 +308,12 @@ class TelegramCommandProcessor:
             return self.auto_off_text()
         if command == "auto_status":
             return self.auto_status_text()
+        if command == "grid":
+            return self.grid_text(args)
+        if command == "grid_status":
+            return self.grid_status_text()
+        if command == "grid_recommend":
+            return self.grid_recommend_text()
         if command == "pause":
             self.state.paused = True
             return "정지했습니다. 이후 자동매매 루프는 신규 진입을 거부해야 합니다."
@@ -342,6 +355,14 @@ class TelegramCommandProcessor:
                 "수동       - 자동 진입 OFF (알림만)",
                 "자동상태   - 모드 + 일 손익 + 안전장치 상태",
                 "",
+                "■ 띠기 maker grid (BTCUSDC, 20x)",
+                "띠기 추천       - 롱/숏/대기, 간격, 익절폭, 레벨 가격 추천",
+                "띠기 상태       - 현재 모드, 가격, 미실현손익, 설정",
+                "띠기 롱 시작    - 롱 grid ON",
+                "띠기 숏 시작    - 숏 grid ON",
+                "띠기 자동 시작  - 장세 기반 LONG/SHORT 자동 선택",
+                "띠기 정지       - 신규 진입 정지",
+                "",
                 "■ 시장 데이터",
                 "장세       - 매크로 regime 분류",
                 "시장상황 BTCUSDC - 펀딩/프리미엄/OI/스프레드/유동성",
@@ -362,6 +383,11 @@ class TelegramCommandProcessor:
         from cointrading.wick_lifecycle import (
             STATUS_CLOSED as W_CLOSED, STATUS_OPEN as W_OPEN,
             STATUS_STOPPED as W_STOPPED, STRATEGY_NAME as W_NAME,
+        )
+        from cointrading.grid_lifecycle import (
+            STRATEGY_NAME as G_NAME,
+            is_live_armed as grid_live_armed,
+            load_state as load_grid_state,
         )
 
         cfg = self.trading_config
@@ -389,6 +415,15 @@ class TelegramCommandProcessor:
         w_ready = wick_eval(store)
         f_armed = (not cfg.dry_run) and cfg.live_trading_enabled and cfg.funding_carry_live_enabled
         w_armed = (not cfg.dry_run) and cfg.live_trading_enabled and cfg.wick_carry_live_enabled
+        grid_state = load_grid_state()
+        with store.connect() as connection:
+            grid_open = connection.execute(
+                """
+                SELECT COUNT(*) FROM strategy_cycles
+                WHERE strategy=? AND status IN ('ENTRY_SUBMITTED', 'OPEN')
+                """,
+                (G_NAME,),
+            ).fetchone()[0]
 
         return "\n".join(
             [
@@ -408,7 +443,11 @@ class TelegramCommandProcessor:
                 f"  활성={cfg.wick_carry_enabled}  OPEN {w_open}  CLOSED {w_closed} ({w_ready.win_n}W/{w_ready.loss_n}L)  PnL {w_ready.sum_pnl:+.4f}",
                 f"  라이브 게이트: {'✅' if w_ready.ready else '❌'}  모드: {'🔴 ARMED' if w_armed else '안전 (페이퍼)'}",
                 "",
-                "자세한 정보: '펀딩' / '펀딩보고' / '꼬리' / '꼬리보고'",
+                "■ 띠기 maker grid",
+                f"  모드={grid_state.mode}  활성 주문/포지션={grid_open}  오늘PnL={grid_state.daily_realized_pnl:+.4f}",
+                f"  라이브: {'🔴 ARMED' if grid_live_armed(cfg) else '잠김'}  설정={cfg.grid_symbol} {cfg.grid_leverage}x",
+                "",
+                "자세한 정보: '펀딩' / '펀딩보고' / '꼬리' / '꼬리보고' / '띠기 추천'",
             ]
         )
 
@@ -1118,6 +1157,50 @@ class TelegramCommandProcessor:
         return "\n".join(lines)
 
     # ----- end auto -----
+
+    # ----- Maker grid ("띠기") -----
+
+    def grid_text(self, args: list[str]) -> str:
+        if not args:
+            return self.grid_status_text()
+        lowered = [arg.lower() for arg in args]
+        joined = " ".join(lowered)
+        if any(token in joined for token in ("추천", "recommend")):
+            return self.grid_recommend_text()
+        if any(token in joined for token in ("상태", "status")):
+            return self.grid_status_text()
+        if any(token in joined for token in ("정지", "중지", "stop", "off")):
+            return self.grid_set_mode_text("STOPPED")
+        if any(token in joined for token in ("자동", "auto")):
+            return self.grid_set_mode_text("AUTO")
+        if any(token in joined for token in ("롱", "long")):
+            return self.grid_set_mode_text("LONG")
+        if any(token in joined for token in ("숏", "short")):
+            return self.grid_set_mode_text("SHORT")
+        return "띠기 명령을 이해하지 못했습니다. 예: 띠기 추천 / 띠기 롱 시작 / 띠기 정지"
+
+    def grid_status_text(self) -> str:
+        from cointrading.grid_lifecycle import grid_status_text
+
+        return grid_status_text(
+            config=self.trading_config,
+            client=self.exchange_client,
+        )
+
+    def grid_recommend_text(self) -> str:
+        from cointrading.grid_lifecycle import grid_recommendation_text
+
+        return grid_recommendation_text(
+            config=self.trading_config,
+            client=self.exchange_client,
+        )
+
+    def grid_set_mode_text(self, mode: str) -> str:
+        from cointrading.grid_lifecycle import set_grid_mode_text
+
+        return set_grid_mode_text(mode, config=self.trading_config)
+
+    # ----- end grid -----
 
     def _fee_context(self) -> tuple[bool, float]:
         try:

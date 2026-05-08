@@ -247,6 +247,13 @@ def main(argv: list[str] | None = None) -> None:
     cba_parser.add_argument("--state-path", type=Path,
                             default=Path("data/consecutive_bar_alert_state.json"))
 
+    grid_step_parser = subparsers.add_parser("grid-step")
+    grid_step_parser.add_argument("--state-path", type=Path, default=Path("data/grid_state.json"))
+    grid_step_parser.add_argument("--json", action="store_true")
+
+    grid_notify_parser = subparsers.add_parser("grid-step-notify")
+    grid_notify_parser.add_argument("--state-path", type=Path, default=Path("data/grid_state.json"))
+
     strategy_evaluate_parser = subparsers.add_parser("strategy-evaluate")
     strategy_evaluate_parser.add_argument("--db-path", type=Path, default=default_db_path())
     strategy_evaluate_parser.add_argument("--limit", type=int, default=25)
@@ -537,6 +544,17 @@ def main(argv: list[str] | None = None) -> None:
             symbols=tuple(args.symbols), interval=args.interval,
             thresholds=tuple(args.thresholds), state_path=args.state_path,
         )
+        print(json.dumps(result, indent=2, default=str))
+    elif args.command == "grid-step":
+        from cointrading.grid_lifecycle import run_step_once
+        result = run_step_once(state_path=args.state_path)
+        if args.json:
+            print(json.dumps(result.as_dict(), indent=2, default=str))
+        else:
+            print(json.dumps(result.as_dict(), indent=2, default=str))
+    elif args.command == "grid-step-notify":
+        from cointrading.grid_lifecycle import run_step_and_notify
+        result = run_step_and_notify(state_path=args.state_path)
         print(json.dumps(result, indent=2, default=str))
     elif args.command == "trade-monitor":
         from cointrading.live_trade_monitor import run_monitor

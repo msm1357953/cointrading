@@ -1,0 +1,11 @@
+[Unit]
+Description=BTCUSDC maker grid lifecycle every minute
+
+[Timer]
+OnBootSec=120
+OnUnitInactiveSec=60
+AccuracySec=10
+Unit=cointrading-grid-engine.service
+
+[Install]
+WantedBy=timers.target

@@ -108,6 +108,7 @@
 - 2026-05-07: BNB fee-fuel target changed from a fixed tiny reserve to a dynamic reserve sized from current futures USDC balance, auto margin/leverage, max trades per day, round-trip taker fee, and a buffer multiplier. This keeps BNB fuel proportional to actual auto-trade size instead of the earlier 80 USDC experiment scale.
 - 2026-05-07: Consecutive-auto live entry threshold tightened from 6 to 7 consecutive 15m bars. Informational alerts can still show 5/6/7 tiers, but actual auto entry now waits for 7 bars to reduce ambiguous 6-bar entries.
 - 2026-05-08: Telegram live trade monitor net PnL accounting fixed. It now groups income by asset and converts BNB commissions to approximate USDC using the BNBUSDT mark before showing per-symbol subtotal and net total, so BNB fee-burn costs are no longer omitted/misread in trade summaries.
+- 2026-05-08: BTCUSDC maker-grid "띠기" lifecycle added as a separate live-only engine. It is state-file controlled by Telegram (`띠기 롱 시작`, `띠기 숏 시작`, `띠기 자동 시작`, `띠기 정지`, `띠기 상태`, `띠기 추천`), uses 20x isolated, sizes by notional exposure (`USDC balance × 5%`, capped at 1000 USDC per layer) rather than margin × leverage, places normal entry/TP orders as post-only maker, and only uses reduce-only market exits for loss-control emergencies. `띠기 추천` shows current price, recommended side/wait, dynamic ATR-based gap/TP, level prices, notional, and estimated margin before the owner starts a mode.
 
 ## Next Work Packets
 
@@ -117,6 +118,7 @@
 4. **Monitor paper PnL vs backtest** every few days. If the realised mean per cycle deviates by more than ~20 bps from the backtest expectation, pause and investigate — early divergence usually points to slippage assumptions being too optimistic or signal definition drift.
 5. **Do NOT redo the rejected hypotheses** (1h drop reversion, classical TA scalping, cross-sectional momentum on 5 symbols, LS/taker on 25-day data) — see `docs/HANDOVER.md` §5 for the reasons. Future budget should target genuinely new alpha sources (basis trading, cross-exchange spreads, or LS/taker once the lake matures).
 6. **Live one-shot review**, when it happens: inspect exchange fills, protective `STOP_MARKET` lifecycle, reduce-only exits, realised fees, and Telegram wording before allowing continuous live mode.
+7. **Maker-grid review**, if the owner starts `띠기`: verify all entry/TP orders are post-only maker (`GTX`), layer notional remains capped, and emergency reduce-only market closes only fire on configured loss thresholds. Start with `띠기 추천` and `띠기 상태`; do not manually place grid orders outside the engine.
 
 Legacy work packets (now superseded — kept for archaeology):
 - ~~Watch tactical radar / paper cycles~~ — `tactical_radar` and `tactical_paper` modules are disabled.

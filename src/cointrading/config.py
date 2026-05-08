@@ -248,6 +248,34 @@ class TradingConfig:
     consecutive_auto_max_consecutive_losses: int = 3    # auto-OFF after 3 losses in a row
     consecutive_auto_max_trades_per_day: int = 5
     consecutive_auto_freshness_seconds: int = 360       # trigger bar must be fresh
+    # BTCUSDC maker grid ("띠기"). This is live-only but state-file controlled:
+    # the timer does nothing until Telegram sets LONG/SHORT/AUTO mode.
+    # Sizing is by NOTIONAL exposure, not margin. At 20x, 5% notional on a
+    # 20k USDC account is a 1k notional order using roughly 50 USDC margin.
+    grid_enabled: bool = True
+    grid_live_enabled: bool = False
+    grid_symbol: str = "BTCUSDC"
+    grid_leverage: int = 20
+    grid_layer_notional_pct: float = 0.05
+    grid_max_layer_notional: float = 1000.0
+    grid_max_layers: int = 3
+    grid_entry_order_ttl_seconds: int = 600
+    grid_gap_atr_mult: float = 0.60
+    grid_gap_min_usdc: float = 50.0
+    grid_gap_max_usdc: float = 150.0
+    grid_take_profit_atr_mult: float = 0.40
+    grid_take_profit_min_usdc: float = 30.0
+    grid_take_profit_max_usdc: float = 80.0
+    grid_warning_loss_pct: float = 0.0025
+    grid_reduce_loss_pct: float = 0.0045
+    grid_stop_loss_pct: float = 0.0070
+    grid_daily_loss_pct: float = 0.0100
+    grid_max_consecutive_losses: int = 3
+    grid_max_orders_per_day: int = 12
+    grid_overheat_15m_return_pct: float = 0.0070
+    grid_overheat_1h_return_pct: float = 0.0130
+    grid_atr_spike_multiple: float = 2.5
+    grid_big_candle_atr_multiple: float = 1.5
     # BNB fee-discount fuel manager. This is intentionally separate from
     # strategy logic: it only buys/transfers small BNB amounts for fee payment.
     bnb_fee_topup_enabled: bool = False
@@ -749,6 +777,80 @@ class TradingConfig:
             consecutive_auto_freshness_seconds=_get_int(
                 "COINTRADING_CONSECUTIVE_AUTO_FRESHNESS_SECONDS",
                 cls.consecutive_auto_freshness_seconds,
+            ),
+            grid_enabled=_get_bool("COINTRADING_GRID_ENABLED", cls.grid_enabled),
+            grid_live_enabled=_get_bool(
+                "COINTRADING_GRID_LIVE_ENABLED", cls.grid_live_enabled
+            ),
+            grid_symbol=_get_str("COINTRADING_GRID_SYMBOL", cls.grid_symbol).upper()
+            or cls.grid_symbol,
+            grid_leverage=_get_int("COINTRADING_GRID_LEVERAGE", cls.grid_leverage),
+            grid_layer_notional_pct=_get_float(
+                "COINTRADING_GRID_LAYER_NOTIONAL_PCT", cls.grid_layer_notional_pct
+            ),
+            grid_max_layer_notional=_get_float(
+                "COINTRADING_GRID_MAX_LAYER_NOTIONAL", cls.grid_max_layer_notional
+            ),
+            grid_max_layers=_get_int("COINTRADING_GRID_MAX_LAYERS", cls.grid_max_layers),
+            grid_entry_order_ttl_seconds=_get_int(
+                "COINTRADING_GRID_ENTRY_ORDER_TTL_SECONDS",
+                cls.grid_entry_order_ttl_seconds,
+            ),
+            grid_gap_atr_mult=_get_float(
+                "COINTRADING_GRID_GAP_ATR_MULT", cls.grid_gap_atr_mult
+            ),
+            grid_gap_min_usdc=_get_float(
+                "COINTRADING_GRID_GAP_MIN_USDC", cls.grid_gap_min_usdc
+            ),
+            grid_gap_max_usdc=_get_float(
+                "COINTRADING_GRID_GAP_MAX_USDC", cls.grid_gap_max_usdc
+            ),
+            grid_take_profit_atr_mult=_get_float(
+                "COINTRADING_GRID_TAKE_PROFIT_ATR_MULT",
+                cls.grid_take_profit_atr_mult,
+            ),
+            grid_take_profit_min_usdc=_get_float(
+                "COINTRADING_GRID_TAKE_PROFIT_MIN_USDC",
+                cls.grid_take_profit_min_usdc,
+            ),
+            grid_take_profit_max_usdc=_get_float(
+                "COINTRADING_GRID_TAKE_PROFIT_MAX_USDC",
+                cls.grid_take_profit_max_usdc,
+            ),
+            grid_warning_loss_pct=_get_float(
+                "COINTRADING_GRID_WARNING_LOSS_PCT", cls.grid_warning_loss_pct
+            ),
+            grid_reduce_loss_pct=_get_float(
+                "COINTRADING_GRID_REDUCE_LOSS_PCT", cls.grid_reduce_loss_pct
+            ),
+            grid_stop_loss_pct=_get_float(
+                "COINTRADING_GRID_STOP_LOSS_PCT", cls.grid_stop_loss_pct
+            ),
+            grid_daily_loss_pct=_get_float(
+                "COINTRADING_GRID_DAILY_LOSS_PCT", cls.grid_daily_loss_pct
+            ),
+            grid_max_consecutive_losses=_get_int(
+                "COINTRADING_GRID_MAX_CONSECUTIVE_LOSSES",
+                cls.grid_max_consecutive_losses,
+            ),
+            grid_max_orders_per_day=_get_int(
+                "COINTRADING_GRID_MAX_ORDERS_PER_DAY", cls.grid_max_orders_per_day
+            ),
+            grid_overheat_15m_return_pct=_get_float(
+                "COINTRADING_GRID_OVERHEAT_15M_RETURN_PCT",
+                cls.grid_overheat_15m_return_pct,
+            ),
+            grid_overheat_1h_return_pct=_get_float(
+                "COINTRADING_GRID_OVERHEAT_1H_RETURN_PCT",
+                cls.grid_overheat_1h_return_pct,
+            ),
+            grid_atr_spike_multiple=_get_float(
+                "COINTRADING_GRID_ATR_SPIKE_MULTIPLE",
+                cls.grid_atr_spike_multiple,
+            ),
+            grid_big_candle_atr_multiple=_get_float(
+                "COINTRADING_GRID_BIG_CANDLE_ATR_MULTIPLE",
+                cls.grid_big_candle_atr_multiple,
             ),
             bnb_fee_topup_enabled=_get_bool(
                 "COINTRADING_BNB_FEE_TOPUP_ENABLED", cls.bnb_fee_topup_enabled

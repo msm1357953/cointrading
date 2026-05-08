@@ -39,6 +39,7 @@ GCP project `seokmin-494312`, VM `cointrading-vm` (asia-northeast3-a, IP
 | `cointrading-scalp-score.timer` (1m) | Legacy scoring — light, harmless |
 | `cointrading-telegram.service` | Korean command bot |
 | `cointrading-dashboard.service` | SSE dashboard |
+| `cointrading-grid-engine.timer` (1m) | BTCUSDC maker-grid "띠기"; dormant until Telegram mode is LONG/SHORT/AUTO |
 
 **Disabled (Phase 1 cleanup, do NOT re-enable without rationale):**
 `tactical-paper`, `tactical-live`, `strategy-evaluate`, `tactical-radar-notify`,
@@ -196,6 +197,7 @@ Active commands (Korean):
 - `꼬리` / `꼬리보고` / `꼬리준비` / `꼬리설정`
 - `장세`, `시장상황 BTCUSDC`, `주문`, `포지션`
 - `계좌`, `위험`, `수수료`, `BNB`, `BNB 보충`, `가격`
+- `띠기 추천`, `띠기 상태`, `띠기 롱 시작`, `띠기 숏 시작`, `띠기 자동 시작`, `띠기 정지`
 - `정지` / `재개`
 
 Auto alerts come from `funding_carry_notify.py` and
@@ -244,6 +246,25 @@ COINTRADING_BNB_FEE_TOPUP_MAX_TARGET_BNB=1.0
 COINTRADING_BNB_FEE_TOPUP_MIN_QUOTE_USDC=5
 COINTRADING_BNB_FEE_TOPUP_MAX_QUOTE_USDC=100
 COINTRADING_BNB_FEE_TOPUP_DAILY_QUOTE_LIMIT_USDC=200
+
+# BTCUSDC maker grid ("띠기"). State-file controlled by Telegram.
+COINTRADING_GRID_ENABLED=true
+COINTRADING_GRID_LIVE_ENABLED=false
+COINTRADING_GRID_SYMBOL=BTCUSDC
+COINTRADING_GRID_LEVERAGE=20
+COINTRADING_GRID_LAYER_NOTIONAL_PCT=0.05
+COINTRADING_GRID_MAX_LAYER_NOTIONAL=1000
+COINTRADING_GRID_MAX_LAYERS=3
+COINTRADING_GRID_ENTRY_ORDER_TTL_SECONDS=600
+COINTRADING_GRID_GAP_MIN_USDC=50
+COINTRADING_GRID_GAP_MAX_USDC=150
+COINTRADING_GRID_TAKE_PROFIT_MIN_USDC=30
+COINTRADING_GRID_TAKE_PROFIT_MAX_USDC=80
+COINTRADING_GRID_WARNING_LOSS_PCT=0.0025
+COINTRADING_GRID_REDUCE_LOSS_PCT=0.0045
+COINTRADING_GRID_STOP_LOSS_PCT=0.007
+COINTRADING_GRID_DAILY_LOSS_PCT=0.01
+COINTRADING_GRID_MAX_ORDERS_PER_DAY=12
 ```
 
 BNB fee top-up flow: USD-M futures USDC → spot USDC → spot `BNBUSDC`
@@ -271,6 +292,7 @@ src/cointrading/
   funding_carry_notify.py        # Telegram + state for Strategy 1
   wick_lifecycle.py              # Strategy 2 engine (paper + live)
   wick_carry_notify.py           # Telegram + state for Strategy 2
+  grid_lifecycle.py              # BTCUSDC maker-grid "띠기" lifecycle
   live_execution.py              # shared live order-flow primitives
 
   research/
