@@ -239,6 +239,11 @@ class BinanceUSDMClient:
             raise BinanceAPIError("order_id or orig_client_order_id is required")
         return self._signed_request("GET", "/fapi/v1/order", params=params)
 
+    def open_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        params = {"symbol": symbol.upper()} if symbol else None
+        result = self._signed_request("GET", "/fapi/v1/openOrders", params=params)
+        return list(result) if isinstance(result, list) else []
+
     def cancel_order(
         self,
         *,

@@ -432,6 +432,18 @@ class TelegramCommandProcessor:
                 """,
                 (G_NAME,),
             ).fetchone()[0]
+        try:
+            grid_exchange_orders = len(self.exchange_client.open_orders(cfg.grid_symbol))
+        except (AttributeError, BinanceAPIError):
+            grid_exchange_orders = 0
+        grid_exchange_positions = 0
+        try:
+            account = self.exchange_client.account_info()
+            for row in account.get("positions", []):
+                if row.get("symbol") == cfg.grid_symbol and abs(float(row.get("positionAmt") or 0)) > 0:
+                    grid_exchange_positions += 1
+        except (AttributeError, BinanceAPIError, ValueError):
+            grid_exchange_positions = 0
 
         return "\n".join(
             [
@@ -453,6 +465,7 @@ class TelegramCommandProcessor:
                 "",
                 "■ 띠기 maker grid",
                 f"  모드={grid_state.mode}  활성 주문/포지션={grid_open}  오늘PnL={grid_state.daily_realized_pnl:+.4f}",
+                f"  거래소 실제: 미체결 {grid_exchange_orders} / 포지션 {grid_exchange_positions}",
                 f"  라이브: {'🔴 ARMED' if grid_live_armed(cfg) else '잠김'}  설정={cfg.grid_symbol} {cfg.grid_leverage}x",
                 f"  호가창 센서: {'ON' if cfg.orderflow_guard_enabled else 'OFF'}",
                 "",

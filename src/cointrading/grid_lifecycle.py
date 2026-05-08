@@ -1049,6 +1049,22 @@ def grid_status_text(
     entries = [c for c in cycles if c["status"] == STATUS_ENTRY_SUBMITTED]
     opens = [c for c in cycles if c["status"] == STATUS_OPEN]
     unrealized = engine._grid_unrealized_pnl(market.mid) if market is not None else 0.0
+    actual_open_orders: list[dict[str, Any]] = []
+    actual_positions: list[dict[str, Any]] = []
+    try:
+        actual_open_orders = cl.open_orders(cfg.grid_symbol)
+    except (AttributeError, BinanceAPIError):
+        actual_open_orders = []
+    try:
+        account = cl.account_info()
+        for row in account.get("positions", []):
+            if row.get("symbol") != cfg.grid_symbol:
+                continue
+            qty = float(row.get("positionAmt") or 0.0)
+            if abs(qty) > 0:
+                actual_positions.append(row)
+    except (AttributeError, BinanceAPIError, ValueError):
+        actual_positions = []
     lines = [
         "■ 띠기 maker grid",
         f"  모드       : {state.mode}",
@@ -1062,8 +1078,24 @@ def grid_status_text(
         f"  오늘 주문  : {state.daily_order_count}/{cfg.grid_max_orders_per_day}",
         f"  연속 손실  : {state.consecutive_losses}/{cfg.grid_max_consecutive_losses}",
         f"  활성 주문  : 진입대기 {len(entries)} / 포지션 {len(opens)}",
+        f"  거래소 실제: 미체결 {len(actual_open_orders)} / 포지션 {len(actual_positions)}",
         f"  미실현손익 : {unrealized:+.4f} USDC",
     ]
+    if actual_open_orders and not entries:
+        lines.append("  주의       : DB에 없는 거래소 미체결 주문이 있습니다. 수동/외부 주문 가능성.")
+    for order in actual_open_orders[:3]:
+        lines.append(
+            "  실주문     : "
+            f"{order.get('side')} {order.get('type')} {order.get('origQty')} @ "
+            f"{order.get('price')} reduceOnly={order.get('reduceOnly')} "
+            f"id={order.get('clientOrderId')}"
+        )
+    for pos in actual_positions[:3]:
+        lines.append(
+            "  실포지션   : "
+            f"amt={pos.get('positionAmt')} entry={pos.get('entryPrice')} "
+            f"uPnL={pos.get('unrealizedProfit')}"
+        )
     if state.paused_reason:
         lines.append(f"  정지 사유  : {state.paused_reason}")
     if market is not None:
