@@ -107,6 +107,7 @@
 - 2026-05-07: BNB fee-fuel manager added. The bot can now check futures BNB fuel, top it up by moving USDC from USD-M futures to spot, buying BNB on spot, and transferring BNB back to USD-M futures. It is capped by env limits and only executes when `COINTRADING_BNB_FEE_TOPUP_ENABLED=true`, `COINTRADING_BNB_FEE_TOPUP_LIVE_ENABLED=true`, `COINTRADING_DRY_RUN=false`, and mainnet mode are all set. Telegram commands `BNB`, `BNB 보충`, and `BNB보충 15` were added; consecutive-auto checks BNB fuel before live entry. Full local suite: 190/190 passing.
 - 2026-05-07: BNB fee-fuel target changed from a fixed tiny reserve to a dynamic reserve sized from current futures USDC balance, auto margin/leverage, max trades per day, round-trip taker fee, and a buffer multiplier. This keeps BNB fuel proportional to actual auto-trade size instead of the earlier 80 USDC experiment scale.
 - 2026-05-07: Consecutive-auto live entry threshold tightened from 6 to 7 consecutive 15m bars. Informational alerts can still show 5/6/7 tiers, but actual auto entry now waits for 7 bars to reduce ambiguous 6-bar entries.
+- 2026-05-08: Telegram live trade monitor net PnL accounting fixed. It now groups income by asset and converts BNB commissions to approximate USDC using the BNBUSDT mark before showing per-symbol subtotal and net total, so BNB fee-burn costs are no longer omitted/misread in trade summaries.
 
 ## Next Work Packets
 

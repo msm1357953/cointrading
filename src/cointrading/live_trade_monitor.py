@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_LOOKBACK_MINUTES = 60
 INTERESTING_TYPES = ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE")
 RECENT_TRAN_IDS_KEEP = 500
+STABLE_ASSETS = {"USDC", "USDT", "BUSD", "FDUSD", "BFUSD"}
 
 
 def default_state_path() -> Path:
@@ -98,6 +99,72 @@ class GroupedAgg:
     funding_fee: float = 0.0
     funding_count: int = 0
     other: float = 0.0
+    realized_by_asset: dict[str, float] = field(default_factory=dict)
+    commission_by_asset: dict[str, float] = field(default_factory=dict)
+    funding_by_asset: dict[str, float] = field(default_factory=dict)
+    other_by_asset: dict[str, float] = field(default_factory=dict)
+
+
+def _add_asset_amount(target: dict[str, float], asset: str, amount: float) -> None:
+    asset = asset.upper() or "USDC"
+    target[asset] = target.get(asset, 0.0) + amount
+
+
+def _is_stable_asset(asset: str) -> bool:
+    return asset.upper() in STABLE_ASSETS
+
+
+def _asset_amounts_to_usdc(amounts: dict[str, float], asset_prices_usdc: dict[str, float]) -> float:
+    total = 0.0
+    for asset, amount in amounts.items():
+        if _is_stable_asset(asset):
+            total += amount
+            continue
+        price = asset_prices_usdc.get(asset.upper())
+        if price is not None and price > 0:
+            total += amount * price
+    return total
+
+
+def _format_asset_amount(asset: str, amount: float) -> str:
+    if _is_stable_asset(asset):
+        return f"{amount:+.4f} {asset.upper()}"
+    return f"{amount:+.8f} {asset.upper()}"
+
+
+def _format_asset_amounts(amounts: dict[str, float]) -> str:
+    visible = [(asset.upper(), amount) for asset, amount in sorted(amounts.items()) if abs(amount) > 1e-12]
+    if not visible:
+        return "+0.0000 USDC"
+    return ", ".join(_format_asset_amount(asset, amount) for asset, amount in visible)
+
+
+def _assets_seen(events: list[dict]) -> set[str]:
+    assets: set[str] = set()
+    for ev in events:
+        asset = str(ev.get("asset") or "").upper()
+        if asset and not _is_stable_asset(asset):
+            assets.add(asset)
+    return assets
+
+
+def asset_prices_usdc(client: BinanceUSDMClient, events: list[dict]) -> dict[str, float]:
+    """Return approximate USDC prices for non-stable income assets.
+
+    Futures income is usually USDC plus optional BNB commissions. Binance marks
+    BNB through BNBUSDT; treating USDT≈USDC is good enough for fee accounting.
+    """
+    prices: dict[str, float] = {}
+    for asset in sorted(_assets_seen(events)):
+        symbol = f"{asset}USDT"
+        try:
+            mark = client.mark_price(symbol)
+            price = float(mark.get("markPrice") or 0.0)
+        except (AttributeError, BinanceAPIError, KeyError, ValueError):
+            price = 0.0
+        if price > 0:
+            prices[asset] = price
+    return prices
 
 
 def aggregate(events: list[dict]) -> dict[str, GroupedAgg]:
@@ -106,45 +173,84 @@ def aggregate(events: list[dict]) -> dict[str, GroupedAgg]:
         sym = str(ev.get("symbol") or "-")
         amt = float(ev.get("income", 0) or 0)
         t = str(ev.get("incomeType") or "")
+        asset = str(ev.get("asset") or "USDC").upper()
         agg = by_symbol.setdefault(sym, GroupedAgg())
         if t == "REALIZED_PNL":
-            agg.realized_pnl += amt
+            _add_asset_amount(agg.realized_by_asset, asset, amt)
+            if _is_stable_asset(asset):
+                agg.realized_pnl += amt
             agg.realized_count += 1
         elif t == "COMMISSION":
-            agg.commission += amt
+            _add_asset_amount(agg.commission_by_asset, asset, amt)
+            if _is_stable_asset(asset):
+                agg.commission += amt
             agg.commission_count += 1
         elif t == "FUNDING_FEE":
-            agg.funding_fee += amt
+            _add_asset_amount(agg.funding_by_asset, asset, amt)
+            if _is_stable_asset(asset):
+                agg.funding_fee += amt
             agg.funding_count += 1
         else:
-            agg.other += amt
+            _add_asset_amount(agg.other_by_asset, asset, amt)
+            if _is_stable_asset(asset):
+                agg.other += amt
     return by_symbol
 
 
-def format_summary(events: list[dict], window_minutes: int) -> str:
+def format_summary(
+    events: list[dict],
+    window_minutes: int,
+    asset_prices_usdc: dict[str, float] | None = None,
+) -> str:
+    prices = {k.upper(): v for k, v in (asset_prices_usdc or {}).items()}
     grouped = aggregate(events)
     lines = [f"📊 거래 알림 (최근 {window_minutes}분 활동)"]
     grand_realized = grand_comm = grand_fund = 0.0
+    grand_other = 0.0
     for sym, agg in sorted(grouped.items()):
-        if agg.realized_count + agg.commission_count + agg.funding_count == 0 and agg.other == 0:
+        if (
+            agg.realized_count + agg.commission_count + agg.funding_count == 0
+            and not agg.other_by_asset
+        ):
             continue
         lines.append(f"  {sym}")
         if agg.realized_count > 0:
-            lines.append(f"    실현 손익  : {agg.realized_pnl:+.4f} USDC ({agg.realized_count}건)")
-            grand_realized += agg.realized_pnl
+            realized = _asset_amounts_to_usdc(agg.realized_by_asset, prices)
+            lines.append(
+                f"    실현 손익  : {_format_asset_amounts(agg.realized_by_asset)} "
+                f"({agg.realized_count}건)"
+            )
+            grand_realized += realized
         if agg.commission_count > 0:
-            lines.append(f"    수수료     : {agg.commission:+.4f} USDC ({agg.commission_count}건)")
-            grand_comm += agg.commission
+            commission = _asset_amounts_to_usdc(agg.commission_by_asset, prices)
+            raw = _format_asset_amounts(agg.commission_by_asset)
+            suffix = ""
+            if any(not _is_stable_asset(asset) for asset in agg.commission_by_asset):
+                suffix = f" ≈ {commission:+.4f} USDC"
+            lines.append(f"    수수료     : {raw}{suffix} ({agg.commission_count}건)")
+            grand_comm += commission
         if agg.funding_count > 0:
-            lines.append(f"    펀딩비     : {agg.funding_fee:+.4f} USDC ({agg.funding_count}건)")
-            grand_fund += agg.funding_fee
-        if agg.other != 0:
-            lines.append(f"    기타       : {agg.other:+.4f} USDC")
-        net = agg.realized_pnl + agg.commission + agg.funding_fee + agg.other
-        lines.append(f"    소계       : {net:+.4f} USDC")
-    grand_net = grand_realized + grand_comm + grand_fund
+            funding = _asset_amounts_to_usdc(agg.funding_by_asset, prices)
+            raw = _format_asset_amounts(agg.funding_by_asset)
+            suffix = ""
+            if any(not _is_stable_asset(asset) for asset in agg.funding_by_asset):
+                suffix = f" ≈ {funding:+.4f} USDC"
+            lines.append(f"    펀딩비     : {raw}{suffix} ({agg.funding_count}건)")
+            grand_fund += funding
+        if agg.other_by_asset:
+            other = _asset_amounts_to_usdc(agg.other_by_asset, prices)
+            lines.append(f"    기타       : {_format_asset_amounts(agg.other_by_asset)}")
+            grand_other += other
+        net = (
+            _asset_amounts_to_usdc(agg.realized_by_asset, prices)
+            + _asset_amounts_to_usdc(agg.commission_by_asset, prices)
+            + _asset_amounts_to_usdc(agg.funding_by_asset, prices)
+            + _asset_amounts_to_usdc(agg.other_by_asset, prices)
+        )
+        lines.append(f"    소계       : {net:+.4f} USDC 환산")
+    grand_net = grand_realized + grand_comm + grand_fund + grand_other
     lines.append("  ──────────────")
-    lines.append(f"  순 합계      : {grand_net:+.4f} USDC")
+    lines.append(f"  순 합계      : {grand_net:+.4f} USDC 환산")
     return "\n".join(lines)
 
 
@@ -202,7 +308,8 @@ def run_monitor(
                 1,
                 int((now_ms - min(int(e.get("time", now_ms)) for e in new_events)) / 60_000),
             )
-            text = format_summary(new_events, window_minutes)
+            prices = asset_prices_usdc(client, new_events)
+            text = format_summary(new_events, window_minutes, asset_prices_usdc=prices)
             tclient.send_message(text)
             sent = 1
         except TelegramConfigError as exc:

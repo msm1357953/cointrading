@@ -8,6 +8,7 @@ from cointrading.config import TelegramConfig, TradingConfig
 from cointrading.live_trade_monitor import (
     INTERESTING_TYPES,
     aggregate,
+    asset_prices_usdc,
     format_summary,
     run_monitor,
 )
@@ -22,6 +23,11 @@ class FakeIncomeClient:
         self.calls.append(params)
         return list(self.events)
 
+    def mark_price(self, symbol):
+        if symbol == "BNBUSDT":
+            return {"markPrice": "637.89"}
+        return {"markPrice": "1.0"}
+
 
 class FakeTelegram:
     def __init__(self) -> None:
@@ -32,10 +38,10 @@ class FakeTelegram:
         return {"ok": True}
 
 
-def _ev(*, time_ms, symbol, type_, income, tran_id):
+def _ev(*, time_ms, symbol, type_, income, tran_id, asset="USDC"):
     return {
         "time": time_ms, "symbol": symbol, "incomeType": type_,
-        "income": str(income), "tranId": tran_id, "asset": "USDC",
+        "income": str(income), "tranId": tran_id, "asset": asset,
     }
 
 
@@ -70,6 +76,30 @@ class FormatSummaryTests(unittest.TestCase):
         self.assertIn("순 합계", text)
         self.assertIn("+10.0", text)
         self.assertIn("-0.5", text)
+
+    def test_bnb_commission_is_converted_into_net_usdc(self) -> None:
+        events = [
+            _ev(time_ms=1000, symbol="BTCUSDC", type_="REALIZED_PNL",
+                income=262.86239984, tran_id="1"),
+            _ev(time_ms=1100, symbol="BTCUSDC", type_="COMMISSION",
+                income=-174.54676096, tran_id="2"),
+            _ev(time_ms=1200, symbol="BTCUSDC", type_="COMMISSION",
+                income=-0.17687531, tran_id="3", asset="BNB"),
+        ]
+        text = format_summary(events, window_minutes=5, asset_prices_usdc={"BNB": 637.89})
+        self.assertIn("-0.17687531 BNB", text)
+        self.assertIn("≈ -287.", text)
+        self.assertIn("순 합계", text)
+        self.assertIn("USDC 환산", text)
+        self.assertIn("-24.", text)
+
+    def test_asset_prices_reads_bnb_mark_price(self) -> None:
+        prices = asset_prices_usdc(
+            FakeIncomeClient(),
+            [_ev(time_ms=1000, symbol="BTCUSDC", type_="COMMISSION",
+                 income=-0.1, tran_id="1", asset="BNB")],
+        )
+        self.assertAlmostEqual(prices["BNB"], 637.89)
 
 
 class RunMonitorTests(unittest.TestCase):
