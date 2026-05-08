@@ -268,6 +268,13 @@ class TradingConfig:
     grid_take_profit_max_usdc: float = 80.0
     grid_basket_take_profit_enabled: bool = True
     grid_basket_reprice_min_usdc: float = 5.0
+    grid_position_filter_enabled: bool = True
+    grid_position_lookback_15m_bars: int = 96
+    grid_long_max_range_position: float = 0.82
+    grid_short_min_range_position: float = 0.18
+    grid_liquidity_filter_enabled: bool = True
+    grid_min_side_depth_010_usdc: float = 150_000.0
+    grid_min_total_depth_010_usdc: float = 350_000.0
     grid_warning_loss_pct: float = 0.0025
     grid_reduce_loss_pct: float = 0.0045
     grid_stop_loss_pct: float = 0.0070
@@ -844,6 +851,34 @@ class TradingConfig:
             grid_basket_reprice_min_usdc=_get_float(
                 "COINTRADING_GRID_BASKET_REPRICE_MIN_USDC",
                 cls.grid_basket_reprice_min_usdc,
+            ),
+            grid_position_filter_enabled=_get_bool(
+                "COINTRADING_GRID_POSITION_FILTER_ENABLED",
+                cls.grid_position_filter_enabled,
+            ),
+            grid_position_lookback_15m_bars=_get_int(
+                "COINTRADING_GRID_POSITION_LOOKBACK_15M_BARS",
+                cls.grid_position_lookback_15m_bars,
+            ),
+            grid_long_max_range_position=_get_float(
+                "COINTRADING_GRID_LONG_MAX_RANGE_POSITION",
+                cls.grid_long_max_range_position,
+            ),
+            grid_short_min_range_position=_get_float(
+                "COINTRADING_GRID_SHORT_MIN_RANGE_POSITION",
+                cls.grid_short_min_range_position,
+            ),
+            grid_liquidity_filter_enabled=_get_bool(
+                "COINTRADING_GRID_LIQUIDITY_FILTER_ENABLED",
+                cls.grid_liquidity_filter_enabled,
+            ),
+            grid_min_side_depth_010_usdc=_get_float(
+                "COINTRADING_GRID_MIN_SIDE_DEPTH_010_USDC",
+                cls.grid_min_side_depth_010_usdc,
+            ),
+            grid_min_total_depth_010_usdc=_get_float(
+                "COINTRADING_GRID_MIN_TOTAL_DEPTH_010_USDC",
+                cls.grid_min_total_depth_010_usdc,
             ),
             grid_warning_loss_pct=_get_float(
                 "COINTRADING_GRID_WARNING_LOSS_PCT", cls.grid_warning_loss_pct

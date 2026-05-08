@@ -368,6 +368,8 @@ class TelegramCommandProcessor:
                 "띠기 롱 시작    - 롱 grid ON",
                 "띠기 숏 시작    - 숏 grid ON",
                 "띠기 자동 시작  - 장세 기반 LONG/SHORT 자동 선택",
+                "띠기 롱 강제 시작 - 위치/유동성 soft filter 우회",
+                "띠기 숏 강제 시작 - 위치/유동성 soft filter 우회",
                 "띠기 정지       - 신규 진입 정지",
                 "호가창          - BTCUSDC 100ms orderflow 가드 상태",
                 "",
@@ -1193,13 +1195,14 @@ class TelegramCommandProcessor:
             return self.grid_status_text()
         if any(token in joined for token in ("정지", "중지", "stop", "off")):
             return self.grid_set_mode_text("STOPPED")
+        force_entry = any(token in joined for token in ("강제", "force"))
         if any(token in joined for token in ("자동", "auto")):
             return self.grid_set_mode_text("AUTO")
         if any(token in joined for token in ("롱", "long")):
-            return self.grid_set_mode_text("LONG")
+            return self.grid_set_mode_text("LONG", force_entry=force_entry)
         if any(token in joined for token in ("숏", "short")):
-            return self.grid_set_mode_text("SHORT")
-        return "띠기 명령을 이해하지 못했습니다. 예: 띠기 추천 / 띠기 롱 시작 / 띠기 정지"
+            return self.grid_set_mode_text("SHORT", force_entry=force_entry)
+        return "띠기 명령을 이해하지 못했습니다. 예: 띠기 추천 / 띠기 롱 시작 / 띠기 롱 강제 시작 / 띠기 정지"
 
     def grid_status_text(self) -> str:
         from cointrading.grid_lifecycle import grid_status_text
@@ -1217,10 +1220,10 @@ class TelegramCommandProcessor:
             client=self.exchange_client,
         )
 
-    def grid_set_mode_text(self, mode: str) -> str:
+    def grid_set_mode_text(self, mode: str, *, force_entry: bool = False) -> str:
         from cointrading.grid_lifecycle import set_grid_mode_text
 
-        return set_grid_mode_text(mode, config=self.trading_config)
+        return set_grid_mode_text(mode, config=self.trading_config, force_entry=force_entry)
 
     def orderflow_text(self) -> str:
         from cointrading.orderflow_guard import orderflow_guard_text

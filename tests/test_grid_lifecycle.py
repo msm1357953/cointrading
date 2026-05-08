@@ -44,6 +44,8 @@ def _cfg(**overrides) -> TradingConfig:
         maker_fee_rate=0.0,
         taker_fee_rate=0.0004,
         orderflow_guard_enabled=False,
+        grid_position_filter_enabled=False,
+        grid_liquidity_filter_enabled=False,
     )
     return replace(base, **overrides)
 
@@ -267,6 +269,33 @@ class GridEngineTests(unittest.TestCase):
         self.assertEqual(result.skipped[0]["reason"], "risk_halt")
         self.assertIn("orderflow", result.skipped[0]["detail"])
 
+    def test_manual_long_soft_blocks_when_price_is_near_range_top(self) -> None:
+        self.cfg = _cfg(
+            grid_position_filter_enabled=True,
+            grid_long_max_range_position=0.82,
+        )
+        save_state(GridState(mode=MODE_LONG), self.state)
+
+        result = self._engine().step()
+
+        self.assertEqual(result.opened, [])
+        self.assertEqual(self.client.orders, [])
+        self.assertEqual(result.skipped[0]["reason"], "soft_filter")
+        self.assertIn("롱 위치 차단", result.skipped[0]["detail"])
+
+    def test_force_long_bypasses_position_soft_filter_only(self) -> None:
+        self.cfg = _cfg(
+            grid_position_filter_enabled=True,
+            grid_long_max_range_position=0.82,
+        )
+        save_state(GridState(mode=MODE_LONG, force_entry=True), self.state)
+
+        result = self._engine().step()
+
+        self.assertEqual(len(result.opened), 3)
+        state = load_state(self.state)
+        self.assertTrue(state.force_entry)
+
 
 class TelegramGridTests(unittest.TestCase):
     def test_grid_mode_commands(self) -> None:
@@ -286,6 +315,13 @@ class TelegramGridTests(unittest.TestCase):
                 self.assertIn("20x ISOLATED", on)
                 state = mod.load_state()
                 self.assertEqual(state.mode, "LONG")
+                self.assertFalse(state.force_entry)
+
+                force = processor.handle_text("1", "띠기 롱 강제 시작")
+                self.assertIn("띠기 롱 강제 모드 ON", force)
+                self.assertIn("위치/유동성 필터: 우회", force)
+                state = mod.load_state()
+                self.assertTrue(state.force_entry)
 
                 rec = processor.handle_text("1", "띠기 추천")
                 self.assertIn("띠기 추천", rec)
@@ -293,6 +329,7 @@ class TelegramGridTests(unittest.TestCase):
                 off = processor.handle_text("1", "띠기 정지")
                 self.assertIn("띠기 정지", off)
                 self.assertEqual(mod.load_state().mode, MODE_STOPPED)
+                self.assertFalse(mod.load_state().force_entry)
             finally:
                 mod.default_state_path = orig
 

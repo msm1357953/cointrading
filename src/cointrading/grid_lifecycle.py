@@ -70,6 +70,7 @@ def _kst_today_str(ts_ms: int) -> str:
 @dataclass
 class GridState:
     mode: str = MODE_STOPPED
+    force_entry: bool = False
     paused_reason: str = ""
     daily_kst_date: str = ""
     daily_realized_pnl: float = 0.0
@@ -79,6 +80,7 @@ class GridState:
     def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
+            "force_entry": self.force_entry,
             "paused_reason": self.paused_reason,
             "daily_kst_date": self.daily_kst_date,
             "daily_realized_pnl": self.daily_realized_pnl,
@@ -93,6 +95,7 @@ class GridState:
             mode = MODE_STOPPED
         return cls(
             mode=mode,
+            force_entry=bool(data.get("force_entry", False)),
             paused_reason=str(data.get("paused_reason", "")),
             daily_kst_date=str(data.get("daily_kst_date", "")),
             daily_realized_pnl=float(data.get("daily_realized_pnl", 0.0)),
@@ -173,6 +176,11 @@ class GridMarket:
     orderflow_short_status: str = "UNKNOWN"
     orderflow_reason: str = ""
     orderflow_age_seconds: float | None = None
+    orderflow_bid_depth_010: float = 0.0
+    orderflow_ask_depth_010: float = 0.0
+    range_low_15m: float = 0.0
+    range_high_15m: float = 0.0
+    range_position_15m: float = 0.5
 
 
 @dataclass
@@ -253,12 +261,30 @@ class MakerGridEngine:
             })
             save_state(state, self.state_path)
             return result
+        active_side = self._active_grid_side()
+        if active_side is not None and active_side != side:
+            result.skipped.append({
+                "reason": "active_side_lock",
+                "side": side,
+                "detail": f"active {active_side} grid exists; wait until it closes before switching",
+            })
+            save_state(state, self.state_path)
+            return result
         if self._side_halted(side, market):
             self._cancel_pending_entries(ts, f"risk_{market.risk_label}")
             result.skipped.append({
                 "reason": "risk_halt",
                 "side": side,
                 "detail": self._side_halt_reason(side, market),
+            })
+            save_state(state, self.state_path)
+            return result
+        if self._soft_filter_blocked(side, market, state):
+            result.skipped.append({
+                "reason": "soft_filter",
+                "side": side,
+                "detail": self._soft_filter_reason(side, market),
+                "force_hint": "띠기 롱 강제 시작 / 띠기 숏 강제 시작",
             })
             save_state(state, self.state_path)
             return result
@@ -277,7 +303,11 @@ class MakerGridEngine:
         mid = (bid + ask) / 2.0
 
         klines_5m = self.client.klines(symbol=symbol, interval="5m", limit=300)
-        klines_15m = self.client.klines(symbol=symbol, interval="15m", limit=10)
+        klines_15m = self.client.klines(
+            symbol=symbol,
+            interval="15m",
+            limit=max(10, self.config.grid_position_lookback_15m_bars),
+        )
         klines_1h = self.client.klines(symbol=symbol, interval="1h", limit=10)
         closed_5m = _closed_klines(klines_5m)
         atr_values = _true_ranges(closed_5m)
@@ -319,6 +349,11 @@ class MakerGridEngine:
             risk_label = "NORMAL"
             risk_reason = ""
 
+        range_low, range_high, range_position = _range_position_from_klines(
+            klines_15m,
+            mid=mid,
+            lookback=self.config.grid_position_lookback_15m_bars,
+        )
         auto_side = _auto_side(klines_15m, klines_1h)
         orderflow = load_latest_snapshot(self.config)
         return GridMarket(
@@ -340,6 +375,11 @@ class MakerGridEngine:
             orderflow_short_status=orderflow.short_status,
             orderflow_reason=orderflow.reason,
             orderflow_age_seconds=orderflow.age_seconds,
+            orderflow_bid_depth_010=float(orderflow.data.get("bid_depth_010") or 0.0),
+            orderflow_ask_depth_010=float(orderflow.data.get("ask_depth_010") or 0.0),
+            range_low_15m=range_low,
+            range_high_15m=range_high,
+            range_position_15m=range_position,
         )
 
     def _side_halted(self, side: str, market: GridMarket) -> bool:
@@ -387,6 +427,15 @@ class MakerGridEngine:
             if market.ret_1h >= self.config.grid_overheat_1h_return_pct:
                 return f"1h adverse move {market.ret_1h * 100:+.2f}%"
         return "risk halt"
+
+    def _soft_filter_blocked(self, side: str, market: GridMarket, state: GridState) -> bool:
+        if state.force_entry:
+            return False
+        return bool(self._soft_filter_reason(side, market))
+
+    def _soft_filter_reason(self, side: str, market: GridMarket) -> str:
+        reasons = _soft_filter_reasons(side, market, self.config)
+        return "; ".join(reasons)
 
     def _effective_side_for_state(self, state: GridState, market: GridMarket) -> str | None:
         if state.mode == MODE_LONG:
@@ -1014,6 +1063,14 @@ class MakerGridEngine:
                 levels.add(int(level))
         return levels
 
+    def _active_grid_side(self) -> str | None:
+        sides = {str(cycle["side"]) for cycle in self._active_grid_cycles()}
+        if len(sides) == 1:
+            return next(iter(sides))
+        if len(sides) > 1:
+            return "mixed"
+        return None
+
     def _current_capital_usdc(self) -> float:
         try:
             balances = self.client.account_balance()
@@ -1065,6 +1122,56 @@ def _return_from_klines(klines: list[Kline], *, bars: int) -> float:
     if start <= 0:
         return 0.0
     return (end - start) / start
+
+
+def _range_position_from_klines(
+    klines: list[Kline],
+    *,
+    mid: float,
+    lookback: int,
+) -> tuple[float, float, float]:
+    closed = _closed_klines(klines)
+    rows = closed[-lookback:] if lookback > 0 else closed
+    if not rows:
+        return mid, mid, 0.5
+    low = min(k.low for k in rows)
+    high = max(k.high for k in rows)
+    if high <= low:
+        return low, high, 0.5
+    return low, high, _clamp((mid - low) / (high - low), 0.0, 1.0)
+
+
+def _soft_filter_reasons(
+    side: str,
+    market: GridMarket,
+    config: TradingConfig,
+) -> list[str]:
+    reasons: list[str] = []
+    if config.grid_position_filter_enabled:
+        if side == "long" and market.range_position_15m >= config.grid_long_max_range_position:
+            reasons.append(
+                f"롱 위치 차단: 최근 15m range 상단 {market.range_position_15m * 100:.0f}%"
+            )
+        if side == "short" and market.range_position_15m <= config.grid_short_min_range_position:
+            reasons.append(
+                f"숏 위치 차단: 최근 15m range 하단 {market.range_position_15m * 100:.0f}%"
+            )
+    if config.grid_liquidity_filter_enabled:
+        total_depth = market.orderflow_bid_depth_010 + market.orderflow_ask_depth_010
+        side_depth = (
+            market.orderflow_bid_depth_010 if side == "long" else market.orderflow_ask_depth_010
+        )
+        if side_depth > 0 and side_depth < config.grid_min_side_depth_010_usdc:
+            reasons.append(
+                f"유동성 부족: 내 쪽 0.1% depth {side_depth:,.0f} < "
+                f"{config.grid_min_side_depth_010_usdc:,.0f} USDC"
+            )
+        if total_depth > 0 and total_depth < config.grid_min_total_depth_010_usdc:
+            reasons.append(
+                f"유동성 부족: 양쪽 0.1% depth 합 {total_depth:,.0f} < "
+                f"{config.grid_min_total_depth_010_usdc:,.0f} USDC"
+            )
+    return reasons
 
 
 def _auto_side(klines_15m: list[Kline], klines_1h: list[Kline]) -> str | None:
@@ -1210,6 +1317,7 @@ def grid_status_text(
     lines = [
         "■ 띠기 maker grid",
         f"  모드       : {state.mode}",
+        f"  강제진입   : {'ON' if state.force_entry else 'OFF'}",
         f"  라이브 게이트: {'준비됨' if is_live_armed(cfg) else '잠김'} ({live_gate_text(cfg)})",
         f"  심볼/레버리지: {cfg.grid_symbol} {cfg.grid_leverage}x ISOLATED",
         f"  진입 기준  : 계좌 USDC × {cfg.grid_layer_notional_pct * 100:.1f}% 명목가치"
@@ -1256,6 +1364,10 @@ def grid_status_text(
             f"  변동       : 15m {market.ret_15m * 100:+.2f}% / 1h {market.ret_1h * 100:+.2f}%",
             f"  AUTO 판단  : {market.effective_side or '대기'}",
             (
+                f"  위치       : 최근 15m range {market.range_position_15m * 100:.0f}% "
+                f"({market.range_low_15m:.2f}~{market.range_high_15m:.2f})"
+            ),
+            (
                 "  호가창     : "
                 f"전체 {market.orderflow_status}, 롱 {market.orderflow_long_status}, "
                 f"숏 {market.orderflow_short_status}, age "
@@ -1272,6 +1384,10 @@ def grid_status_text(
             lines.append(f"  위험       : {market.risk_label} - {market.risk_reason}")
         if market.orderflow_reason and market.orderflow_status != "NORMAL":
             lines.append(f"  호가 사유  : {market.orderflow_reason}")
+        for side_name, label in (("long", "롱"), ("short", "숏")):
+            soft_reason = _soft_filter_reasons(side_name, market, cfg)
+            if soft_reason:
+                lines.append(f"  {label} 필터  : {'; '.join(soft_reason)}")
     elif market_error:
         lines.append(f"  시장 조회 오류: {market_error}")
     lines.extend([
@@ -1314,6 +1430,11 @@ def grid_recommendation_text(
             reason = f"호가창 차단: {market.orderflow_reason}"
         elif side_orderflow_status == "CAUTION":
             reason += f" / 호가창 주의: {market.orderflow_reason}"
+    if side:
+        soft_reasons = _soft_filter_reasons(side, market, cfg)
+        if soft_reasons:
+            side = None
+            reason = " / ".join(soft_reasons)
 
     lines = [
         "■ 띠기 추천",
@@ -1323,6 +1444,7 @@ def grid_recommendation_text(
         f"진입당: 명목 {layer_notional:.2f} USDC / 예상 증거금 {layer_margin:.2f} USDC @ {cfg.grid_leverage}x",
         f"최대 겹수: {cfg.grid_max_layers}개, 총 명목 최대 약 {layer_notional * cfg.grid_max_layers:.2f} USDC",
         f"변동: 15m {market.ret_15m * 100:+.2f}% / 1h {market.ret_1h * 100:+.2f}%",
+        f"위치: 최근 15m range {market.range_position_15m * 100:.0f}% ({market.range_low_15m:.2f}~{market.range_high_15m:.2f})",
         f"ATR: 5m {market.atr_5m:.2f}, 24h 중앙 {market.atr_5m_median_24h:.2f}",
         (
             "호가창: "
@@ -1347,7 +1469,11 @@ def grid_recommendation_text(
             f"시작 명령: 띠기 {'롱' if side == 'long' else '숏'} 시작",
         ])
     else:
-        lines.extend(["", "시작하지 않는 쪽을 추천. 그래도 강제로 하려면 '띠기 롱 시작' 또는 '띠기 숏 시작'."])
+        lines.extend([
+            "",
+            "시작하지 않는 쪽을 추천.",
+            "정말 의도적으로 무시하려면 '띠기 롱 강제 시작' 또는 '띠기 숏 강제 시작'.",
+        ])
     lines.append(f"라이브 게이트: {'준비됨' if is_live_armed(cfg) else '잠김'} ({live_gate_text(cfg)})")
     return "\n".join(lines)
 
@@ -1357,6 +1483,7 @@ def set_grid_mode_text(
     *,
     config: TradingConfig | None = None,
     state_path: Path | None = None,
+    force_entry: bool = False,
 ) -> str:
     cfg = config or TradingConfig.from_env()
     normalized = mode.upper()
@@ -1371,20 +1498,25 @@ def set_grid_mode_text(
     state = load_state(state_path)
     reset_daily_if_needed(state, store_now_ms())
     state.mode = normalized
+    state.force_entry = bool(force_entry and normalized in {MODE_LONG, MODE_SHORT})
     state.paused_reason = "manual stop" if normalized == MODE_STOPPED else ""
+    if normalized == MODE_STOPPED:
+        state.force_entry = False
     save_state(state, state_path)
     if normalized == MODE_STOPPED:
         return "띠기 정지 설정 완료. 다음 grid-step에서 미체결 진입 주문을 취소하고, 열린 포지션은 TP/손실한도 기준으로 관리합니다."
     side_text = {"LONG": "롱", "SHORT": "숏", "AUTO": "자동"}[normalized]
     return "\n".join([
-        f"띠기 {side_text} 모드 ON",
+        f"띠기 {side_text}{' 강제' if state.force_entry else ''} 모드 ON",
         f"심볼: {cfg.grid_symbol}",
         f"레버리지: {cfg.grid_leverage}x ISOLATED",
         f"진입당: 계좌 USDC × {cfg.grid_layer_notional_pct * 100:.1f}% 명목가치"
         f" (상한 {cfg.grid_max_layer_notional:.0f} USDC)",
         f"최대 겹수: {cfg.grid_max_layers}",
+        f"위치/유동성 필터: {'우회' if state.force_entry else '적용'}",
         f"손실한도: 경고 {cfg.grid_warning_loss_pct:.2%}, 축소 {cfg.grid_reduce_loss_pct:.2%}, 정지 {cfg.grid_stop_loss_pct:.2%}",
         "주문 방식: 진입/익절 모두 post-only maker. 익절은 열린 레이어 평단 기준 묶음 TP.",
+        "강제 모드여도 손실한도/orderflow DANGER/급변동 차단은 유지됩니다.",
         "손실한도 초과 시에만 reduce-only market.",
     ])
 
