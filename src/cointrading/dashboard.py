@@ -9,6 +9,8 @@ import time
 from urllib.parse import parse_qs, urlparse
 
 from cointrading.config import TradingConfig
+from cointrading.grid_lifecycle import is_live_armed as is_grid_live_armed
+from cointrading.grid_lifecycle import load_state as load_grid_state
 from cointrading.market_regime import macro_regime_ko, trade_bias_ko
 from cointrading.meta_strategy import (
     default_meta_report_path,
@@ -220,7 +222,16 @@ def _snapshot(
             scalp_exit_reasons=scalp_exit_reasons,
             strategy_exit_reasons=strategy_exit_reasons,
         ),
+        "grid_status_summary": _grid_status_summary_html(
+            config=config,
+            grid_decisions=grid_decisions,
+            strategy_cycles=strategy_cycles,
+        ),
         "grid_paper_summary": _grid_paper_summary_html(grid_decisions),
+        "grid_cycle_rows": _grid_cycle_rows_html(strategy_cycles, price_by_symbol)
+        or _empty_table_row(14, "띠기 상태머신 기록 없음"),
+        "micro_grid_summary": _micro_grid_summary_html(config),
+        "micro_grid_rows": _micro_grid_rows_html(config),
         "strategy_summary": _strategy_summary_html(latest_strategy_batch),
         "tactical_radar_summary": _tactical_radar_summary_html(tactical_radar_report),
         "meta_summary": _meta_summary_html(meta_report),
@@ -501,6 +512,104 @@ def _paper_summary_html(
             _metric_html("전략 합계", f"{strategy_sum:+.6f}", _pnl_tone(strategy_sum)),
             _metric_html("최악 종료사유", reason_text, "warn" if worst_reasons else "muted"),
         ]
+    )
+
+
+def _grid_status_summary_html(*, config: TradingConfig, grid_decisions, strategy_cycles) -> str:
+    state = load_grid_state()
+    live_armed = is_grid_live_armed(config)
+    active_grid_cycles = [
+        row
+        for row in strategy_cycles
+        if str(_row_get(row, "strategy", "")) == "maker_grid"
+        and _is_active_status(str(_row_get(row, "status", "")))
+    ]
+    active_entries = sum(1 for row in active_grid_cycles if str(_row_get(row, "status", "")) == "ENTRY_SUBMITTED")
+    active_opens = sum(1 for row in active_grid_cycles if str(_row_get(row, "status", "")) == "OPEN")
+    rows = list(grid_decisions)
+    latest = rows[0] if rows else None
+    latest_text = "기록 없음"
+    latest_tone = "warn"
+    price_text = "n/a"
+    gap_text = f"{config.grid_gap_min_usdc:.0f}-{config.grid_gap_max_usdc:.0f}"
+    tp_text = f"{config.grid_take_profit_min_usdc:.0f}-{config.grid_take_profit_max_usdc:.0f}"
+    if latest is not None:
+        side = str(_row_get(latest, "intended_side") or _row_get(latest, "effective_side") or "")
+        action = str(_row_get(latest, "action", ""))
+        latest_text = f"{_grid_action_label(action)} / {_side_label(side)}"
+        latest_tone = _grid_action_tone(action)
+        price_text = _fmt_price(_row_get(latest, "mid")) or "n/a"
+        gap_text = _fmt_price(_row_get(latest, "gap_usdc")) or gap_text
+        tp_text = _fmt_price(_row_get(latest, "take_profit_usdc")) or tp_text
+    cooldown_until = int(getattr(state, "loss_cooldown_until_ms", 0) or 0)
+    cooldown_active = cooldown_until > now_ms()
+    mode_tone = "good" if state.mode in {"LONG", "SHORT", "AUTO"} else "warn"
+    return "\n".join(
+        [
+            _metric_html("띠기 모드", state.mode, mode_tone),
+            _metric_html("실전 게이트", "준비됨" if live_armed else "잠김", "warn" if live_armed else "good"),
+            _metric_html("최근 판단", latest_text, latest_tone),
+            _metric_html("현재가", price_text, "muted"),
+            _metric_html("간격 / 익절", f"{gap_text} / {tp_text}", "muted"),
+            _metric_html("활성 진입/보유", f"{active_entries} / {active_opens}", "warn" if active_entries or active_opens else "good"),
+            _metric_html("오늘 주문", f"{state.daily_order_count}/{config.grid_max_orders_per_day}", "warn" if state.daily_order_count else "muted"),
+            _metric_html("오늘 손익", f"{state.daily_realized_pnl:+.4f}", _pnl_tone(state.daily_realized_pnl)),
+            _metric_html("연속손실", f"{state.consecutive_losses}/{config.grid_max_consecutive_losses}", "warn" if state.consecutive_losses else "good"),
+            _metric_html(
+                "손실 쿨다운",
+                kst_from_ms(cooldown_until) if cooldown_active else "없음",
+                "warn" if cooldown_active else "good",
+            ),
+        ]
+    )
+
+
+def _grid_cycle_rows_html(strategy_cycles, price_by_symbol: dict[str, float]) -> str:
+    grid_cycles = [
+        row
+        for row in strategy_cycles
+        if str(_row_get(row, "strategy", "")) == "maker_grid"
+    ]
+    rows = _cycle_table_rows(grid_cycles, cycle_type="전략", price_by_symbol=price_by_symbol)
+    ranked = sorted(rows, key=lambda item: item[0], reverse=True)
+    return "\n".join(row for _, row in ranked)
+
+
+def _micro_grid_summary_html(config: TradingConfig) -> str:
+    return "\n".join(
+        [
+            _metric_html("상태", "paper 실험 대기", "warn"),
+            _metric_html("실전 주문", "없음", "good"),
+            _metric_html("운영 원칙", "동일금액 레이어", "good"),
+            _metric_html("간격 후보", "5 / 10 / 15 / 20 USDC", "muted"),
+            _metric_html("익절 후보", "5 / 8 / 10 / 15 USDC", "muted"),
+            _metric_html("기준 심볼", config.grid_symbol, "muted"),
+            _metric_html("과열/DANGER", "신규 진입 중지", "warn"),
+            _metric_html("목표", "짧은 TP 표본 수집", "muted"),
+        ]
+    )
+
+
+def _micro_grid_rows_html(config: TradingConfig) -> str:
+    variants = [
+        ("micro_5_5", "초촘촘", "5", "5", "동일", "스프레드/호가 최상급일 때만"),
+        ("micro_10_8", "촘촘", "10", "8", "동일", "횡보장 후보"),
+        ("micro_10_10", "기본", "10", "10", "동일", "거래 잦음/체결률 확인"),
+        ("micro_15_10", "완충", "15", "10", "동일", "급변동 교란 완화"),
+        ("micro_20_15", "넓은 간격", "20", "15", "동일", "변동성 커질 때 후보"),
+    ]
+    return "\n".join(
+        "<tr>"
+        f"<td>{escape(name)}</td>"
+        f"<td>{escape(label)}</td>"
+        f"<td>{escape(config.grid_symbol)}</td>"
+        f"<td>{escape(gap)}</td>"
+        f"<td>{escape(tp)}</td>"
+        f"<td>{escape(layer)}</td>"
+        f"<td>{_decision_pill('WAIT')}</td>"
+        f"<td>{escape(note)}</td>"
+        "</tr>"
+        for name, label, gap, tp, layer, note in variants
     )
 
 
@@ -1085,8 +1194,12 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     active_paper_rows = snapshot.get("active_paper_rows", "") or _empty_table_row(14, "진행 중인 paper 사이클 없음")
     paper_rows = snapshot.get("paper_rows", "") or _empty_table_row(14, "paper 사이클 기록 없음")
     paper_summary = snapshot.get("paper_summary", "")
+    grid_status_summary = snapshot.get("grid_status_summary", "")
     grid_paper_summary = snapshot.get("grid_paper_summary", "")
+    grid_cycle_rows = snapshot.get("grid_cycle_rows", "") or _empty_table_row(14, "띠기 상태머신 기록 없음")
     grid_decision_rows = snapshot.get("grid_decision_rows", "") or _empty_table_row(17, "띠기 판단 히스토리 없음")
+    micro_grid_summary = snapshot.get("micro_grid_summary", "")
+    micro_grid_rows = snapshot.get("micro_grid_rows", "") or _empty_table_row(8, "스캘핑 띠기 paper 실험 없음")
     strategy_summary = snapshot.get("strategy_summary", "")
     tactical_radar_rows = snapshot.get("tactical_radar_rows", "") or _empty_table_row(13, "전술 레이더 결과 없음")
     signal_rows = snapshot["signal_rows"] or _empty_table_row(5, "최근 신호 없음")
@@ -1276,7 +1389,9 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
     </header>
     <nav>
       <button class="active" data-tab="overview">개요</button>
-      <button data-tab="paper">Paper</button>
+      <button data-tab="grid">띠기</button>
+      <button data-tab="micro-grid">스캘핑 띠기</button>
+      <button data-tab="paper">페이퍼</button>
       <button data-tab="radar">레이더</button>
       <button data-tab="research">메타전략</button>
       <button data-tab="strategies">전략</button>
@@ -1318,18 +1433,41 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
         </table>
       </div>
     </section>
-    <section id="tab-paper" class="tab-panel">
-      <h2>Paper 사이클</h2>
-      <div id="paper-summary" class="metric-grid">{paper_summary}</div>
-      <h3>띠기 판단 히스토리</h3>
+    <section id="tab-grid" class="tab-panel">
+      <h2>띠기 Maker Grid</h2>
+      <div id="grid-status-summary" class="metric-grid">{grid_status_summary}</div>
+      <h3>상태머신</h3>
+      <p class="muted">BTCUSDC maker-only 띠기 주문의 진입 대기, 보유, 익절/손절 흐름입니다. 현재가와 미실현 손익은 시장상황 스냅샷 기준입니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>갱신</th><th>구분</th><th>전략</th><th>심볼</th><th>방향</th><th>상태</th><th>수량</th><th>진입가</th><th>현재가</th><th>목표가</th><th>손절가</th><th>미실현</th><th>실현손익</th><th>이유</th></tr></thead>
+          <tbody id="grid-cycle-rows">{grid_cycle_rows}</tbody>
+        </table>
+      </div>
+      <h3>판단 히스토리</h3>
       <div id="grid-paper-summary" class="metric-grid">{grid_paper_summary}</div>
-      <p class="muted">실전 주문 전후로 매 분 “왜 진입/대기/차단했는지”를 기록합니다. 당일 손익은 표시용이고, DANGER는 연속 확정될 때만 강한 차단으로 봅니다.</p>
+      <p class="muted">매 분 “왜 진입/대기/차단했는지”를 남깁니다. DANGER는 연속 확정될 때 신규 진입을 강하게 막고, 이미 열린 포지션은 별도 위험관리로 봅니다.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>시각</th><th>모드</th><th>방향</th><th>판단</th><th>현재가</th><th>간격</th><th>TP폭</th><th>위치</th><th>15m</th><th>1h</th><th>장위험</th><th>롱 호가</th><th>숏 호가</th><th>진입/포지션</th><th>신규</th><th>이유</th><th>호가사유</th></tr></thead>
           <tbody id="grid-decision-rows">{grid_decision_rows}</tbody>
         </table>
       </div>
+    </section>
+    <section id="tab-micro-grid" class="tab-panel">
+      <h2>스캘핑 띠기</h2>
+      <div id="micro-grid-summary" class="metric-grid">{micro_grid_summary}</div>
+      <p class="muted">5~20 USDC 간격처럼 아주 짧게 먹는 띠기 실험 구역입니다. 아직 실전 주문 엔진이 아니라 paper로 후보군과 체결 가능성을 분리해서 볼 화면입니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>실험</th><th>성격</th><th>심볼</th><th>간격 USDC</th><th>익절 USDC</th><th>레이어</th><th>상태</th><th>비고</th></tr></thead>
+          <tbody id="micro-grid-rows">{micro_grid_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section id="tab-paper" class="tab-panel">
+      <h2>페이퍼 사이클</h2>
+      <div id="paper-summary" class="metric-grid">{paper_summary}</div>
       <h3>전략/Paper 사이클</h3>
       <div class="table-wrap">
         <table>
@@ -1502,8 +1640,12 @@ def _page(snapshot: dict[str, str], config: TradingConfig) -> str:
       document.getElementById("active-paper-rows").innerHTML = data.active_paper_rows;
       document.getElementById("paper-rows").innerHTML = data.paper_rows;
       document.getElementById("paper-summary").innerHTML = data.paper_summary;
+      document.getElementById("grid-status-summary").innerHTML = data.grid_status_summary;
       document.getElementById("grid-paper-summary").innerHTML = data.grid_paper_summary;
+      document.getElementById("grid-cycle-rows").innerHTML = data.grid_cycle_rows;
       document.getElementById("grid-decision-rows").innerHTML = data.grid_decision_rows;
+      document.getElementById("micro-grid-summary").innerHTML = data.micro_grid_summary;
+      document.getElementById("micro-grid-rows").innerHTML = data.micro_grid_rows;
       document.getElementById("strategy-summary").innerHTML = data.strategy_summary;
       document.getElementById("strategy-summary-tab").innerHTML = data.strategy_summary;
       document.getElementById("tactical-radar-summary").innerHTML = data.tactical_radar_summary;

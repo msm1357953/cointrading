@@ -58,6 +58,7 @@ STRATEGY_LABELS = {
     "range_reversion": "레인지 평균회귀",
     "breakout_reduced": "축소 돌파",
     "maker_scalp": "메이커 스캘핑",
+    "maker_grid": "띠기 Maker Grid",
     "observe_only": "관찰만",
     "breakout_trend_reduced_size": "돌파 추세 소액",
     "trend_long_15m_1h": "상승 추세 롱",
