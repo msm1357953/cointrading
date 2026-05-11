@@ -221,6 +221,11 @@ Maker-grid implementation notes:
   long and short hypotheses together anymore: manual LONG/SHORT is respected,
   and AUTO/STOPPED shadows only the current auto-selected side. Opposite-side
   active paper rows are stopped with `paper_direction_changed`.
+- AUTO direction is intentionally not a strict "all timeframes already aligned"
+  trigger anymore. Since maker-grid entries are layered pullback orders, the
+  current rule accepts a 3h trend with a controlled 1h pullback, and only
+  suppresses the side when the fast counter-move is violent. Paper orderflow
+  DANGER follows the same debounced confirmation model as live.
 
 Auto alerts come from `funding_carry_notify.py` and
 `wick_carry_notify.py`:

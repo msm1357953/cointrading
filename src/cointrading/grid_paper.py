@@ -443,8 +443,18 @@ class GridPaperEngine:
     def _side_block_reason(self, side: str, market) -> str:
         if self.config.orderflow_guard_enabled:
             status = _side_orderflow_status(side, market)
-            if status in {"STALE", "UNKNOWN", "DANGER"}:
+            if status in {"STALE", "UNKNOWN"}:
                 return f"orderflow {status}: {market.orderflow_reason}"
+            if status == "DANGER":
+                state = load_state(self.state_path)
+                count = (
+                    state.orderflow_long_danger_count
+                    if side == "long"
+                    else state.orderflow_short_danger_count
+                )
+                threshold = self.config.grid_orderflow_confirmations
+                if count >= threshold:
+                    return f"orderflow DANGER confirmed {count}/{threshold}: {market.orderflow_reason}"
         reasons = _soft_filter_reasons(side, market, self.config)
         return "; ".join(reasons)
 

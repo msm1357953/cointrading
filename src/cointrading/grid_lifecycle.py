@@ -55,6 +55,10 @@ MODE_AUTO = "AUTO"
 ACTIVE_MODES = {MODE_LONG, MODE_SHORT, MODE_AUTO}
 KST_TZ = ZoneInfo("Asia/Seoul")
 NY_TZ = ZoneInfo("America/New_York")
+AUTO_FAST_TRIGGER_PCT = 0.0020
+AUTO_SLOW_TRIGGER_PCT = 0.0030
+AUTO_FAST_ADVERSE_LIMIT_PCT = 0.0120
+AUTO_SLOW_ADVERSE_LIMIT_PCT = 0.0060
 
 
 def default_state_path() -> Path:
@@ -1649,11 +1653,18 @@ def _parse_hhmm(value: str) -> int:
 
 
 def _auto_side(klines_15m: list[Kline], klines_1h: list[Kline]) -> str | None:
-    ret_15m_4 = _return_from_klines(klines_15m, bars=4)
-    ret_1h_3 = _return_from_klines(klines_1h, bars=3)
-    if ret_15m_4 >= 0.003 and ret_1h_3 >= 0.003:
+    fast_1h = _return_from_klines(klines_15m, bars=4)
+    slow_3h = _return_from_klines(klines_1h, bars=3)
+    # Maker grid should not require every timeframe to already point in the
+    # same direction. A higher-timeframe trend plus a controlled pullback is
+    # exactly when layered maker entries can collect useful fills.
+    if slow_3h >= AUTO_SLOW_TRIGGER_PCT and fast_1h > -AUTO_FAST_ADVERSE_LIMIT_PCT:
         return "long"
-    if ret_15m_4 <= -0.003 and ret_1h_3 <= -0.003:
+    if slow_3h <= -AUTO_SLOW_TRIGGER_PCT and fast_1h < AUTO_FAST_ADVERSE_LIMIT_PCT:
+        return "short"
+    if fast_1h >= AUTO_FAST_TRIGGER_PCT and slow_3h > -AUTO_SLOW_ADVERSE_LIMIT_PCT:
+        return "long"
+    if fast_1h <= -AUTO_FAST_TRIGGER_PCT and slow_3h < AUTO_SLOW_ADVERSE_LIMIT_PCT:
         return "short"
     return None
 
@@ -1917,7 +1928,11 @@ def grid_recommendation_text(
     layer_notional = min(capital * cfg.grid_layer_notional_pct, cfg.grid_max_layer_notional)
     layer_margin = layer_notional / max(1, cfg.grid_leverage)
     side = market.effective_side
-    reason = "15m/1h 다중봉 추세 필터 통과" if side else "15m/1h 다중봉 추세가 애매해서 대기"
+    reason = (
+        "3h 큰 방향 또는 1h 단기 방향 필터 통과"
+        if side
+        else "3h 큰 방향과 1h 단기 방향이 모두 애매해서 대기"
+    )
     if market.risk_label == "HALT":
         side = None
         reason = f"과열/급변동 차단: {market.risk_reason}"

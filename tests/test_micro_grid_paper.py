@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from cointrading.config import TradingConfig
 from cointrading.grid_lifecycle import GridState, MODE_AUTO, MODE_SHORT, save_state
@@ -105,6 +106,28 @@ class MicroGridPaperTests(unittest.TestCase):
         self.assertEqual(len(result.opened), 2)
         cycles = self.store.recent_strategy_cycles(limit=10)
         self.assertEqual({row["side"] for row in cycles}, {"short"})
+
+    def test_step_allows_unconfirmed_orderflow_danger(self) -> None:
+        self.cfg = _cfg(orderflow_guard_enabled=True, grid_orderflow_confirmations=3)
+        save_state(GridState(mode=MODE_AUTO, orderflow_long_danger_count=1), self.state)
+        market = SimpleNamespace(
+            orderflow_long_status="DANGER",
+            orderflow_short_status="NORMAL",
+            orderflow_reason="롱 DANGER 관찰중",
+        )
+
+        self.assertEqual(self._engine()._side_block_reason("long", market), "")
+
+    def test_step_blocks_confirmed_orderflow_danger(self) -> None:
+        self.cfg = _cfg(orderflow_guard_enabled=True, grid_orderflow_confirmations=3)
+        save_state(GridState(mode=MODE_AUTO, orderflow_long_danger_count=3), self.state)
+        market = SimpleNamespace(
+            orderflow_long_status="DANGER",
+            orderflow_short_status="NORMAL",
+            orderflow_reason="롱 DANGER 확정",
+        )
+
+        self.assertIn("confirmed 3/3", self._engine()._side_block_reason("long", market))
 
     def test_virtual_entry_can_fill_and_close_at_take_profit(self) -> None:
         self.cfg = _cfg(

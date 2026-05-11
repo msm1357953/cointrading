@@ -16,6 +16,7 @@ from cointrading.grid_lifecycle import (
     STATUS_ENTRY_SUBMITTED,
     STATUS_OPEN,
     STRATEGY_NAME,
+    _auto_side,
     _kst_today_str,
     _time_blackout_reason,
     grid_recommendation_text,
@@ -278,6 +279,24 @@ class GridEngineTests(unittest.TestCase):
         self.assertIn("예상 주문 레벨", text)
         self.assertIn("시작 명령", text)
         self.assertIn("20x", text)
+
+    def test_auto_side_allows_higher_timeframe_pullback_long(self) -> None:
+        klines_15m = _klines(81_000, -150.0, 10, 900_000)
+        klines_1h = _klines(78_000, 250.0, 10, 3_600_000)
+
+        self.assertEqual(_auto_side(klines_15m, klines_1h), "long")
+
+    def test_auto_side_allows_higher_timeframe_pullback_short(self) -> None:
+        klines_15m = _klines(78_000, 150.0, 10, 900_000)
+        klines_1h = _klines(81_000, -250.0, 10, 3_600_000)
+
+        self.assertEqual(_auto_side(klines_15m, klines_1h), "short")
+
+    def test_auto_side_blocks_violent_fast_counter_move(self) -> None:
+        klines_15m = _klines(82_000, -300.0, 10, 900_000)
+        klines_1h = _klines(78_000, 250.0, 10, 3_600_000)
+
+        self.assertIsNone(_auto_side(klines_15m, klines_1h))
 
     def test_orderflow_danger_needs_confirmation_then_cancels_pending_entry(self) -> None:
         orderflow_path = Path(self.tmp.name) / "orderflow.json"
