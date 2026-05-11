@@ -225,7 +225,10 @@ Maker-grid implementation notes:
   trigger anymore. Since maker-grid entries are layered pullback orders, the
   current rule accepts a 3h trend with a controlled 1h pullback, and only
   suppresses the side when the fast counter-move is violent. Paper orderflow
-  DANGER follows the same debounced confirmation model as live.
+  DANGER follows the same debounced confirmation model as live. Paper grid
+  engines intentionally keep recording virtual entries during live `HALT`
+  regimes and tag `risk_label/risk_reason` in setup JSON; live entries remain
+  halted, but paper should reveal whether the block is actually justified.
 
 Auto alerts come from `funding_carry_notify.py` and
 `wick_carry_notify.py`:

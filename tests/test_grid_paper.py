@@ -140,6 +140,16 @@ class GridPaperTests(unittest.TestCase):
 
         self.assertIn("confirmed 3/3", self._engine()._side_block_reason("long", market))
 
+    def test_regular_grid_paper_records_even_when_live_risk_halts(self) -> None:
+        self.cfg = _cfg(grid_atr_spike_multiple=0.1, grid_max_layers=1)
+
+        result = self._engine().step()
+
+        self.assertEqual(len(result.opened), 1)
+        cycle = self.store.recent_strategy_cycles(limit=1)[0]
+        setup = json.loads(cycle["setup_json"])
+        self.assertEqual(setup["risk_label"], "HALT")
+
     def test_regular_grid_paper_fills_and_closes(self) -> None:
         self.cfg = _cfg(grid_max_layers=1, grid_paper_max_active_cycles=2)
         self._engine().step()

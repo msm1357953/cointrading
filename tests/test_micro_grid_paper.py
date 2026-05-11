@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from dataclasses import replace
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -128,6 +129,16 @@ class MicroGridPaperTests(unittest.TestCase):
         )
 
         self.assertIn("confirmed 3/3", self._engine()._side_block_reason("long", market))
+
+    def test_step_records_even_when_live_risk_halts(self) -> None:
+        self.cfg = _cfg(grid_atr_spike_multiple=0.1, micro_grid_paper_gaps_usdc=(5.0,), micro_grid_paper_take_profits_usdc=(5.0,))
+
+        result = self._engine().step()
+
+        self.assertEqual(len(result.opened), 1)
+        cycle = self.store.recent_strategy_cycles(limit=1)[0]
+        setup = json.loads(cycle["setup_json"])
+        self.assertEqual(setup["risk_label"], "HALT")
 
     def test_virtual_entry_can_fill_and_close_at_take_profit(self) -> None:
         self.cfg = _cfg(

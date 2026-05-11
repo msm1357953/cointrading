@@ -80,9 +80,6 @@ class GridPaperEngine:
         sides = self._candidate_sides(market)
         result.managed.extend(self._stop_disallowed_cycles(sides, market, ts))
         result.managed.extend(self._manage_existing_cycles(market, ts))
-        if market.risk_label == "HALT":
-            result.skipped.append({"reason": "risk_halt", "detail": market.risk_reason})
-            return result
         if not sides:
             result.skipped.append({"reason": "auto_wait", "detail": "paper has no clear one-way side"})
             return result
@@ -413,6 +410,8 @@ class GridPaperEngine:
             "range_position_15m": market.range_position_15m,
             "ret_15m": market.ret_15m,
             "ret_1h": market.ret_1h,
+            "risk_label": market.risk_label,
+            "risk_reason": market.risk_reason,
             "orderflow_status": _side_orderflow_status(side, market),
             "hypothesis": "regular_maker_grid_paper",
         }
